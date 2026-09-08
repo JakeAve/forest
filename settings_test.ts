@@ -60,3 +60,9 @@ Deno.test("settingsOverrides compares nested maps by value", () => {
     launchers: {},
   });
 });
+
+Deno.test("booleans are coerced, non-booleans ignored", () => {
+  const B = { watch: true };
+  assertEquals(coerceSettings(B, { watch: false }), { watch: false });
+  assertEquals(coerceSettings(B, { watch: "false" }), {});
+});

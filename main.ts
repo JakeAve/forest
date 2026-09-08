@@ -2,6 +2,7 @@ import { serveDir } from "@std/http/file-server";
 import { basename, dirname, join } from "@std/path";
 import { mergeInclude, parseThemeText, resolveTheme } from "./src/theme.js";
 import {
+  classifyPath,
   coerceSettings,
   fillCommand,
   ownerWorktree,
@@ -21,6 +22,9 @@ const DEFAULTS = {
   root: "~/Repos",
   pollMs: 5000,
   prPollMs: 60000,
+  watch: true,
+  watchDebounceMs: 300,
+  watchMaxWaitMs: 2000,
   recentCount: 10,
   agoRefreshMs: 30000,
   toastMs: 7000,
@@ -104,6 +108,20 @@ const stats = {
   ghFailTotal: 0,
   logWritesTotal: 0,
   logFailTotal: 0,
+  // ---- watcher (step 4) ----
+  watchEventsTotal: 0, // one per event *path*, not per FsEvent
+  watchIgnoredTotal: 0,
+  watchRefsTotal: 0,
+  watchIndexTotal: 0,
+  watchWorktreeTotal: 0,
+  watchUnknownTotal: 0,
+  watchRecomputesTotal: 0, // single repos recomputed from an event
+  watchRootRescansTotal: 0, // full sweeps forced by an unknown path
+  watchDebounceCollapsedTotal: 0, // marks that landed on an already-dirty repo
+  watchRootCollapsedTotal: 0, // root rescans that landed on an already-dirty root
+  watcherRestartsTotal: 0,
+  gitSweepMs: 0, // last git-only sweep; sweepMs also covers ports/PRs/publish
+  gitSweepMsTotal: 0,
   sweepMs: 0, // last sweep
   snapshotBytes: 0, // last snapshot that changed
   repos: 0,
@@ -247,7 +265,7 @@ async function loadWorktree(
   };
 }
 
-async function computeRepos(): Promise<Repo[]> {
+async function repoDirs(): Promise<{ name: string; path: string }[]> {
   const candidates: { name: string; path: string }[] = [];
   for await (const e of Deno.readDir(ROOT)) {
     if (!e.isDirectory) continue;
@@ -257,35 +275,35 @@ async function computeRepos(): Promise<Repo[]> {
     );
     if (hasGit) candidates.push({ name: e.name, path: p });
   }
-  const repos = await pool(REPO_JOBS, candidates, async ({ name, path }) => {
-    const [porcelain, originUrl, refs] = await Promise.all([
-      tryGit(path, "worktree", "list", "--porcelain"),
-      tryGit(path, "remote", "get-url", "origin"),
-      tryGit(path, "for-each-ref", "--format=%(refname:short)", "refs/remotes"),
-    ]);
-    if (!porcelain) return null;
-    const list = parseWorktreeList(porcelain);
-    // ponytail: assumes the remote is "origin"; widen if a second remote ever matters
-    const pushed = new Set(
-      (refs ?? "").split("\n").filter((r) => r.startsWith("origin/")).map((r) =>
-        r.slice(7)
-      ),
-    );
-    const worktrees = await pool(
-      WT_JOBS,
-      list,
-      (wt, i) => loadWorktree(name, wt, i === 0, list[0].branch, pushed),
-    );
-    return {
-      name,
-      path,
-      webUrl: originUrl ? remoteWebUrl(originUrl) : null,
-      worktrees,
-    };
-  });
-  return repos.filter((r): r is Repo => r !== null).sort((a, b) =>
-    a.name.localeCompare(b.name)
+  return candidates;
+}
+
+// the unit the watcher invalidates: everything the snapshot knows about one repo
+async function computeRepo(name: string, path: string): Promise<Repo | null> {
+  const [porcelain, originUrl, refs] = await Promise.all([
+    tryGit(path, "worktree", "list", "--porcelain"),
+    tryGit(path, "remote", "get-url", "origin"),
+    tryGit(path, "for-each-ref", "--format=%(refname:short)", "refs/remotes"),
+  ]);
+  if (!porcelain) return null;
+  const list = parseWorktreeList(porcelain);
+  // ponytail: assumes the remote is "origin"; widen if a second remote ever matters
+  const pushed = new Set(
+    (refs ?? "").split("\n").filter((r) => r.startsWith("origin/")).map((r) =>
+      r.slice(7)
+    ),
   );
+  const worktrees = await pool(
+    WT_JOBS,
+    list,
+    (wt, i) => loadWorktree(name, wt, i === 0, list[0].branch, pushed),
+  );
+  return {
+    name,
+    path,
+    webUrl: originUrl ? remoteWebUrl(originUrl) : null,
+    worktrees,
+  };
 }
 
 // ---- listening dev servers ----
@@ -299,6 +317,15 @@ async function lsof(...args: string[]): Promise<string> {
   })
     .output().catch(() => null);
   return out ? dec.decode(out.stdout) : "";
+}
+
+// GLOBAL and timed: one lsof for the whole machine, PID -> cwd -> worktree.
+// It cannot be attributed to one repo, so it can never be recomputed per repo;
+// it gets its own cadence and is merged into the snapshot by publish().
+let portsByCwdCache = new Map<string, number[]>();
+
+async function refreshPorts() {
+  portsByCwdCache = await listeningPorts();
 }
 
 async function listeningPorts(): Promise<Map<string, number[]>> {
@@ -457,10 +484,20 @@ function broadcast(s: string) {
   }
 }
 
-async function poll() {
-  const t0 = performance.now();
-  const [repos, byCwd] = await Promise.all([computeRepos(), listeningPorts()]);
-  await refreshPrs(repos);
+// ---- snapshot assembly ----
+// The snapshot has three sources on three cadences (docs/fs-watch.md): git data
+// per repo (event-driven), ports globally (timed), PRs per repo (timed). This
+// map is the source of truth; the snapshot is derived from it, so a partial
+// recompute only has to replace one entry.
+const repoByPath = new Map<string, Repo>();
+
+// Rebuilds knownWorktrees/repoPaths from the whole map every time, so a partial
+// recompute can never drop a still-live worktree from the guardWt allowlist.
+// Synchronous throughout: no request can observe the map half-rebuilt.
+function publish() {
+  const repos = [...repoByPath.values()].sort((a, b) =>
+    a.name.localeCompare(b.name)
+  );
   knownWorktrees.clear();
   repoPaths.clear();
   const wtByPath = new Map<string, Worktree>();
@@ -472,10 +509,12 @@ async function poll() {
       const prs = prsByRepo.get(r.path);
       w.pr = prs?.get(w.branch) ?? (w.remote ? prs?.get(w.remote) : null) ??
         null;
+      w.ports = []; // recomputed from scratch: publish() runs on live objects
     }
   }
-  for (const [cwd, ports] of byCwd) {
-    const w = wtByPath.get(ownerWorktree(cwd, [...wtByPath.keys()]) ?? "");
+  const wtPaths = [...wtByPath.keys()];
+  for (const [cwd, ports] of portsByCwdCache) {
+    const w = wtByPath.get(ownerWorktree(cwd, wtPaths) ?? "");
     if (w) w.ports = [...new Set([...w.ports, ...ports])].sort((a, b) => a - b);
   }
   const s = JSON.stringify(repos);
@@ -485,11 +524,207 @@ async function poll() {
     stats.snapshotBytes = s.length;
     broadcast(s);
   }
+  stats.repos = repos.length;
+  stats.worktrees = knownWorktrees.size;
+}
+
+// Re-entrancy guard #1: global, because a sweep touches every repo — two at
+// once are pure duplicate work. But a caller arriving mid-sweep may have just
+// mutated a worktree this sweep already read, so it must NOT join: it gets a
+// sweep that starts after the current one ends. At most one is queued.
+let sweeping: Promise<void> | null = null;
+let queuedSweep: Promise<void> | null = null;
+
+function sweepAll(): Promise<void> {
+  if (sweeping) {
+    return queuedSweep ??= sweeping.catch(() => {}).then(() => {
+      queuedSweep = null;
+      return sweepAll();
+    });
+  }
+  sweeping = (async () => {
+    const t0 = performance.now();
+    const dirs = await repoDirs();
+    const repos = await pool(
+      REPO_JOBS,
+      dirs,
+      (d) => computeRepo(d.name, d.path),
+    );
+    repoByPath.clear();
+    for (const r of repos) if (r) repoByPath.set(r.path, r);
+    stats.gitSweepMs = Math.round(performance.now() - t0);
+    stats.gitSweepMsTotal += stats.gitSweepMs;
+  })().finally(() => {
+    sweeping = null;
+  });
+  return sweeping;
+}
+
+// everything, the old way. The timed loop when watch is off, and the startup
+// sweep either way. sweepMs spans the whole cycle — same meaning it had in
+// step 3, so the poll-vs-watch baseline stays comparable.
+async function poll() {
+  const t0 = performance.now();
+  await sweepAll();
+  const repos = [...repoByPath.values()];
+  await Promise.all([refreshPorts(), refreshPrs(repos)]);
+  publish();
   stats.sweepsTotal++;
   stats.sweepMs = Math.round(performance.now() - t0);
   stats.sweepMsTotal += stats.sweepMs;
-  stats.repos = repos.length;
-  stats.worktrees = knownWorktrees.size;
+}
+
+// ---- watcher: invalidate, never compute (docs/fs-watch.md) ----
+
+const mode = () => SETTINGS.watch && watcherUp ? "watch" : "poll";
+let watcherUp = false;
+const dirty = new Set<string>(); // repo paths
+let rootDirty = false;
+let debounceTimer: ReturnType<typeof setTimeout> | undefined;
+let firstMarkAt = 0; // when the current dirty batch was first marked
+let pending = false; // a drain timer is armed and has not fired yet
+
+// ponytail: one global debounce timer, not one per repo — a repo that never
+// goes quiet delays every other dirty repo with it. Per-repo timers if that
+// shows up; step 6's backoff is the real answer.
+function schedule() {
+  if (!firstMarkAt) firstMarkAt = Date.now();
+  // max wait: past the ceiling, stop deferring and let the armed timer fire.
+  // A pure trailing debounce never drains at all under a steady event stream.
+  if (pending && Date.now() - firstMarkAt >= SETTINGS.watchMaxWaitMs) return;
+  clearTimeout(debounceTimer);
+  pending = true;
+  debounceTimer = setTimeout(() => {
+    pending = false;
+    drain().catch((e) => {
+      stats.errorsTotal++;
+      console.error(e);
+    });
+  }, SETTINGS.watchDebounceMs);
+}
+
+function markRepo(repo: string) {
+  if (dirty.has(repo)) stats.watchDebounceCollapsedTotal++;
+  dirty.add(repo);
+  schedule();
+}
+
+function markRoot() {
+  if (rootDirty) stats.watchRootCollapsedTotal++;
+  rootDirty = true;
+  schedule();
+}
+
+// Re-entrancy guard #2: global, because drain is the single consumer of the
+// single dirty set. It already fans out across repos through `pool`, so a
+// per-repo lock would only add bookkeeping — and a repo re-dirtied during its
+// own recompute is not lost, it stays in the set and the trailing schedule()
+// picks it up.
+let draining = false;
+
+async function drain() {
+  if (draining) return schedule();
+  draining = true;
+  firstMarkAt = 0; // this batch is being consumed; the next mark starts a new one
+  try {
+    if (rootDirty) {
+      // a new directory under ROOT may be a new repo: only a full sweep knows
+      rootDirty = false;
+      dirty.clear();
+      stats.watchRootRescansTotal++;
+      // poll() can throw (readDir, gh JSON). Losing the flag here would hide a
+      // newly cloned repo until an unrelated event: put it back and retry.
+      await poll().catch((e) => {
+        rootDirty = true;
+        stats.errorsTotal++;
+        console.error(e);
+      });
+    } else {
+      const todo = [...dirty];
+      dirty.clear();
+      await pool(REPO_JOBS, todo, async (path) => {
+        const known = repoByPath.get(path);
+        if (!known) return;
+        const fresh = await computeRepo(known.name, path).catch((e) => {
+          stats.errorsTotal++;
+          console.error(e);
+          return known;
+        });
+        // computeRepo returns null for a transient git failure too, so only a
+        // vanished .git is proof the repo is gone; otherwise keep what we had
+        if (fresh) repoByPath.set(path, fresh);
+        else if (!await Deno.stat(join(path, ".git")).catch(() => null)) {
+          repoByPath.delete(path);
+        }
+        stats.watchRecomputesTotal++;
+      });
+      if (todo.length) publish();
+    }
+  } finally {
+    draining = false;
+  }
+  if (dirty.size || rootDirty) schedule();
+}
+
+const BUCKET_STAT = {
+  ignore: "watchIgnoredTotal",
+  refs: "watchRefsTotal",
+  index: "watchIndexTotal",
+  worktree: "watchWorktreeTotal",
+  unknown: "watchUnknownTotal",
+} as const;
+
+function onEvent(ev: Deno.FsEvent) {
+  if (mode() !== "watch") return; // watch flipped off at runtime: act like poll
+  for (const path of ev.paths) {
+    stats.watchEventsTotal++;
+    // knownWorktrees is already "every repo and worktree path -> repo path":
+    // a repo's primary worktree path is the repo path.
+    const { bucket, repo } = classifyPath(path, ROOT, knownWorktrees);
+    stats[BUCKET_STAT[bucket]]++;
+    if (bucket === "ignore") continue;
+    if (repo) markRepo(repo);
+    else markRoot();
+  }
+}
+
+async function watchLoop() {
+  let backoff = 1000;
+  let first = true;
+  while (true) {
+    let w: Deno.FsWatcher;
+    try {
+      w = Deno.watchFs(ROOT, { recursive: true });
+    } catch (e) {
+      // non-local filesystem, permissions: log once, keep today's polling
+      if (first) {
+        console.error("forest: watchFs unavailable, polling instead:", e);
+        return;
+      }
+      // a failed re-open retries the OPEN; looping onto the dead stream would
+      // spin restarts forever
+      console.error("forest: watcher re-open failed:", e);
+      await new Promise((r) => setTimeout(r, backoff));
+      backoff = Math.min(backoff * 2, 30_000);
+      continue;
+    }
+    watcherUp = true;
+    if (!first) {
+      backoff = 1000;
+      poll().catch(() => stats.errorsTotal++); // events missed while down
+    }
+    first = false;
+    try {
+      for await (const ev of w) onEvent(ev);
+      console.error("forest: watcher stream ended");
+    } catch (e) {
+      console.error("forest: watcher failed:", e);
+    }
+    watcherUp = false;
+    stats.watcherRestartsTotal++;
+    await new Promise((r) => setTimeout(r, backoff));
+    backoff = Math.min(backoff * 2, 30_000);
+  }
 }
 
 const statsLine = () => ({
@@ -499,6 +734,10 @@ const statsLine = () => ({
   rss: Deno.memoryUsage().rss,
   clients: clients.size,
   pollMs: SETTINGS.pollMs,
+  mode: mode(),
+  watchDebounceMs: SETTINGS.watchDebounceMs,
+  watchMaxWaitMs: SETTINGS.watchMaxWaitMs,
+  watchDirty: dirty.size,
 });
 
 // one flat line a minute; failures are logged once and never reach the poll loop
@@ -519,19 +758,37 @@ setInterval(async () => {
   }
 }, 60_000);
 
+if (SETTINGS.watch) watchLoop();
+
 (async () => {
+  await poll().catch((e) => {
+    stats.errorsTotal++;
+    console.error(e);
+  });
   while (true) {
+    await new Promise((r) => setTimeout(r, SETTINGS.pollMs));
     try {
-      await poll();
+      // in watch mode the git sweep is the watcher's job; the timed loop only
+      // carries the two sources that are not per-repo events. ponytail: ports
+      // and PRs share pollMs rather than earning a setting each.
+      if (mode() === "watch") {
+        await refreshPorts();
+        await refreshPrs([...repoByPath.values()]);
+        publish();
+      } else await poll();
     } catch (e) {
       stats.errorsTotal++;
       console.error(e);
     }
-    await new Promise((r) => setTimeout(r, SETTINGS.pollMs));
   }
 })();
 
 // ---- server ----
+
+// a mutation can add or remove a worktree, so it needs the full sweep; in
+// watch mode it is debounced with everything else instead of firing at once.
+const afterMutation = () =>
+  mode() === "watch" ? markRoot() : void poll().catch(() => {});
 
 const json = (body: unknown) =>
   new Response(JSON.stringify(body), {
@@ -658,7 +915,7 @@ const server = Deno.serve({ port: SETTINGS.port }, async (req) => {
             await git(knownWorktrees.get(p)!, "worktree", "remove", ...force, p)
               .catch((e) => failed.push({ path: p, error: e.message }));
           }
-          poll().catch(() => {});
+          afterMutation();
           return json({ ok: !failed.length, failed });
         }
         case "/api/wt-create": {
@@ -740,7 +997,7 @@ const server = Deno.serve({ port: SETTINGS.port }, async (req) => {
         default:
           return new Response("not found", { status: 404 });
       }
-      poll().catch(() => {});
+      afterMutation();
       return json({ ok: true });
     }
     return serveDir(req, {

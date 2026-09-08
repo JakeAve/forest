@@ -123,6 +123,8 @@ export function coerceSettings(
       if (Number.isFinite(n)) out[k] = Math.max(k.endsWith("Ms") ? 250 : 0, n);
     } else if (typeof d === "string") {
       if (typeof v === "string" && v.trim()) out[k] = v.trim();
+    } else if (typeof d === "boolean") {
+      if (typeof v === "boolean") out[k] = v;
     } else if (v && typeof v === "object") {
       out[k] = Object.fromEntries(
         Object.entries(v).filter(([, s]) => typeof s === "string" && s.trim())
@@ -216,4 +218,80 @@ export async function pool<T, R>(
     Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, worker),
   );
   return out;
+}
+
+// ---- fs-watch classifier (see docs/fs-watch.md) ----
+
+// gitignored everywhere here, so they can never change a value Forest shows.
+// This list is the primary flood defense; it is a string scan, no syscall.
+const IGNORE_DIRS = new Set([
+  "node_modules",
+  "dist",
+  "build",
+  "target",
+  ".next",
+  ".venv",
+  "__pycache__",
+  ".direnv",
+  ".cache",
+]);
+const IGNORE_FILE = /^(\.DS_Store|\.#.*|.*~|.*\.swp)$/;
+
+export type WatchBucket = "ignore" | "refs" | "index" | "worktree" | "unknown";
+
+/**
+ * Bucket one fs event path. Pure string work, no syscalls — every event pays
+ * for this, so nothing here may touch the disk.
+ *
+ * `owners` maps every known repo *and* worktree path to its repo path (a
+ * repo's primary worktree path is the repo path, so `knownWorktrees` is
+ * exactly this map). Longest matching prefix wins, so a nested repo beats the
+ * repo it sits inside.
+ *
+ * A directory event — FSEvents coalesces bursts into the parent dir — is just
+ * a path under a repo, so it dirties that repo like anything else. There is no
+ * "no file matched" outcome.
+ *
+ * ponytail: re-sorts `owners` per event (O(n log n), n≈250). Hoist a sorted
+ * array if the event rate ever makes that show up.
+ */
+export function classifyPath(
+  path: string,
+  rootArg: string,
+  owners: Map<string, string>,
+): { bucket: WatchBucket; repo: string | null } {
+  // a trailing slash on the `root` setting would otherwise make every
+  // startsWith below fail, silently classifying every event as ignore
+  const root = rootArg.replace(/(?!^)\/+$/, "");
+  const ignore = { bucket: "ignore", repo: null } as const;
+  // a new dir directly under ROOT may be a new repo; ROOT itself means rescan
+  if (path === root) return { bucket: "unknown", repo: null };
+  if (!path.startsWith(root + "/")) return ignore; // we only watch ROOT
+  const segs = path.slice(root.length + 1).split("/");
+  const last = segs[segs.length - 1];
+  // segs[0] is the repo's own directory name: a repo legitimately named
+  // `build` or `target` must not ignore itself.
+  // ponytail: a *nested* repo named after an ignore dir is still invisible.
+  if (segs.slice(1).some((s) => IGNORE_DIRS.has(s))) return ignore;
+  if (IGNORE_FILE.test(last)) return ignore;
+  const g = segs.indexOf(".git");
+  const inGit = g < 0 ? null : segs.slice(g + 1);
+  if (inGit) {
+    if (inGit[0] === "objects" || inGit[0] === "lfs") return ignore;
+    if (last.endsWith(".lock")) return ignore;
+  }
+  const owner = ownerWorktree(path, [...owners.keys()]);
+  if (!owner) return { bucket: "unknown", repo: null }; // new repo appeared
+  const repo = owners.get(owner)!;
+  if (inGit) {
+    // linked worktrees keep refs/index under .git/worktrees/<name>/, so match
+    // on position within .git rather than on an exact path
+    if (
+      inGit.includes("refs") || /^(HEAD|packed-refs|MERGE_HEAD)$/.test(last)
+    ) {
+      return { bucket: "refs", repo };
+    }
+    if (last === "index") return { bucket: "index", repo };
+  }
+  return { bucket: "worktree", repo };
 }
