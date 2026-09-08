@@ -1,7 +1,9 @@
 import { assertEquals } from "@std/assert";
+import type { DiffWorktree } from "./parse.ts";
 import {
   clampMenu,
   classifyPath,
+  diffSnapshots,
   discardPrompt,
   ownerWorktree,
   parseDiffHunks,
@@ -393,4 +395,144 @@ Deno.test("classifyPath: no owners yet means rescan, never silence", () => {
     bucket: "unknown",
     repo: null,
   });
+});
+
+// ---- diffSnapshots ----
+
+const wt = (path: string, over: Partial<DiffWorktree> = {}): DiffWorktree => ({
+  path,
+  branch: "main",
+  head: "abc",
+  ahead: 0,
+  behind: 0,
+  dirty: 0,
+  lastActivity: 100,
+  remote: null,
+  ...over,
+});
+const snap = (...repos: [string, DiffWorktree[]][]) =>
+  new Map(repos.map(([path, worktrees]) => [path, { path, worktrees }]));
+
+Deno.test("diffSnapshots: identical snapshots diverge nowhere", () => {
+  const a = snap(["/r/one", [wt("/r/one"), wt("/r/one-wt")]], ["/r/two", [
+    wt("/r/two"),
+  ]]);
+  const b = snap(["/r/one", [wt("/r/one"), wt("/r/one-wt")]], ["/r/two", [
+    wt("/r/two"),
+  ]]);
+  assertEquals(diffSnapshots(a, b), []);
+});
+
+Deno.test("diffSnapshots: names the repo, the worktree and the field", () => {
+  const live = snap(["/r/one", [wt("/r/one", { dirty: 0 })]]);
+  const truth = snap(["/r/one", [wt("/r/one", { dirty: 3 })]]);
+  assertEquals(diffSnapshots(live, truth), [{
+    repo: "/r/one",
+    worktree: "/r/one",
+    field: "dirty",
+    watch: 0,
+    sweep: 3,
+  }]);
+});
+
+Deno.test("diffSnapshots: every watched field is compared", () => {
+  const live = snap(["/r/one", [wt("/r/one")]]);
+  const truth = snap(["/r/one", [
+    wt("/r/one", {
+      branch: "feat",
+      head: "def",
+      ahead: 1,
+      behind: 2,
+      dirty: 3,
+      lastActivity: 200,
+      remote: "feat",
+    }),
+  ]]);
+  assertEquals(diffSnapshots(live, truth).map((d) => d.field), [
+    "branch",
+    "head",
+    "ahead",
+    "behind",
+    "dirty",
+    "lastActivity",
+    "remote",
+  ]);
+});
+
+Deno.test("diffSnapshots: ports and pr never count as divergence", () => {
+  // they come from the lsof and gh timers, not from fs events
+  const live = snap(["/r/one", [
+    { ...wt("/r/one"), ports: [3000], pr: { number: 7 } } as DiffWorktree,
+  ]]);
+  const truth = snap(["/r/one", [
+    { ...wt("/r/one"), ports: [], pr: null } as DiffWorktree,
+  ]]);
+  assertEquals(diffSnapshots(live, truth), []);
+});
+
+Deno.test("diffSnapshots: worktree added and removed", () => {
+  const one = snap(["/r/one", [wt("/r/one")]]);
+  const two = snap(["/r/one", [wt("/r/one"), wt("/r/one-feat")]]);
+  assertEquals(diffSnapshots(one, two), [{
+    repo: "/r/one",
+    worktree: "/r/one-feat",
+    field: "worktreeAdded",
+    watch: null,
+    sweep: "/r/one-feat",
+  }]);
+  assertEquals(diffSnapshots(two, one), [{
+    repo: "/r/one",
+    worktree: "/r/one-feat",
+    field: "worktreeRemoved",
+    watch: "/r/one-feat",
+    sweep: null,
+  }]);
+});
+
+Deno.test("diffSnapshots: repo added and removed", () => {
+  const one = snap(["/r/one", [wt("/r/one")]]);
+  const two = snap(["/r/one", [wt("/r/one")]], ["/r/two", [wt("/r/two")]]);
+  assertEquals(diffSnapshots(one, two), [{
+    repo: "/r/two",
+    worktree: null,
+    field: "repoAdded",
+    watch: null,
+    sweep: "/r/two",
+  }]);
+  assertEquals(diffSnapshots(two, one), [{
+    repo: "/r/two",
+    worktree: null,
+    field: "repoRemoved",
+    watch: "/r/two",
+    sweep: null,
+  }]);
+});
+
+Deno.test("diffSnapshots: excluded repos are not judged", () => {
+  // a repo touched during the sweep window disagrees for timing reasons; the
+  // other repos in the same snapshot must still be checked
+  const live = snap(["/r/hot", [wt("/r/hot", { lastActivity: 200 })]], [
+    "/r/cold",
+    [wt("/r/cold", { dirty: 0 })],
+  ]);
+  const truth = snap(["/r/hot", [wt("/r/hot", { lastActivity: 100 })]], [
+    "/r/cold",
+    [wt("/r/cold", { dirty: 3 })],
+  ]);
+  assertEquals(
+    diffSnapshots(live, truth, new Set(["/r/hot"])).map((d) => [
+      d.repo,
+      d.field,
+    ]),
+    [["/r/cold", "dirty"]],
+  );
+  assertEquals(diffSnapshots(live, truth, new Set(["/r/hot", "/r/cold"])), []);
+});
+
+Deno.test("diffSnapshots: NaN does not diverge against itself", () => {
+  // ahead/behind are .map(Number), lastActivity is Number(...): both can be
+  // NaN, and `!==` would re-fire every sweep and never heal
+  const live = snap(["/r/one", [wt("/r/one", { ahead: NaN, behind: 1 })]]);
+  const truth = snap(["/r/one", [wt("/r/one", { ahead: NaN, behind: NaN })]]);
+  assertEquals(diffSnapshots(live, truth).map((d) => d.field), ["behind"]);
 });

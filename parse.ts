@@ -295,3 +295,95 @@ export function classifyPath(
   }
   return { bucket: "worktree", repo };
 }
+
+// ---- divergence: did the watcher miss a change? (docs/fs-watch.md) ----
+
+export type DiffWorktree = {
+  path: string;
+  branch: string;
+  head: string;
+  ahead: number | null;
+  behind: number | null;
+  dirty: number;
+  lastActivity: number;
+  remote: string | null;
+};
+export type DiffRepo = { path: string; worktrees: DiffWorktree[] };
+export type Divergence = {
+  repo: string;
+  worktree: string | null;
+  field: string;
+  watch: unknown;
+  sweep: unknown;
+};
+
+// ports and pr are deliberately absent: they come from the global lsof timer
+// and the gh timer, never from fs events, so a difference there says nothing
+// about the watcher. isPrimary/webUrl follow the worktree list, not events.
+const WT_FIELDS = [
+  "branch",
+  "head",
+  "ahead",
+  "behind",
+  "dirty",
+  "lastActivity",
+  "remote",
+] as const;
+
+/**
+ * Field-by-field diff of what events believe (`watch`) against a fresh full
+ * sweep (`sweep`). Every entry is one change the watcher failed to deliver.
+ * Naming the repo and the field is the whole point — a JSON string diff would
+ * say "different" and nothing else.
+ *
+ * `exclude` drops repos that were touched while the sweep was running. A sweep
+ * spans seconds: a repo read early, written mid-sweep and recomputed by the
+ * watcher before the sweep ended disagrees for timing reasons alone. Excluding
+ * that one repo keeps the other 120 measured.
+ */
+export function diffSnapshots(
+  watch: Map<string, DiffRepo>,
+  sweep: Map<string, DiffRepo>,
+  exclude?: Set<string>,
+): Divergence[] {
+  const out: Divergence[] = [];
+  const add = (
+    repo: string,
+    worktree: string | null,
+    field: string,
+    w: unknown,
+    s: unknown,
+  ) => {
+    if (!exclude?.has(repo)) {
+      out.push({ repo, worktree, field, watch: w, sweep: s });
+    }
+  };
+  for (const [path, truth] of sweep) {
+    const live = watch.get(path);
+    if (!live) {
+      add(path, null, "repoAdded", null, path);
+      continue;
+    }
+    const stale = new Map(live.worktrees.map((w) => [w.path, w]));
+    for (const tw of truth.worktrees) {
+      const lw = stale.get(tw.path);
+      if (!lw) {
+        add(path, tw.path, "worktreeAdded", null, tw.path);
+        continue;
+      }
+      stale.delete(tw.path);
+      for (const f of WT_FIELDS) {
+        // Object.is, not !==: ahead/behind come from .map(Number) and
+        // lastActivity from Number(...), so both sides can be NaN. `!==` would
+        // report NaN vs NaN forever — logged as null vs null, and never
+        // healing, because the NaN is written into the map.
+        if (!Object.is(lw[f], tw[f])) add(path, tw.path, f, lw[f], tw[f]);
+      }
+    }
+    for (const p of stale.keys()) add(path, p, "worktreeRemoved", p, null);
+  }
+  for (const p of watch.keys()) {
+    if (!sweep.has(p)) add(p, null, "repoRemoved", p, null);
+  }
+  return out;
+}

@@ -4,6 +4,7 @@ import { mergeInclude, parseThemeText, resolveTheme } from "./src/theme.js";
 import {
   classifyPath,
   coerceSettings,
+  diffSnapshots,
   fillCommand,
   ownerWorktree,
   parseDiffHunks,
@@ -25,6 +26,7 @@ const DEFAULTS = {
   watch: true,
   watchDebounceMs: 300,
   watchMaxWaitMs: 2000,
+  watchSweepMs: 300000,
   recentCount: 10,
   agoRefreshMs: 30000,
   toastMs: 7000,
@@ -120,6 +122,30 @@ const stats = {
   watchDebounceCollapsedTotal: 0, // marks that landed on an already-dirty repo
   watchRootCollapsedTotal: 0, // root rescans that landed on an already-dirty root
   watcherRestartsTotal: 0,
+  // ---- safety net + divergence (step 5) ----
+  // sweepsTotal counts every full sweep, whatever fired it (timer, mutating
+  // POST, root rescan). This counts only the timed safety-net ones, so
+  // divergences-per-sweep has a denominator that means something.
+  watchSafetySweepsTotal: 0,
+  divergencesTotal: 0,
+  // a divergence check skipped WHOLESALE, which now only happens for a root
+  // rescan: a repo may have appeared or vanished, which is not per-repo
+  divergenceChecksSkippedTotal: 0,
+  // per-repo exclusion instead. A sweep spans seconds, so a repo touched
+  // anywhere in that window cannot be judged; the other 120 still are.
+  divergenceReposCheckedTotal: 0,
+  divergenceReposExcludedTotal: 0,
+  divergenceBranchTotal: 0,
+  divergenceHeadTotal: 0,
+  divergenceAheadTotal: 0,
+  divergenceBehindTotal: 0,
+  divergenceDirtyTotal: 0,
+  divergenceLastActivityTotal: 0,
+  divergenceRemoteTotal: 0,
+  divergenceWorktreeAddedTotal: 0,
+  divergenceWorktreeRemovedTotal: 0,
+  divergenceRepoAddedTotal: 0,
+  divergenceRepoRemovedTotal: 0,
   gitSweepMs: 0, // last git-only sweep; sweepMs also covers ports/PRs/publish
   gitSweepMsTotal: 0,
   sweepMs: 0, // last sweep
@@ -528,6 +554,58 @@ function publish() {
   stats.worktrees = knownWorktrees.size;
 }
 
+// ---- divergence: the actual experiment (docs/fs-watch.md) ----
+// When the safety-net sweep asked for a check. A timestamp, not a flag,
+// because the tick can land while a sweep is already in flight: that sweep
+// read its repos before the request existed, so it must not answer it. Only a
+// sweep that STARTED at or after the request may.
+let checkRequestedAt = 0;
+// Repos marked dirty or recomputed since the current sweep started. The whole
+// sweep is the window: a repo read early, written mid-sweep and recomputed by
+// the watcher before the sweep ends looks quiescent at the final instant yet
+// legitimately disagrees. Excluding that repo is what keeps the rest measured.
+let touched = new Set<string>();
+
+const DIVERGENCE_STAT = {
+  branch: "divergenceBranchTotal",
+  head: "divergenceHeadTotal",
+  ahead: "divergenceAheadTotal",
+  behind: "divergenceBehindTotal",
+  dirty: "divergenceDirtyTotal",
+  lastActivity: "divergenceLastActivityTotal",
+  remote: "divergenceRemoteTotal",
+  worktreeAdded: "divergenceWorktreeAddedTotal",
+  worktreeRemoved: "divergenceWorktreeRemovedTotal",
+  repoAdded: "divergenceRepoAddedTotal",
+  repoRemoved: "divergenceRepoRemovedTotal",
+} as const;
+
+// A divergence is a measurement, never an error path: this must not be able to
+// fail the sweep that called it.
+function recordDivergences(truth: Map<string, Repo>) {
+  try {
+    // The one genuinely global case: an unknown path means a repo may have
+    // appeared or vanished, which no per-repo exclusion can describe.
+    if (rootDirty || rootRescanning) {
+      stats.divergenceChecksSkippedTotal++;
+      return;
+    }
+    let checked = 0;
+    for (const p of truth.keys()) if (!touched.has(p)) checked++;
+    stats.divergenceReposCheckedTotal += checked;
+    stats.divergenceReposExcludedTotal += truth.size - checked;
+    for (const d of diffSnapshots(repoByPath, truth, touched)) {
+      stats.divergencesTotal++;
+      const k = DIVERGENCE_STAT[d.field as keyof typeof DIVERGENCE_STAT];
+      if (k) stats[k]++;
+      logLine({ type: "divergence", ...d });
+    }
+  } catch (e) {
+    stats.errorsTotal++;
+    console.error(e);
+  }
+}
+
 // Re-entrancy guard #1: global, because a sweep touches every repo — two at
 // once are pure duplicate work. But a caller arriving mid-sweep may have just
 // mutated a worktree this sweep already read, so it must NOT join: it gets a
@@ -543,6 +621,10 @@ function sweepAll(): Promise<void> {
     });
   }
   sweeping = (async () => {
+    const startedAt = Date.now();
+    // repos already dirty at sweep start belong to the window too: the watcher
+    // knows about them and simply has not caught up yet
+    touched = new Set(dirty);
     const t0 = performance.now();
     const dirs = await repoDirs();
     const repos = await pool(
@@ -550,8 +632,14 @@ function sweepAll(): Promise<void> {
       dirs,
       (d) => computeRepo(d.name, d.path),
     );
+    const next = new Map<string, Repo>();
+    for (const r of repos) if (r) next.set(r.path, r);
+    if (checkRequestedAt && startedAt >= checkRequestedAt) {
+      checkRequestedAt = 0;
+      recordDivergences(next);
+    }
     repoByPath.clear();
-    for (const r of repos) if (r) repoByPath.set(r.path, r);
+    for (const [k, v] of next) repoByPath.set(k, v);
     stats.gitSweepMs = Math.round(performance.now() - t0);
     stats.gitSweepMsTotal += stats.gitSweepMs;
   })().finally(() => {
@@ -621,6 +709,9 @@ function markRoot() {
 // own recompute is not lost, it stays in the set and the trailing schedule()
 // picks it up.
 let draining = false;
+// a root rescan's own sweep can't be checked: it exists because a path
+// resolved to no repo, so repoByPath is stale by definition, not by miss
+let rootRescanning = false;
 
 async function drain() {
   if (draining) return schedule();
@@ -634,15 +725,19 @@ async function drain() {
       stats.watchRootRescansTotal++;
       // poll() can throw (readDir, gh JSON). Losing the flag here would hide a
       // newly cloned repo until an unrelated event: put it back and retry.
+      rootRescanning = true;
       await poll().catch((e) => {
         rootDirty = true;
         stats.errorsTotal++;
         console.error(e);
+      }).finally(() => {
+        rootRescanning = false;
       });
     } else {
       const todo = [...dirty];
       dirty.clear();
       await pool(REPO_JOBS, todo, async (path) => {
+        touched.add(path); // recomputed inside a sweep window: not judgeable
         const known = repoByPath.get(path);
         if (!known) return;
         const fresh = await computeRepo(known.name, path).catch((e) => {
@@ -711,6 +806,10 @@ async function watchLoop() {
     watcherUp = true;
     if (!first) {
       backoff = 1000;
+      // whatever this sweep finds is the downtime, not a missed event, so it
+      // declines any pending check rather than logging the gap as misses
+      if (checkRequestedAt) stats.divergenceChecksSkippedTotal++;
+      checkRequestedAt = 0;
       poll().catch(() => stats.errorsTotal++); // events missed while down
     }
     first = false;
@@ -737,28 +836,41 @@ const statsLine = () => ({
   mode: mode(),
   watchDebounceMs: SETTINGS.watchDebounceMs,
   watchMaxWaitMs: SETTINGS.watchMaxWaitMs,
+  watchSweepMs: SETTINGS.watchSweepMs,
   watchDirty: dirty.size,
 });
 
-// one flat line a minute; failures are logged once and never reach the poll loop
+// One flat line a minute, plus one per divergence; failures are logged once
+// and never reach the caller. `type` tells the two apart. The schema is
+// append-only: add fields, never redefine one.
 const LOG_PATH = join(HOME, ".forest", "watch-log.jsonl");
 let logFailed = false;
-setInterval(async () => {
-  try {
-    await Deno.mkdir(join(HOME, ".forest"), { recursive: true });
-    await Deno.writeTextFile(LOG_PATH, JSON.stringify(statsLine()) + "\n", {
-      append: true,
-    });
-    stats.logWritesTotal++;
-    logFailed = false;
-  } catch (e) {
-    stats.logFailTotal++;
-    if (!logFailed) console.error("watch-log write failed:", e);
-    logFailed = true;
-  }
-}, 60_000);
+let logQueue: Promise<void> = Promise.resolve();
+
+function logLine(o: Record<string, unknown>) {
+  logQueue = logQueue.then(async () => {
+    try {
+      await Deno.mkdir(join(HOME, ".forest"), { recursive: true });
+      await Deno.writeTextFile(
+        LOG_PATH,
+        JSON.stringify({ t: new Date().toISOString(), ...o }) + "\n",
+        { append: true },
+      );
+      stats.logWritesTotal++;
+      logFailed = false;
+    } catch (e) {
+      stats.logFailTotal++;
+      if (!logFailed) console.error("watch-log write failed:", e);
+      logFailed = true;
+    }
+  });
+}
+
+setInterval(() => logLine({ type: "stats", ...statsLine() }), 60_000);
 
 if (SETTINGS.watch) watchLoop();
+
+let lastSafetySweep = Date.now();
 
 (async () => {
   await poll().catch((e) => {
@@ -772,9 +884,19 @@ if (SETTINGS.watch) watchLoop();
       // carries the two sources that are not per-repo events. ponytail: ports
       // and PRs share pollMs rather than earning a setting each.
       if (mode() === "watch") {
-        await refreshPorts();
-        await refreshPrs([...repoByPath.values()]);
-        publish();
+        // safety net: FSEvents can coalesce or drop, so ground truth is
+        // recomputed on watchSweepMs regardless of what events said. Granularity
+        // is pollMs, which is this loop's tick.
+        if (Date.now() - lastSafetySweep >= SETTINGS.watchSweepMs) {
+          lastSafetySweep = Date.now();
+          stats.watchSafetySweepsTotal++;
+          checkRequestedAt = Date.now();
+          await poll();
+        } else {
+          await refreshPorts();
+          await refreshPrs([...repoByPath.values()]);
+          publish();
+        }
       } else await poll();
     } catch (e) {
       stats.errorsTotal++;
