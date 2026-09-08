@@ -97,8 +97,9 @@ async function exec(cwd: string, cmd: string[]): Promise<string> {
   return dec.decode(out.stdout);
 }
 const git = (cwd: string, ...args: string[]) => exec(cwd, ["git", ...args]);
+// read-only calls only: the flag keeps polling from rewriting .git/index
 const tryGit = (cwd: string, ...args: string[]) =>
-  git(cwd, ...args).catch(() => null);
+  git(cwd, "--no-optional-locks", ...args).catch(() => null);
 
 async function gitIn(cwd: string, stdin: string, ...args: string[]) {
   const p = new Deno.Command("git", {
@@ -556,7 +557,7 @@ const server = Deno.serve({ port: SETTINGS.port }, async (req) => {
           try {
             await git(wt, "rebase", "origin/HEAD");
           } catch (e) {
-            await tryGit(wt, "rebase", "--abort");
+            await git(wt, "rebase", "--abort").catch(() => {});
             throw new Error(
               `rebase failed — aborted, use a terminal. ${
                 (e as Error).message
