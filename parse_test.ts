@@ -1,10 +1,12 @@
 import { assertEquals } from "@std/assert";
 import type { DiffWorktree } from "./parse.ts";
 import {
+  backoffOver,
   clampMenu,
   classifyPath,
   diffSnapshots,
   discardPrompt,
+  hotBackoff,
   ownerWorktree,
   parseDiffHunks,
   parseLsofPidPorts,
@@ -12,6 +14,7 @@ import {
   parseWorktreeList,
   pool,
   portsByCwd,
+  rateWindow,
   remoteWebUrl,
   removeSummary,
   trimSeps,
@@ -535,4 +538,78 @@ Deno.test("diffSnapshots: NaN does not diverge against itself", () => {
   const live = snap(["/r/one", [wt("/r/one", { ahead: NaN, behind: 1 })]]);
   const truth = snap(["/r/one", [wt("/r/one", { ahead: NaN, behind: NaN })]]);
   assertEquals(diffSnapshots(live, truth).map((d) => d.field), ["behind"]);
+});
+
+// ---- rateWindow ----
+
+Deno.test("rateWindow: counts the window and forgets what falls out", () => {
+  const w = rateWindow(1000, 10); // 100 ms slots
+  for (let t = 0; t < 500; t += 100) w.add(10_000 + t);
+  assertEquals(w.count(10_400), 5);
+  // a second past the first add, only the later four slots are still inside
+  assertEquals(w.count(11_000), 4);
+  // and with no further adds it decays to zero on time alone
+  assertEquals(w.count(11_500), 0);
+});
+
+Deno.test("rateWindow: add returns the live count, slots are reused", () => {
+  const w = rateWindow(1000, 10);
+  assertEquals(w.add(0), 1);
+  assertEquals(w.add(0), 2);
+  // same ring slot one full window later: the stale count must not be added to
+  assertEquals(w.add(1000), 1);
+  assertEquals(w.add(1900), 2);
+});
+
+// ---- hotBackoff ----
+
+const HOT = (st: Parameters<typeof hotBackoff>[0], hits: number, now: number) =>
+  hotBackoff(st, hits, now, 10, 30_000);
+
+Deno.test("hotBackoff: a quiet repo runs immediately and stays stateless", () => {
+  assertEquals(HOT(undefined, 0, 0), { run: true, state: undefined });
+  assertEquals(HOT(undefined, 9, 0), { run: true, state: undefined });
+});
+
+Deno.test("hotBackoff: past the threshold the interval doubles to the cap", () => {
+  let now = 0;
+  let st = HOT(undefined, 10, now).state;
+  assertEquals(st, { intervalMs: 1000, nextAt: 1000 });
+  for (const want of [2000, 4000, 8000, 16_000, 30_000, 30_000]) {
+    now = st!.nextAt;
+    const d = HOT(st, 20, now);
+    assertEquals(d.run, true); // delayed, never dropped
+    st = d.state;
+    assertEquals(st!.intervalMs, want);
+  }
+});
+
+Deno.test("hotBackoff: before its slot a hot repo is deferred, not dropped", () => {
+  const st = { intervalMs: 4000, nextAt: 5000 };
+  assertEquals(HOT(st, 20, 4999), { run: false, state: st });
+  assertEquals(HOT(st, 20, 5000).run, true);
+});
+
+Deno.test("hotBackoff: a late look is not a quiet one", () => {
+  // owed at 5000, asked at 9000: the repo was still dirty the whole time, so
+  // this is deferral catching up, not calm. It must keep doubling.
+  const st = { intervalMs: 4000, nextAt: 5000 };
+  assertEquals(HOT(st, 20, 9000).state, { intervalMs: 8000, nextAt: 17_000 });
+});
+
+Deno.test("backoffOver: one quiet interval past the owed slot", () => {
+  const st = { intervalMs: 4000, nextAt: 5000 };
+  assertEquals(backoffOver(st, 8999), false);
+  assertEquals(backoffOver(st, 9000), true);
+});
+
+Deno.test("rateWindow: a clock jump forward empties the window, backward is not in it", () => {
+  const w = rateWindow(1000, 10);
+  for (let t = 0; t < 500; t += 100) w.add(10_000 + t);
+  // laptop sleep: hours later nothing is in the trailing second
+  assertEquals(w.count(10_000 + 8 * 3600_000), 0);
+  // and a clock stepped backwards must not count those slots as "in window"
+  assertEquals(w.count(10_000 - 8 * 3600_000), 0);
+  // an add after the backward step starts a fresh count
+  assertEquals(w.add(1000), 1);
 });

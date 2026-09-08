@@ -110,6 +110,15 @@ export function ownerWorktree(
     .sort((a, b) => b.length - a.length)[0];
 }
 
+// A zero threshold is worse than the default: watchStormRate 0 makes the first
+// event a storm and the exit condition unreachable (the watcher never comes
+// back), watchHotThreshold 0 puts every repo in permanent backoff. *Ms keys
+// have their own floor below.
+const MIN_SETTING: Record<string, number> = {
+  watchStormRate: 1,
+  watchHotThreshold: 1,
+};
+
 export function coerceSettings(
   defaults: Record<string, unknown>,
   body: Record<string, unknown>,
@@ -120,7 +129,9 @@ export function coerceSettings(
     const v = body[k];
     if (typeof d === "number") {
       const n = Math.floor(Number(v));
-      if (Number.isFinite(n)) out[k] = Math.max(k.endsWith("Ms") ? 250 : 0, n);
+      if (Number.isFinite(n)) {
+        out[k] = Math.max(k.endsWith("Ms") ? 250 : MIN_SETTING[k] ?? 0, n);
+      }
     } else if (typeof d === "string") {
       if (typeof v === "string" && v.trim()) out[k] = v.trim();
     } else if (typeof d === "boolean") {
@@ -386,4 +397,80 @@ export function diffSnapshots(
     if (!sweep.has(p)) add(p, null, "repoRemoved", p, null);
   }
   return out;
+}
+
+// ---- backoff + storm: the safety valve (step 6, docs/fs-watch.md) ----
+
+/**
+ * Rolling count over the trailing `windowMs`, in `buckets` time slots.
+ * Bounded memory and no pruning walk — a slot older than the window is simply
+ * not counted, so the count decays with time even if nothing is ever added.
+ * `now` is a parameter, so the caller (and the tests) own the clock.
+ *
+ * ponytail: slot-granular, so the count is accurate to windowMs/buckets. Both
+ * users (a 60 s recompute window, a 5 s event window) are thresholds, not
+ * billing.
+ */
+export function rateWindow(windowMs: number, buckets = 12) {
+  const width = windowMs / buckets;
+  const counts = new Array<number>(buckets).fill(0);
+  const slots = new Array<number>(buckets).fill(-Infinity);
+  const slotOf = (now: number) => Math.floor(now / width);
+  const count = (now: number) => {
+    const cur = slotOf(now);
+    const oldest = cur - buckets + 1;
+    let n = 0;
+    // `<= cur` as well as `>= oldest`: a clock stepped backwards leaves slots
+    // in the future, which are not in the trailing window either.
+    for (let i = 0; i < buckets; i++) {
+      if (slots[i] >= oldest && slots[i] <= cur) n += counts[i];
+    }
+    return n;
+  };
+  return {
+    count,
+    add(now: number) {
+      const s = slotOf(now);
+      const i = ((s % buckets) + buckets) % buckets;
+      if (slots[i] !== s) {
+        slots[i] = s;
+        counts[i] = 0;
+      }
+      counts[i]++;
+      return count(now);
+    },
+  };
+}
+
+/** Backoff state for one hot repo. Absent = not in backoff. */
+export type HotState = { intervalMs: number; nextAt: number };
+
+/**
+ * One quiet interval: the repo was owed a recompute at `nextAt` and a whole
+ * further interval passed. Only meaningful for a repo with nothing pending —
+ * a *deferred* repo is late because we are holding it, not because it is
+ * quiet, so the caller ANDs this with "not dirty".
+ */
+export const backoffOver = (st: HotState, now: number) =>
+  now >= st.nextAt + st.intervalMs;
+
+/**
+ * May this dirty repo be recomputed now, and what is its backoff afterwards?
+ * Pure: the caller keeps the state and the window.
+ *
+ * `hits` is that repo's recomputes in the trailing 60 s. Past `threshold` the
+ * repo enters backoff and its interval doubles from 1 s to `maxMs`. `run:
+ * false` means *later*, never *never*: the caller leaves the repo dirty.
+ */
+export function hotBackoff(
+  st: HotState | undefined,
+  hits: number,
+  now: number,
+  threshold: number,
+  maxMs: number,
+): { run: boolean; state: HotState | undefined } {
+  if (st && now < st.nextAt) return { run: false, state: st }; // defer, keep dirty
+  if (!st && hits < threshold) return { run: true, state: undefined };
+  const intervalMs = Math.min(st ? st.intervalMs * 2 : 1000, maxMs);
+  return { run: true, state: { intervalMs, nextAt: now + intervalMs } };
 }

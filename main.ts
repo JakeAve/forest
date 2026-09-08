@@ -2,10 +2,13 @@ import { serveDir } from "@std/http/file-server";
 import { basename, dirname, join } from "@std/path";
 import { mergeInclude, parseThemeText, resolveTheme } from "./src/theme.js";
 import {
+  backoffOver,
   classifyPath,
   coerceSettings,
   diffSnapshots,
   fillCommand,
+  hotBackoff,
+  type HotState,
   ownerWorktree,
   parseDiffHunks,
   parseLsofPidPorts,
@@ -13,6 +16,7 @@ import {
   parseWorktreeList,
   pool,
   portsByCwd,
+  rateWindow,
   remoteWebUrl,
   settingsOverrides,
 } from "./parse.ts";
@@ -27,6 +31,9 @@ const DEFAULTS = {
   watchDebounceMs: 300,
   watchMaxWaitMs: 2000,
   watchSweepMs: 300000,
+  watchHotThreshold: 10,
+  watchBackoffMaxMs: 30000,
+  watchStormRate: 2000,
   recentCount: 10,
   agoRefreshMs: 30000,
   toastMs: 7000,
@@ -122,6 +129,11 @@ const stats = {
   watchDebounceCollapsedTotal: 0, // marks that landed on an already-dirty repo
   watchRootCollapsedTotal: 0, // root rescans that landed on an already-dirty root
   watcherRestartsTotal: 0,
+  // ---- backoff + storm: the safety valve (step 6) ----
+  watchBackoffEntriesTotal: 0, // repos that went hot
+  watchBackoffExitsTotal: 0, // ...and later went quiet again
+  watchStormEntriesTotal: 0,
+  watchStormMsTotal: 0, // time spent degraded to plain polling
   // ---- safety net + divergence (step 5) ----
   // sweepsTotal counts every full sweep, whatever fired it (timer, mutating
   // POST, root rescan). This counts only the timed safety-net ones, so
@@ -590,11 +602,21 @@ function recordDivergences(truth: Map<string, Repo>) {
       stats.divergenceChecksSkippedTotal++;
       return;
     }
+    // A repo still dirty at check time has not caught up yet, and a repo in
+    // backoff is dirty for as long as its interval — deliberately stale, by
+    // our own decision. Judging it would report our backoff as a missed event
+    // and make the metric cry wolf, so the exclusion is "touched during the
+    // window OR still owed a recompute". The cost is that a repo which is
+    // never both quiet and clean is never judged; what says how much that
+    // costs is divergenceReposExcludedTotal vs divergenceReposCheckedTotal
+    // (and watchDirty per line). NOT hotRepos: backoff is a subset of dirty,
+    // so hotRepos can read 0 while repos are being excluded every check.
+    const excluded = touched.union(dirty);
     let checked = 0;
-    for (const p of truth.keys()) if (!touched.has(p)) checked++;
+    for (const p of truth.keys()) if (!excluded.has(p)) checked++;
     stats.divergenceReposCheckedTotal += checked;
     stats.divergenceReposExcludedTotal += truth.size - checked;
-    for (const d of diffSnapshots(repoByPath, truth, touched)) {
+    for (const d of diffSnapshots(repoByPath, truth, excluded)) {
       stats.divergencesTotal++;
       const k = DIVERGENCE_STAT[d.field as keyof typeof DIVERGENCE_STAT];
       if (k) stats[k]++;
@@ -664,13 +686,89 @@ async function poll() {
 
 // ---- watcher: invalidate, never compute (docs/fs-watch.md) ----
 
-const mode = () => SETTINGS.watch && watcherUp ? "watch" : "poll";
+// storm mode is exactly "stop being a watcher": events are dropped and the
+// timed loop polls everything on pollMs, which is what Forest did before this
+// branch. Degrading to the old behaviour is the whole point of the valve.
+const mode = () => SETTINGS.watch && watcherUp && !storm ? "watch" : "poll";
 let watcherUp = false;
 const dirty = new Set<string>(); // repo paths
+
+// ---- storm mode: defence of last resort (docs/fs-watch.md) ----
+// A flood the ignore list did not anticipate. Above watchStormRate we stop
+// acting on events, force one full sweep so no repo is left behind, and let
+// the timed loop poll everything until the flood is over. Events are still
+// classified and counted throughout — entry and exit have to measure the same
+// population, or ignorable traffic would pin the watcher off.
+let storm = false;
+let stormTickAt = 0; // last time watchStormMsTotal was topped up
+let stormStartedAt = 0;
+let stormQuietSince = 0; // when the rate first dropped under threshold/4
+const STORM_WINDOW_MS = 5000;
+const stormWindow = rateWindow(STORM_WINDOW_MS, 10);
+const eventRate = (now: number) =>
+  stormWindow.count(now) / (STORM_WINDOW_MS / 1000);
+// counted only while the rate is already elevated (the run-up) and then
+// throughout the storm itself, so it always names the live offender rather
+// than a lifetime histogram. ponytail: capped at 1000 keys and keyed by parent
+// dir — enough to write an ignore rule from.
+const offenders = new Map<string, number>();
+// the top prefixes are the deliverable: they name the missing ignore rule
+function topOffenders() {
+  const top = [...offenders].sort((a, b) => b[1] - a[1]).slice(0, 3);
+  offenders.clear();
+  return top;
+}
+
+function enterStorm(rate: number) {
+  storm = true;
+  stormStartedAt = stormTickAt = Date.now();
+  stormQuietSince = 0;
+  stats.watchStormEntriesTotal++;
+  const top = topOffenders();
+  console.error(
+    `forest: storm mode, ${Math.round(rate)} events/s; top paths: ` +
+      (top.map(([p, n]) => `${p} (${n})`).join(", ") || "none recorded"),
+  );
+  logLine({
+    type: "storm",
+    rate: Math.round(rate),
+    top: top.map(([prefix, count]) => ({ prefix, count })),
+  });
+  // every repo is suspect while events are being dropped
+  markRoot();
+}
 let rootDirty = false;
 let debounceTimer: ReturnType<typeof setTimeout> | undefined;
 let firstMarkAt = 0; // when the current dirty batch was first marked
 let pending = false; // a drain timer is armed and has not fired yet
+
+// ---- per-repo backoff (docs/fs-watch.md) ----
+// One entry per repo that has recomputed recently; `st` is set only while the
+// repo is in backoff. Dropped again as soon as both are empty, so the map is
+// the hot set, not a registry of every repo.
+const hot = new Map<
+  string,
+  { win: ReturnType<typeof rateWindow>; st?: HotState }
+>();
+
+function hotEntry(path: string) {
+  let h = hot.get(path);
+  if (!h) hot.set(path, h = { win: rateWindow(60_000) });
+  return h;
+}
+
+// Leaving backoff has to be checked when nothing is happening — that is what
+// quiet means — so it rides the timed loop rather than the drain.
+function sweepHot() {
+  const now = Date.now();
+  for (const [path, h] of hot) {
+    if (h.st && !dirty.has(path) && backoffOver(h.st, now)) {
+      h.st = undefined;
+      stats.watchBackoffExitsTotal++;
+    }
+    if (!h.st && !h.win.count(now)) hot.delete(path); // cold: forget it
+  }
+}
 
 // ponytail: one global debounce timer, not one per repo — a repo that never
 // goes quiet delays every other dirty repo with it. Per-repo timers if that
@@ -734,9 +832,28 @@ async function drain() {
         rootRescanning = false;
       });
     } else {
+      const now = Date.now();
       const todo = [...dirty];
       dirty.clear();
-      await pool(REPO_JOBS, todo, async (path) => {
+      // backoff gate: a hot repo is put back in the dirty set instead of being
+      // recomputed. It is never dropped — it stays dirty, the trailing
+      // schedule() below keeps firing, and it runs when its interval is up.
+      const run: string[] = [];
+      for (const path of todo) {
+        const h = hotEntry(path);
+        const d = hotBackoff(
+          h.st,
+          h.win.count(now),
+          now,
+          SETTINGS.watchHotThreshold,
+          SETTINGS.watchBackoffMaxMs,
+        );
+        if (!h.st && d.state) stats.watchBackoffEntriesTotal++;
+        h.st = d.state; // only sweepHot clears it: exiting needs quiet, not a drain
+        if (d.run) run.push(path);
+        else dirty.add(path); // deferred, not dropped
+      }
+      await pool(REPO_JOBS, run, async (path) => {
         touched.add(path); // recomputed inside a sweep window: not judgeable
         const known = repoByPath.get(path);
         if (!known) return;
@@ -752,13 +869,16 @@ async function drain() {
           repoByPath.delete(path);
         }
         stats.watchRecomputesTotal++;
+        hotEntry(path).win.add(Date.now());
       });
-      if (todo.length) publish();
+      if (run.length) publish();
     }
   } finally {
     draining = false;
+    // inside the finally: a throw that skipped this would leave deferred repos
+    // dirty with no timer — never recomputed, and never judged either.
+    if (dirty.size || rootDirty) schedule();
   }
-  if (dirty.size || rootDirty) schedule();
 }
 
 const BUCKET_STAT = {
@@ -770,14 +890,31 @@ const BUCKET_STAT = {
 } as const;
 
 function onEvent(ev: Deno.FsEvent) {
-  if (mode() !== "watch") return; // watch flipped off at runtime: act like poll
+  if (!SETTINGS.watch || !watcherUp) return; // act like poll
+  const now = Date.now();
   for (const path of ev.paths) {
     stats.watchEventsTotal++;
     // knownWorktrees is already "every repo and worktree path -> repo path":
     // a repo's primary worktree path is the repo path.
     const { bucket, repo } = classifyPath(path, ROOT, knownWorktrees);
     stats[BUCKET_STAT[bucket]]++;
+    // Classification runs in a storm too, so entry and exit measure the same
+    // population: an ignored flood (`npm ci` in node_modules) must not hold us
+    // off the watcher. Measured, it is not the expensive part either — the
+    // rate window costs about what the string scan does. What bounds the work
+    // is dropping the event below, not skipping the classify.
     if (bucket === "ignore") continue;
+    const rate = stormWindow.add(now) / (STORM_WINDOW_MS / 1000);
+    // during a storm this keeps naming what is holding it open, which is the
+    // input to the next ignore rule
+    if (storm || rate > SETTINGS.watchStormRate / 4) {
+      const dir = dirname(path);
+      if (offenders.size < 1000 || offenders.has(dir)) {
+        offenders.set(dir, (offenders.get(dir) ?? 0) + 1);
+      }
+    } else if (offenders.size) offenders.clear();
+    if (storm) continue; // counted, never marked: that is what bounds the work
+    if (rate > SETTINGS.watchStormRate) return enterStorm(rate);
     if (repo) markRepo(repo);
     else markRoot();
   }
@@ -837,7 +974,13 @@ const statsLine = () => ({
   watchDebounceMs: SETTINGS.watchDebounceMs,
   watchMaxWaitMs: SETTINGS.watchMaxWaitMs,
   watchSweepMs: SETTINGS.watchSweepMs,
+  watchHotThreshold: SETTINGS.watchHotThreshold,
+  watchBackoffMaxMs: SETTINGS.watchBackoffMaxMs,
+  watchStormRate: SETTINGS.watchStormRate,
   watchDirty: dirty.size,
+  hotRepos: [...hot.values()].filter((h) => h.st).length, // in backoff now
+  watchEventRate: Math.round(eventRate(Date.now())),
+  storm,
 });
 
 // One flat line a minute, plus one per divergence; failures are logged once
@@ -880,6 +1023,35 @@ let lastSafetySweep = Date.now();
   while (true) {
     await new Promise((r) => setTimeout(r, SETTINGS.pollMs));
     try {
+      sweepHot();
+      if (storm) {
+        const now = Date.now();
+        // a laptop suspend during a storm would otherwise charge the whole
+        // sleep to the storm; an implausible delta is a stopped clock, not time
+        stats.watchStormMsTotal += Math.min(
+          now - stormTickAt,
+          4 * SETTINGS.pollMs,
+        );
+        stormTickAt = now;
+        // out once the flood has been under a quarter of the threshold for 30 s
+        if (eventRate(now) >= SETTINGS.watchStormRate / 4) stormQuietSince = 0;
+        else if (!stormQuietSince) stormQuietSince = now;
+        else if (now - stormQuietSince >= 30_000) {
+          storm = false;
+          const top = topOffenders(); // what was still arriving during it
+          console.error(
+            "forest: storm over, watching again; top paths: " +
+              (top.map(([p, n]) => `${p} (${n})`).join(", ") ||
+                "none recorded"),
+          );
+          logLine({
+            type: "stormOver",
+            ms: now - stormStartedAt,
+            top: top.map(([prefix, count]) => ({ prefix, count })),
+          });
+          markRoot(); // events were dropped: sweep once before trusting them
+        }
+      }
       // in watch mode the git sweep is the watcher's job; the timed loop only
       // carries the two sources that are not per-repo events. ponytail: ports
       // and PRs share pollMs rather than earning a setting each.
