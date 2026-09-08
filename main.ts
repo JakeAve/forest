@@ -83,7 +83,41 @@ async function loadVsCodeTheme(path: string): Promise<unknown> {
 }
 const dec = new TextDecoder();
 
+// ---- baseline metrics (experiment; see docs/fs-watch.md) ----
+// Cumulative since start. Diff two log lines to get a rate.
+// *Total fields are cumulative since startedAt — diff two lines for a rate.
+// Everything else is a gauge, true only at the instant the line was written.
+const stats = {
+  startedAt: Date.now(),
+  sweepsTotal: 0,
+  sweepMsTotal: 0, // divide by sweepsTotal for mean duration over any window
+  subprocessesTotal: 0,
+  gitTotal: 0,
+  ghTotal: 0,
+  otherTotal: 0,
+  broadcastsTotal: 0,
+  errorsTotal: 0,
+  // swallowed per-repo failures; a repo can vanish from the snapshot without
+  // errorsTotal moving. Never zero: repos with no origin/HEAD or no upstream
+  // fail two calls every sweep. Watch the rate, not the value.
+  gitFailTotal: 0,
+  ghFailTotal: 0,
+  logWritesTotal: 0,
+  logFailTotal: 0,
+  sweepMs: 0, // last sweep
+  snapshotBytes: 0, // last snapshot that changed
+  repos: 0,
+  worktrees: 0,
+};
+const spawned = (bin: string) => {
+  stats.subprocessesTotal++;
+  if (bin === "git") stats.gitTotal++;
+  else if (bin === "gh") stats.ghTotal++;
+  else stats.otherTotal++;
+};
+
 async function exec(cwd: string, cmd: string[]): Promise<string> {
+  spawned(cmd[0]);
   const out = await new Deno.Command(cmd[0], {
     args: cmd.slice(1),
     cwd,
@@ -100,7 +134,10 @@ async function exec(cwd: string, cmd: string[]): Promise<string> {
 const git = (cwd: string, ...args: string[]) => exec(cwd, ["git", ...args]);
 // read-only calls only: the flag keeps polling from rewriting .git/index
 const tryGit = (cwd: string, ...args: string[]) =>
-  git(cwd, "--no-optional-locks", ...args).catch(() => null);
+  git(cwd, "--no-optional-locks", ...args).catch(() => {
+    stats.gitFailTotal++;
+    return null;
+  });
 
 // ponytail: fixed ceilings, not adaptive — ~128 `git` and 8 `gh` per sweep;
 // concurrent polls stack on top, so this is a per-sweep bound, not a system one.
@@ -109,6 +146,7 @@ const WT_JOBS = 4; // worktrees per repo at once
 const PR_JOBS = 8; // `gh`: own knob, 7x `git`'s RSS per process
 
 async function gitIn(cwd: string, stdin: string, ...args: string[]) {
+  spawned("git");
   const p = new Deno.Command("git", {
     args,
     cwd,
@@ -253,6 +291,7 @@ async function computeRepos(): Promise<Repo[]> {
 // ---- listening dev servers ----
 
 async function lsof(...args: string[]): Promise<string> {
+  spawned("lsof");
   const out = await new Deno.Command("lsof", {
     args,
     stdout: "piped",
@@ -293,7 +332,10 @@ async function refreshPrs(repos: Repo[]) {
       "200",
       "--json",
       "number,url,headRefName,state",
-    ]).catch(() => null);
+    ]).catch(() => {
+      stats.ghFailTotal++;
+      return null;
+    });
     if (out === null) return;
     const byBranch = new Map<string, Pr>();
     for (const p of JSON.parse(out) as (Pr & { headRefName: string })[]) {
@@ -416,6 +458,7 @@ function broadcast(s: string) {
 }
 
 async function poll() {
+  const t0 = performance.now();
   const [repos, byCwd] = await Promise.all([computeRepos(), listeningPorts()]);
   await refreshPrs(repos);
   knownWorktrees.clear();
@@ -438,15 +481,50 @@ async function poll() {
   const s = JSON.stringify(repos);
   if (s !== snapshot) {
     snapshot = s;
+    stats.broadcastsTotal++;
+    stats.snapshotBytes = s.length;
     broadcast(s);
   }
+  stats.sweepsTotal++;
+  stats.sweepMs = Math.round(performance.now() - t0);
+  stats.sweepMsTotal += stats.sweepMs;
+  stats.repos = repos.length;
+  stats.worktrees = knownWorktrees.size;
 }
+
+const statsLine = () => ({
+  t: new Date().toISOString(),
+  uptimeMs: Date.now() - stats.startedAt,
+  ...stats,
+  rss: Deno.memoryUsage().rss,
+  clients: clients.size,
+  pollMs: SETTINGS.pollMs,
+});
+
+// one flat line a minute; failures are logged once and never reach the poll loop
+const LOG_PATH = join(HOME, ".forest", "watch-log.jsonl");
+let logFailed = false;
+setInterval(async () => {
+  try {
+    await Deno.mkdir(join(HOME, ".forest"), { recursive: true });
+    await Deno.writeTextFile(LOG_PATH, JSON.stringify(statsLine()) + "\n", {
+      append: true,
+    });
+    stats.logWritesTotal++;
+    logFailed = false;
+  } catch (e) {
+    stats.logFailTotal++;
+    if (!logFailed) console.error("watch-log write failed:", e);
+    logFailed = true;
+  }
+}, 60_000);
 
 (async () => {
   while (true) {
     try {
       await poll();
     } catch (e) {
+      stats.errorsTotal++;
       console.error(e);
     }
     await new Promise((r) => setTimeout(r, SETTINGS.pollMs));
@@ -486,6 +564,7 @@ const server = Deno.serve({ port: SETTINGS.port }, async (req) => {
         },
       });
     }
+    if (url.pathname === "/api/stats") return json(statsLine());
     if (url.pathname === "/api/settings") {
       if (req.method === "PUT") {
         Object.assign(SETTINGS, coerceSettings(DEFAULTS, await req.json()));
