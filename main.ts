@@ -9,6 +9,7 @@ import {
   parseLsofPidPorts,
   parseStatus,
   parseWorktreeList,
+  pool,
   portsByCwd,
   remoteWebUrl,
   settingsOverrides,
@@ -100,6 +101,12 @@ const git = (cwd: string, ...args: string[]) => exec(cwd, ["git", ...args]);
 // read-only calls only: the flag keeps polling from rewriting .git/index
 const tryGit = (cwd: string, ...args: string[]) =>
   git(cwd, "--no-optional-locks", ...args).catch(() => null);
+
+// ponytail: fixed ceilings, not adaptive — ~128 `git` and 8 `gh` per sweep;
+// concurrent polls stack on top, so this is a per-sweep bound, not a system one.
+const REPO_JOBS = 8; // repos swept at once
+const WT_JOBS = 4; // worktrees per repo at once
+const PR_JOBS = 8; // `gh`: own knob, 7x `git`'s RSS per process
 
 async function gitIn(cwd: string, stdin: string, ...args: string[]) {
   const p = new Deno.Command("git", {
@@ -212,7 +219,7 @@ async function computeRepos(): Promise<Repo[]> {
     );
     if (hasGit) candidates.push({ name: e.name, path: p });
   }
-  const repos = await Promise.all(candidates.map(async ({ name, path }) => {
+  const repos = await pool(REPO_JOBS, candidates, async ({ name, path }) => {
     const [porcelain, originUrl, refs] = await Promise.all([
       tryGit(path, "worktree", "list", "--porcelain"),
       tryGit(path, "remote", "get-url", "origin"),
@@ -226,10 +233,10 @@ async function computeRepos(): Promise<Repo[]> {
         r.slice(7)
       ),
     );
-    const worktrees = await Promise.all(
-      list.map((wt, i) =>
-        loadWorktree(name, wt, i === 0, list[0].branch, pushed)
-      ),
+    const worktrees = await pool(
+      WT_JOBS,
+      list,
+      (wt, i) => loadWorktree(name, wt, i === 0, list[0].branch, pushed),
     );
     return {
       name,
@@ -237,7 +244,7 @@ async function computeRepos(): Promise<Repo[]> {
       webUrl: originUrl ? remoteWebUrl(originUrl) : null,
       worktrees,
     };
-  }));
+  });
   return repos.filter((r): r is Repo => r !== null).sort((a, b) =>
     a.name.localeCompare(b.name)
   );
@@ -275,7 +282,7 @@ let prsAt = 0;
 async function refreshPrs(repos: Repo[]) {
   if (prsAt && Date.now() - prsAt < SETTINGS.prPollMs) return;
   prsAt = Date.now();
-  await Promise.all(repos.map(async (r) => {
+  await pool(PR_JOBS, repos, async (r) => {
     const out = await exec(r.path, [
       "gh",
       "pr",
@@ -300,7 +307,7 @@ async function refreshPrs(repos: Repo[]) {
       }
     }
     prsByRepo.set(r.path, byBranch);
-  }));
+  });
 }
 
 // ---- files & diff ----

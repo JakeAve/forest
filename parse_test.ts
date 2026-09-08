@@ -7,6 +7,7 @@ import {
   parseLsofPidPorts,
   parseStatus,
   parseWorktreeList,
+  pool,
   portsByCwd,
   remoteWebUrl,
   removeSummary,
@@ -178,4 +179,26 @@ Deno.test("trimSeps drops leading, trailing and doubled separators", () => {
   assertEquals(trimSeps(["-", "a", "-", "-", "b", "-"]), ["a", "-", "b"]);
   assertEquals(trimSeps(["-", "-"]), []);
   assertEquals(trimSeps(["a", "b"]), ["a", "b"]);
+});
+
+Deno.test("pool keeps input order, bounds concurrency, runs each item once", async () => {
+  let live = 0, peak = 0;
+  const runs: number[] = [];
+  const out = await pool(3, [10, 20, 30, 40, 50, 60, 70], async (n, i) => {
+    peak = Math.max(peak, ++live);
+    runs.push(i);
+    await new Promise((r) => setTimeout(r, n % 30));
+    live--;
+    return n * 2;
+  });
+  assertEquals(out, [20, 40, 60, 80, 100, 120, 140]);
+  assertEquals(peak, 3);
+  assertEquals(runs.toSorted((a, b) => a - b), [0, 1, 2, 3, 4, 5, 6]);
+});
+
+Deno.test("pool handles empty, oversized limit, and never returns holes", async () => {
+  assertEquals(await pool(4, [], (n) => Promise.resolve(n)), []);
+  assertEquals(await pool(99, [1, 2], (n) => Promise.resolve(n * 3)), [3, 6]);
+  // a limit of 0 must still process every item, not silently return holes
+  assertEquals(await pool(0, [1, 2], (n) => Promise.resolve(n * 3)), [3, 6]);
 });

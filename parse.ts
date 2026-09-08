@@ -197,3 +197,23 @@ export function trimSeps<T>(items: (T | "-")[]): (T | "-")[] {
   if (out.at(-1) === "-") out.pop();
   return out;
 }
+
+/** Promise.all with at most `limit` in flight. Same order, same rejection. */
+export async function pool<T, R>(
+  limit: number,
+  items: T[],
+  fn: (item: T, i: number) => Promise<R>,
+): Promise<R[]> {
+  const out = new Array<R>(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const i = next++;
+      out[i] = await fn(items[i], i);
+    }
+  };
+  await Promise.all(
+    Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, worker),
+  );
+  return out;
+}
