@@ -1,0 +1,14 @@
+node_modules/
+dist/
+Forest.app/
+docs/
+
+# agent scratch dirs
+.DS_Store
+.playwright-mcp/
+.playwright-profile/
+.superpowers/
+.impeccable/
+.worktrees/
+.claude/worktrees/
+.claude/settings.local.json
