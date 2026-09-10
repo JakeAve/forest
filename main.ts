@@ -9,6 +9,7 @@ import { basename, dirname, join, resolve } from "@std/path";
 import { mergeInclude, parseThemeText, resolveTheme } from "./src/theme.js";
 import {
   backoffOver,
+  ciSummary,
   classifyPath,
   coerceSettings,
   diffSnapshots,
@@ -640,10 +641,40 @@ async function listeningPorts(): Promise<
 
 // ---- open pull requests ----
 
-type Pr = { number: number; url: string; state: string };
-const prsByRepo = new Map<string, Map<string, Pr>>();
-const prFor = (prs: Map<string, Pr> | undefined, w: Worktree) =>
-  prs?.get(w.branch) ?? (w.remote ? prs?.get(w.remote) : null) ?? null;
+type Pr = {
+  number: number;
+  url: string;
+  state: "OPEN" | "MERGED" | "CLOSED";
+  title: string;
+  isDraft: boolean;
+  baseRefName: string;
+  reviewDecision: "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED" | "";
+  mergeable: "MERGEABLE" | "CONFLICTING" | "UNKNOWN";
+  ci: { state: "pass" | "fail" | "pending" | null; failing: string[] };
+  detailAt: number | null;
+};
+type PrSlim = Pick<Pr, "number" | "url" | "state">;
+const prsByRepo = new Map<string, Map<string, PrSlim>>();
+const prDetail = new Map<string, Omit<Pr, "number" | "url" | "state">>();
+const NO_DETAIL: Omit<Pr, "number" | "url" | "state"> = {
+  title: "",
+  isDraft: false,
+  baseRefName: "",
+  reviewDecision: "",
+  mergeable: "UNKNOWN",
+  ci: { state: null, failing: [] },
+  detailAt: null,
+};
+const prFor = (
+  repo: string,
+  prs: Map<string, PrSlim> | undefined,
+  w: Worktree,
+): Pr | null => {
+  const p = prs?.get(w.branch) ?? (w.remote ? prs?.get(w.remote) : null);
+  return p
+    ? { ...p, ...(prDetail.get(`${repo}#${p.number}`) ?? NO_DETAIL) }
+    : null;
+};
 
 // repo path -> earliest next gh call. Only an OPEN pr can change under us, so a
 // repo without one is checked on the idle floor: enough to notice a PR opened in
@@ -659,6 +690,7 @@ async function refreshPrs(repos: Repo[]) {
   const due = repos.filter((r) =>
     r.webUrl && now >= (ghNextAt.get(r.path) ?? 0)
   );
+  const jobs: [string, number][] = [];
   await pool(PR_JOBS, due, async (r) => {
     const out = await exec(r.path, [
       "gh",
@@ -682,8 +714,8 @@ async function refreshPrs(repos: Repo[]) {
     });
     if (out === null) return;
     ghFailed.delete(r.path);
-    const byBranch = new Map<string, Pr>();
-    for (const p of JSON.parse(out) as (Pr & { headRefName: string })[]) {
+    const byBranch = new Map<string, PrSlim>();
+    for (const p of JSON.parse(out) as (PrSlim & { headRefName: string })[]) {
       const cur = byBranch.get(p.headRefName);
       if (!cur || (cur.state !== "OPEN" && p.number > cur.number)) {
         byBranch.set(p.headRefName, {
@@ -696,11 +728,46 @@ async function refreshPrs(repos: Repo[]) {
     prsByRepo.set(r.path, byBranch);
     // read off this repo's own worktrees, not the PR list: a teammate's open PR
     // cannot change anything Forest draws.
-    const open = r.worktrees.some((w) => prFor(byBranch, w)?.state === "OPEN");
+    const open = [
+      ...new Set(
+        r.worktrees.map((w) => prFor(r.path, byBranch, w)).filter((p) =>
+          p?.state === "OPEN"
+        ).map((p) => p!.number),
+      ),
+    ];
+    const keep = new Set(open.map((n) => `${r.path}#${n}`));
+    for (const k of prDetail.keys()) {
+      if (k.startsWith(`${r.path}#`) && !keep.has(k)) prDetail.delete(k);
+    }
+    for (const n of open) jobs.push([r.path, n]);
     ghNextAt.set(
       r.path,
-      Date.now() + (open ? SETTINGS.prPollMs : SETTINGS.prIdleMs),
+      Date.now() + (open.length ? SETTINGS.prPollMs : SETTINGS.prIdleMs),
     );
+  });
+  await pool(PR_JOBS, jobs, async ([repo, n]) => {
+    const out = await exec(repo, [
+      "gh",
+      "pr",
+      "view",
+      String(n),
+      "--json",
+      "title,isDraft,baseRefName,reviewDecision,mergeable,statusCheckRollup",
+    ]).catch(() => {
+      stats.ghFailTotal++;
+      return null;
+    });
+    if (out === null) return;
+    const d = JSON.parse(out);
+    prDetail.set(`${repo}#${n}`, {
+      title: d.title,
+      isDraft: d.isDraft,
+      baseRefName: d.baseRefName,
+      reviewDecision: d.reviewDecision ?? "",
+      mergeable: d.mergeable,
+      ci: ciSummary(d.statusCheckRollup ?? []),
+      detailAt: Date.now(),
+    });
   });
 }
 
@@ -853,7 +920,7 @@ function publish() {
     for (const w of r.worktrees) {
       knownWorktrees.set(w.path, r.path);
       wtByPath.set(w.path, w);
-      w.pr = prFor(prsByRepo.get(r.path), w);
+      w.pr = prFor(r.path, prsByRepo.get(r.path), w);
       w.ports = []; // recomputed from scratch: publish() runs on live objects
       w.procs = [];
     }
