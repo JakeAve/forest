@@ -5,7 +5,7 @@ import {
   WebStandardStreamableHTTPServerTransport,
 } from "@modelcontextprotocol/server";
 import { z } from "zod";
-import { basename, dirname, join } from "@std/path";
+import { basename, dirname, join, resolve } from "@std/path";
 import { mergeInclude, parseThemeText, resolveTheme } from "./src/theme.js";
 import {
   backoffOver,
@@ -19,12 +19,14 @@ import {
   parseDiffHunks,
   parseLsofPidPorts,
   parseStatus,
+  parseUpstreamTrack,
   parseWorktreeList,
   pool,
   portsByCwd,
   rateWindow,
   remoteWebUrl,
   settingsOverrides,
+  statusCounts,
 } from "./parse.ts";
 
 const HOME = Deno.env.get("HOME")!;
@@ -285,7 +287,16 @@ type Worktree = {
   head: string;
   ahead: number | null;
   behind: number | null;
+  aheadMain: number | null;
+  behindMain: number | null;
+  gone: boolean;
+  state: "rebase" | "merge" | "cherry-pick" | "detached" | null;
   dirty: number;
+  staged: number;
+  modified: number;
+  untracked: number;
+  subject: string;
+  author: string;
   lastActivity: number;
   isPrimary: boolean;
   remote: string | null;
@@ -296,13 +307,25 @@ type Repo = {
   name: string;
   path: string;
   webUrl: string | null;
+  defaultBranch: string | null;
   worktrees: Worktree[];
 };
 
+// repo main path -> refs/remotes/origin/<default>; not serialized
+const defaultRefByRepo = new Map<string, string>();
+
 async function mergeBase(wt: string): Promise<string> {
-  return (await tryGit(wt, "merge-base", "origin/HEAD", "HEAD"))?.trim() ??
-    "HEAD";
+  const ref = defaultRefByRepo.get(knownWorktrees.get(wt) ?? "") ??
+    "origin/HEAD";
+  return (await tryGit(wt, "merge-base", ref, "HEAD"))?.trim() ?? "HEAD";
 }
+
+const STATE_BY_GIT_PATH = [
+  "rebase",
+  "rebase",
+  "merge",
+  "cherry-pick",
+] as const;
 
 async function loadWorktree(
   repoName: string,
@@ -310,25 +333,55 @@ async function loadWorktree(
   isPrimary: boolean,
   primaryBranch: string,
   pushed: Set<string>,
+  gone: Set<string>,
+  defaultRef: string | null,
 ): Promise<Worktree> {
-  const [statusZ, ab, headTime, upstream] = await Promise.all([
-    tryGit(wt.path, "status", "--porcelain=v2", "-z", "--untracked-files=all"),
-    tryGit(
-      wt.path,
-      "rev-list",
-      "--left-right",
-      "--count",
-      "@{upstream}...HEAD",
-    ),
-    tryGit(wt.path, "log", "-1", "--format=%ct"),
-    tryGit(
-      wt.path,
-      "rev-parse",
-      "--abbrev-ref",
-      "--symbolic-full-name",
-      "@{upstream}",
-    ),
-  ]);
+  const [statusZ, ab, headLog, upstream, abMain, statePaths] = await Promise
+    .all([
+      tryGit(
+        wt.path,
+        "status",
+        "--porcelain=v2",
+        "-z",
+        "--untracked-files=all",
+      ),
+      tryGit(
+        wt.path,
+        "rev-list",
+        "--left-right",
+        "--count",
+        "@{upstream}...HEAD",
+      ),
+      tryGit(wt.path, "log", "-1", "--format=%ct%n%s%n%an"),
+      tryGit(
+        wt.path,
+        "rev-parse",
+        "--abbrev-ref",
+        "--symbolic-full-name",
+        "@{upstream}",
+      ),
+      defaultRef
+        ? tryGit(
+          wt.path,
+          "rev-list",
+          "--left-right",
+          "--count",
+          `${defaultRef}...HEAD`,
+        )
+        : Promise.resolve(null),
+      tryGit(
+        wt.path,
+        "rev-parse",
+        "--git-path",
+        "rebase-merge",
+        "--git-path",
+        "rebase-apply",
+        "--git-path",
+        "MERGE_HEAD",
+        "--git-path",
+        "CHERRY_PICK_HEAD",
+      ),
+    ]);
   // upstream set to the primary branch means "branched off it", not "pushed as it"
   const tracked = upstream?.trim().split("/").slice(1).join("/") || null;
   const remote = tracked && tracked !== primaryBranch
@@ -336,10 +389,26 @@ async function loadWorktree(
     : pushed.has(wt.branch)
     ? wt.branch
     : null;
-  const { dirty, untracked } = parseStatus(statusZ ?? "");
+  const st = parseStatus(statusZ ?? "");
+  const { dirty, untracked } = st;
+  const counts = statusCounts(st.entries);
   const [behind, ahead] = ab ? ab.trim().split("\t").map(Number) : [null, null];
+  const [behindMain, aheadMain] = abMain
+    ? abMain.trim().split("\t").map(Number)
+    : [null, null];
+  const [ct, subject, author] = (headLog ?? "").split("\n");
 
-  let lastActivity = Number(headTime?.trim() ?? 0) * 1000;
+  let state: Worktree["state"] = wt.branch === "(detached)" ? "detached" : null;
+  const lines = (statePaths ?? "").split("\n");
+  for (let i = 0; i < STATE_BY_GIT_PATH.length; i++) {
+    if (!lines[i]) continue;
+    if (await Deno.stat(resolve(wt.path, lines[i])).catch(() => null)) {
+      state = STATE_BY_GIT_PATH[i];
+      break;
+    }
+  }
+
+  let lastActivity = Number(ct ?? 0) * 1000;
   const changed = await tryGit(wt.path, "diff", "--name-only", "-z", "HEAD");
   const paths = [...(changed ?? "").split("\0").filter(Boolean), ...untracked];
   for (const p of paths) {
@@ -355,7 +424,16 @@ async function loadWorktree(
     head: wt.head,
     ahead,
     behind,
+    aheadMain,
+    behindMain,
+    gone: gone.has(wt.branch),
+    state,
     dirty,
+    staged: counts.staged,
+    modified: counts.modified,
+    untracked: counts.untracked,
+    subject: subject ?? "",
+    author: author ?? "",
     lastActivity,
     isPrimary,
     remote,
@@ -392,13 +470,19 @@ async function recomputeWorktrees(
   repo: Repo,
   want: Set<string>,
 ): Promise<Repo | null> {
-  const [porcelain, refs] = await Promise.all([
+  const [porcelain, refs, track] = await Promise.all([
     tryGit(repo.path, "worktree", "list", "--porcelain"),
     tryGit(
       repo.path,
       "for-each-ref",
       "--format=%(refname:short)",
       "refs/remotes",
+    ),
+    tryGit(
+      repo.path,
+      "for-each-ref",
+      "--format=%(refname:short) %(upstream:track)",
+      "refs/heads",
     ),
   ]);
   if (!porcelain) return null;
@@ -414,6 +498,7 @@ async function recomputeWorktrees(
       r.slice(7)
     ),
   );
+  const gone = parseUpstreamTrack(track ?? "");
   const targets = list.map((w, i) => ({ w, i })).filter(({ w }) =>
     want.has(w.path)
   );
@@ -421,7 +506,16 @@ async function recomputeWorktrees(
   const fresh = await pool(
     WT_JOBS,
     targets,
-    ({ w, i }) => loadWorktree(repo.name, w, i === 0, list[0].branch, pushed),
+    ({ w, i }) =>
+      loadWorktree(
+        repo.name,
+        w,
+        i === 0,
+        list[0].branch,
+        pushed,
+        gone,
+        defaultRefByRepo.get(repo.path) ?? null,
+      ),
   );
   const byPath = new Map(fresh.map((w) => [w.path, w]));
   return {
@@ -431,10 +525,17 @@ async function recomputeWorktrees(
 }
 
 async function computeRepo(name: string, path: string): Promise<Repo | null> {
-  const [porcelain, originUrl, refs] = await Promise.all([
+  const [porcelain, originUrl, refs, headRef, track] = await Promise.all([
     tryGit(path, "worktree", "list", "--porcelain"),
     tryGit(path, "remote", "get-url", "origin"),
     tryGit(path, "for-each-ref", "--format=%(refname:short)", "refs/remotes"),
+    tryGit(path, "symbolic-ref", "refs/remotes/origin/HEAD"),
+    tryGit(
+      path,
+      "for-each-ref",
+      "--format=%(refname:short) %(upstream:track)",
+      "refs/heads",
+    ),
   ]);
   if (!porcelain) return null;
   const list = parseWorktreeList(porcelain);
@@ -447,15 +548,21 @@ async function computeRepo(name: string, path: string): Promise<Repo | null> {
       r.slice(7)
     ),
   );
+  const defaultRef = headRef?.trim() || null;
+  if (defaultRef) defaultRefByRepo.set(path, defaultRef);
+  else defaultRefByRepo.delete(path);
+  const gone = parseUpstreamTrack(track ?? "");
   const worktrees = await pool(
     WT_JOBS,
     list,
-    (wt, i) => loadWorktree(name, wt, i === 0, list[0].branch, pushed),
+    (wt, i) =>
+      loadWorktree(name, wt, i === 0, list[0].branch, pushed, gone, defaultRef),
   );
   return {
     name,
     path,
     webUrl: originUrl ? remoteWebUrl(originUrl) : null,
+    defaultBranch: defaultRef?.replace("refs/remotes/origin/", "") ?? null,
     worktrees,
   };
 }
