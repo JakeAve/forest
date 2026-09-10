@@ -1,3 +1,6 @@
+import { z } from "zod";
+import { matchWt } from "./src/filter.js";
+
 export function parseWorktreeList(porcelain: string) {
   const wts: { path: string; head: string; branch: string }[] = [];
   for (const block of porcelain.trim().split("\n\n")) {
@@ -64,10 +67,12 @@ function fieldLines(
   s: string,
   onPid: (pid: string) => void,
   onName: (n: string) => void,
+  onCmd?: (c: string) => void,
 ) {
   for (const line of s.split("\n")) {
     if (line[0] === "p") onPid(line.slice(1));
     else if (line[0] === "n") onName(line.slice(1));
+    else if (line[0] === "c") onCmd?.(line.slice(1));
   }
 }
 
@@ -95,6 +100,40 @@ export function portsByCwd(
         [...new Set([...(byCwd.get(cwd) ?? []), ...ports])].sort((a, b) =>
           a - b
         ),
+      );
+    }
+  });
+  return byCwd;
+}
+
+export function parseLsofCommands(net: string): Map<string, string> {
+  const cmds = new Map<string, string>();
+  let pid = "";
+  fieldLines(net, (p) => (pid = p), () => {}, (c) => cmds.set(pid, c));
+  return cmds;
+}
+
+export function procsByCwd(
+  byPid: Map<string, number[]>,
+  cmds: Map<string, string>,
+  cwds: string,
+): Map<string, { port: number; pid: number; command: string }[]> {
+  const byCwd = new Map<
+    string,
+    { port: number; pid: number; command: string }[]
+  >();
+  let pid = "";
+  fieldLines(cwds, (p) => (pid = p), (cwd) => {
+    const ports = byPid.get(pid);
+    if (ports) {
+      const entries = [...new Set(ports)].map((port) => ({
+        port,
+        pid: Number(pid),
+        command: cmds.get(pid) ?? "",
+      }));
+      byCwd.set(
+        cwd,
+        [...(byCwd.get(cwd) ?? []), ...entries].sort((a, b) => a.port - b.port),
       );
     }
   });
@@ -485,3 +524,92 @@ export function hotBackoff(
   const intervalMs = Math.min(st ? st.intervalMs * 2 : 1000, maxMs);
   return { run: true, state: { intervalMs, nextAt: now + intervalMs } };
 }
+
+// ---- agent interface ----
+
+export type FileRow = {
+  path: string;
+  status: string;
+  added: number;
+  removed: number;
+  staged: boolean;
+  unstaged: boolean;
+};
+export type Files = { base: string; files: FileRow[] };
+
+export function statusCounts(
+  entries: { xy: string }[],
+): { staged: number; modified: number; untracked: number } {
+  const untracked = entries.filter((e) => e.xy === "??").length;
+  const rest = entries.filter((e) => e.xy !== "??");
+  return {
+    staged: rest.filter((e) => e.xy[0] !== ".").length,
+    modified: rest.filter((e) => e.xy[1] !== ".").length,
+    untracked,
+  };
+}
+
+export function parseUpstreamTrack(out: string): Set<string> {
+  const gone = new Set<string>();
+  for (const line of out.split("\n")) {
+    const m = line.match(/^(\S+)\s*(.*)$/);
+    if (m && m[2].trim() === "[gone]") gone.add(m[1]);
+  }
+  return gone;
+}
+
+const FAIL_CONCLUSION = new Set([
+  "FAILURE",
+  "CANCELLED",
+  "TIMED_OUT",
+  "ACTION_REQUIRED",
+]);
+const FAIL_STATE = new Set(["FAILURE", "ERROR"]);
+const PENDING_STATUS = new Set(["QUEUED", "IN_PROGRESS"]);
+const PENDING_STATE = new Set(["PENDING", "EXPECTED"]);
+
+export function ciSummary(
+  rollup: {
+    name?: string;
+    context?: string;
+    status?: string;
+    conclusion?: string;
+    state?: string;
+  }[],
+): { state: "pass" | "fail" | "pending" | null; failing: string[] } {
+  if (!rollup.length) return { state: null, failing: [] };
+  const failing = rollup.filter((e) =>
+    (e.conclusion && FAIL_CONCLUSION.has(e.conclusion)) ||
+    (e.state && FAIL_STATE.has(e.state))
+  );
+  if (failing.length) {
+    return {
+      state: "fail",
+      failing: failing.map((e) => e.name ?? e.context ?? ""),
+    };
+  }
+  const pending = rollup.some((e) =>
+    (e.status && PENDING_STATUS.has(e.status)) ||
+    (e.state && PENDING_STATE.has(e.state))
+  );
+  return { state: pending ? "pending" : "pass", failing: [] };
+}
+
+export function selectWt<
+  T extends { path: string; branch: string; repo: string },
+>(sel: string, rows: T[]): { wt: T } | { candidates: T[] } {
+  const exact = rows.find((r) => r.path === sel);
+  if (exact) return { wt: exact };
+  const candidates = rows.filter((r) => matchWt({ q: sel }, r.repo, r));
+  return candidates.length === 1 ? { wt: candidates[0] } : { candidates };
+}
+
+export const qbool = z.union([
+  z.boolean(),
+  z.literal("true"),
+  z.literal("1"),
+  z.literal("false"),
+  z.literal("0"),
+]).transform((v) => v === true || v === "true" || v === "1");
+
+export const qnum = z.coerce.number().int().min(0);

@@ -1,7 +1,8 @@
-import { assertEquals } from "@std/assert";
+import { assertEquals, assertThrows } from "@std/assert";
 import type { DiffWorktree } from "./parse.ts";
 import {
   backoffOver,
+  ciSummary,
   clampMenu,
   classifyPath,
   diffSnapshots,
@@ -9,14 +10,21 @@ import {
   hotBackoff,
   ownerWorktree,
   parseDiffHunks,
+  parseLsofCommands,
   parseLsofPidPorts,
   parseStatus,
+  parseUpstreamTrack,
   parseWorktreeList,
   pool,
   portsByCwd,
+  procsByCwd,
+  qbool,
+  qnum,
   rateWindow,
   remoteWebUrl,
   removeSummary,
+  selectWt,
+  statusCounts,
   trimSeps,
 } from "./parse.ts";
 
@@ -655,4 +663,137 @@ Deno.test("rateWindow: a clock jump forward empties the window, backward is not 
   assertEquals(w.count(10_000 - 8 * 3600_000), 0);
   // an add after the backward step starts a fresh count
   assertEquals(w.add(1000), 1);
+});
+
+// ---- agent interface ----
+
+Deno.test("statusCounts: staged/modified from xy, untracked separate", () => {
+  const entries = [
+    { xy: ".M" },
+    { xy: "R." },
+    { xy: "??" },
+  ];
+  assertEquals(statusCounts(entries), { staged: 1, modified: 1, untracked: 1 });
+});
+
+Deno.test("statusCounts: untracked only", () => {
+  assertEquals(statusCounts([{ xy: "??" }, { xy: "??" }]), {
+    staged: 0,
+    modified: 0,
+    untracked: 2,
+  });
+});
+
+Deno.test("parseUpstreamTrack: gone branches, ahead and bare lines ignored", () => {
+  const out = "feat/x [gone]\nmain\nfeat/y [ahead 2]\n";
+  assertEquals(parseUpstreamTrack(out), new Set(["feat/x"]));
+});
+
+Deno.test("ciSummary: empty input", () => {
+  assertEquals(ciSummary([]), { state: null, failing: [] });
+});
+
+Deno.test("ciSummary: all success is pass", () => {
+  assertEquals(
+    ciSummary([
+      { name: "build", conclusion: "SUCCESS" },
+      { context: "ci/test", state: "SUCCESS" },
+    ]),
+    { state: "pass", failing: [] },
+  );
+});
+
+Deno.test("ciSummary: one failure fails and names it", () => {
+  assertEquals(
+    ciSummary([
+      { name: "build", conclusion: "SUCCESS" },
+      { name: "lint", conclusion: "FAILURE" },
+    ]),
+    { state: "fail", failing: ["lint"] },
+  );
+});
+
+Deno.test("ciSummary: one queued is pending", () => {
+  assertEquals(
+    ciSummary([
+      { name: "build", conclusion: "SUCCESS" },
+      { name: "deploy", status: "QUEUED" },
+    ]),
+    { state: "pending", failing: [] },
+  );
+});
+
+Deno.test("parseLsofCommands and procsByCwd: c lines join to pid->command", () => {
+  const net = [
+    "p1175",
+    "cnode",
+    "f23",
+    "n*:5173",
+    "p1200",
+    "cvite",
+    "n127.0.0.1:5173",
+    "p1300",
+    "n/tmp/sock",
+    "p1500",
+    "n*:4000",
+    "",
+  ].join("\n");
+  const cmds = parseLsofCommands(net);
+  assertEquals(cmds.get("1175"), "node");
+  assertEquals(cmds.get("1200"), "vite");
+  assertEquals(cmds.has("1500"), false);
+
+  const byPid = parseLsofPidPorts(net);
+  const cwds = [
+    "p1175",
+    "n/Repos/forest",
+    "p1200",
+    "n/Repos/forest",
+    "p1500",
+    "n/Repos/other",
+    "",
+  ].join("\n");
+  const byCwd = procsByCwd(byPid, cmds, cwds);
+  assertEquals(byCwd.get("/Repos/forest"), [
+    { port: 5173, pid: 1175, command: "node" },
+    { port: 5173, pid: 1200, command: "vite" },
+  ]);
+  assertEquals(byCwd.get("/Repos/other"), [
+    { port: 4000, pid: 1500, command: "" },
+  ]);
+});
+
+const WT_ROWS = [
+  { path: "/r/a", branch: "feat/x", repo: "appA" },
+  { path: "/r/b", branch: "feat/xy", repo: "appB" },
+  { path: "/r/c", branch: "main", repo: "appC" },
+];
+
+Deno.test("selectWt: exact path wins over any text match", () => {
+  assertEquals(selectWt("/r/c", WT_ROWS), { wt: WT_ROWS[2] });
+});
+
+Deno.test("selectWt: zero matches", () => {
+  assertEquals(selectWt("nomatch", WT_ROWS), { candidates: [] });
+});
+
+Deno.test("selectWt: two matches", () => {
+  assertEquals(selectWt("feat", WT_ROWS), {
+    candidates: [WT_ROWS[0], WT_ROWS[1]],
+  });
+});
+
+Deno.test("selectWt: one match", () => {
+  assertEquals(selectWt("main", WT_ROWS), { wt: WT_ROWS[2] });
+});
+
+Deno.test("qbool: parses string and boolean forms, rejects garbage", () => {
+  assertEquals(qbool.parse("false"), false);
+  assertEquals(qbool.parse("true"), true);
+  assertEquals(qbool.parse(true), true);
+  assertThrows(() => qbool.parse("x"));
+});
+
+Deno.test("qnum: coerces to a non-negative int", () => {
+  assertEquals(qnum.parse("3"), 3);
 });
