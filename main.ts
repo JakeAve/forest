@@ -502,12 +502,20 @@ async function listeningPorts(): Promise<Map<string, number[]>> {
 
 type Pr = { number: number; url: string; state: string };
 const prsByRepo = new Map<string, Map<string, Pr>>();
+// repo path -> earliest next attempt. Presence also means "already reported", so a
+// repo gh cannot see (private, wrong account) costs one line and one call an hour.
+const ghRetryAt = new Map<string, number>();
+const GH_RETRY_MS = [600_000, 3_600_000];
 let prsAt = 0;
 
 async function refreshPrs(repos: Repo[]) {
   if (prsAt && Date.now() - prsAt < SETTINGS.prPollMs) return;
   prsAt = Date.now();
-  await pool(PR_JOBS, repos, async (r) => {
+  // no origin remote, no PRs -- ever. And a repo that just failed waits its turn.
+  const due = repos.filter((r) =>
+    r.webUrl && Date.now() >= (ghRetryAt.get(r.path) ?? 0)
+  );
+  await pool(PR_JOBS, due, async (r) => {
     const out = await exec(r.path, [
       "gh",
       "pr",
@@ -518,11 +526,15 @@ async function refreshPrs(repos: Repo[]) {
       "200",
       "--json",
       "number,url,headRefName,state",
-    ]).catch(() => {
+    ]).catch((e) => {
       stats.ghFailTotal++;
+      const first = !ghRetryAt.has(r.path);
+      if (first) console.error(`gh pr list failed in ${r.name}:`, e.message);
+      ghRetryAt.set(r.path, Date.now() + GH_RETRY_MS[first ? 0 : 1]);
       return null;
     });
     if (out === null) return;
+    ghRetryAt.delete(r.path);
     const byBranch = new Map<string, Pr>();
     for (const p of JSON.parse(out) as (Pr & { headRefName: string })[]) {
       const cur = byBranch.get(p.headRefName);
