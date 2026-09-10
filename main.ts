@@ -502,18 +502,23 @@ async function listeningPorts(): Promise<Map<string, number[]>> {
 
 type Pr = { number: number; url: string; state: string };
 const prsByRepo = new Map<string, Map<string, Pr>>();
-// repo path -> earliest next attempt. Presence also means "already reported", so a
-// repo gh cannot see (private, wrong account) costs one line and one call an hour.
-const ghRetryAt = new Map<string, number>();
+const prFor = (prs: Map<string, Pr> | undefined, w: Worktree) =>
+  prs?.get(w.branch) ?? (w.remote ? prs?.get(w.remote) : null) ?? null;
+
+// repo path -> earliest next gh call. Only an OPEN pr can change under us, so a
+// repo without one is checked on the idle floor: enough to notice a PR opened in
+// a browser, cheap enough to leave running all day.
+const ghNextAt = new Map<string, number>();
+const ghFailed = new Set<string>(); // reported once per repo, not once per call
+const PR_IDLE_MS = 300_000;
+const PR_PUSH_MS = 10_000;
 const GH_RETRY_MS = [600_000, 3_600_000];
-let prsAt = 0;
 
 async function refreshPrs(repos: Repo[]) {
-  if (prsAt && Date.now() - prsAt < SETTINGS.prPollMs) return;
-  prsAt = Date.now();
-  // no origin remote, no PRs -- ever. And a repo that just failed waits its turn.
+  const now = Date.now();
+  // no origin remote, no PRs -- ever. The rest run on their own clock.
   const due = repos.filter((r) =>
-    r.webUrl && Date.now() >= (ghRetryAt.get(r.path) ?? 0)
+    r.webUrl && now >= (ghNextAt.get(r.path) ?? 0)
   );
   await pool(PR_JOBS, due, async (r) => {
     const out = await exec(r.path, [
@@ -528,13 +533,16 @@ async function refreshPrs(repos: Repo[]) {
       "number,url,headRefName,state",
     ]).catch((e) => {
       stats.ghFailTotal++;
-      const first = !ghRetryAt.has(r.path);
-      if (first) console.error(`gh pr list failed in ${r.name}:`, e.message);
-      ghRetryAt.set(r.path, Date.now() + GH_RETRY_MS[first ? 0 : 1]);
+      const first = !ghFailed.has(r.path);
+      if (first) {
+        ghFailed.add(r.path);
+        console.error(`gh pr list failed in ${r.name}:`, e.message);
+      }
+      ghNextAt.set(r.path, Date.now() + GH_RETRY_MS[first ? 0 : 1]);
       return null;
     });
     if (out === null) return;
-    ghRetryAt.delete(r.path);
+    ghFailed.delete(r.path);
     const byBranch = new Map<string, Pr>();
     for (const p of JSON.parse(out) as (Pr & { headRefName: string })[]) {
       const cur = byBranch.get(p.headRefName);
@@ -547,6 +555,10 @@ async function refreshPrs(repos: Repo[]) {
       }
     }
     prsByRepo.set(r.path, byBranch);
+    // read off this repo's own worktrees, not the PR list: a teammate's open PR
+    // cannot change anything Forest draws.
+    const open = r.worktrees.some((w) => prFor(byBranch, w)?.state === "OPEN");
+    ghNextAt.set(r.path, Date.now() + (open ? SETTINGS.prPollMs : PR_IDLE_MS));
   });
 }
 
@@ -699,9 +711,7 @@ function publish() {
     for (const w of r.worktrees) {
       knownWorktrees.set(w.path, r.path);
       wtByPath.set(w.path, w);
-      const prs = prsByRepo.get(r.path);
-      w.pr = prs?.get(w.branch) ?? (w.remote ? prs?.get(w.remote) : null) ??
-        null;
+      w.pr = prFor(prsByRepo.get(r.path), w);
       w.ports = []; // recomputed from scratch: publish() runs on live objects
     }
   }
@@ -1136,6 +1146,15 @@ function onEvent(ev: Deno.FsEvent) {
     } else if (offenders.size) offenders.clear();
     if (storm) continue; // counted, never marked: that is what bounds the work
     if (rate > SETTINGS.watchStormRate) return enterStorm(rate);
+    // a push writes refs/remotes/<remote>/<branch>, and `gh pr create` opens the
+    // PR a beat after it: look shortly after the ref, not on it. A repo gh cannot
+    // read is left in its backoff -- pushing to it does not fix the auth.
+    if (
+      repo && bucket === "refs" && !ghFailed.has(repo) &&
+      path.includes("/refs/remotes/")
+    ) {
+      ghNextAt.set(repo, now + PR_PUSH_MS);
+    }
     if (wt) markWt(wt);
     else if (repo) markRepo(repo);
     else markRoot();
