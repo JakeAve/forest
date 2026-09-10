@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { resolve } from "@std/path";
 import { matchWt } from "./src/filter.js";
 
 export function parseWorktreeList(porcelain: string) {
@@ -84,26 +85,6 @@ export function parseLsofPidPorts(net: string): Map<string, number[]> {
     if (port) byPid.set(pid, [...(byPid.get(pid) ?? []), port]);
   });
   return byPid;
-}
-
-export function portsByCwd(
-  byPid: Map<string, number[]>,
-  cwds: string,
-): Map<string, number[]> {
-  const byCwd = new Map<string, number[]>();
-  let pid = "";
-  fieldLines(cwds, (p) => (pid = p), (cwd) => {
-    const ports = byPid.get(pid);
-    if (ports) {
-      byCwd.set(
-        cwd,
-        [...new Set([...(byCwd.get(cwd) ?? []), ...ports])].sort((a, b) =>
-          a - b
-        ),
-      );
-    }
-  });
-  return byCwd;
 }
 
 export function parseLsofCommands(net: string): Map<string, string> {
@@ -537,13 +518,16 @@ export type FileRow = {
 };
 export type Files = { base: string; files: FileRow[] };
 
+const CONFLICT_XY = new Set(["UU", "AA", "DD", "AU", "UA", "DU", "UD"]);
+
 export function statusCounts(
   entries: { xy: string }[],
 ): { staged: number; modified: number; untracked: number } {
   const untracked = entries.filter((e) => e.xy === "??").length;
   const rest = entries.filter((e) => e.xy !== "??");
   return {
-    staged: rest.filter((e) => e.xy[0] !== ".").length,
+    staged:
+      rest.filter((e) => !CONFLICT_XY.has(e.xy) && e.xy[0] !== ".").length,
     modified: rest.filter((e) => e.xy[1] !== ".").length,
     untracked,
   };
@@ -595,11 +579,15 @@ export function ciSummary(
   return { state: pending ? "pending" : "pass", failing: [] };
 }
 
+/** Path-shaped input only: anything else is a fuzzy selector, left alone. */
+export const normPath = (p: string, home = "") =>
+  /^[~/]/.test(p) ? resolve(p.replace(/^~(?=$|\/)/, home)) : p;
+
 export function selectWt<
   T extends { path: string; branch: string; repo: string },
->(sel: string, rows: T[]): { wt: T } | { candidates: T[] } {
-  const exact = rows.find((r) => r.path === sel);
-  if (exact) return { wt: exact };
+>(sel: string, rows: T[], home = ""): { wt: T } | { candidates: T[] } {
+  const owner = ownerWorktree(normPath(sel, home), rows.map((r) => r.path));
+  if (owner) return { wt: rows.find((r) => r.path === owner)! };
   const candidates = rows.filter((r) => matchWt({ q: sel }, r.repo, r));
   return candidates.length === 1 ? { wt: candidates[0] } : { candidates };
 }
@@ -612,4 +600,7 @@ export const qbool = z.union([
   z.literal("0"),
 ]).transform((v) => v === true || v === "true" || v === "1");
 
-export const qnum = z.coerce.number().int().min(0);
+export const qnum = z.union([
+  z.number(),
+  z.string().regex(/^\d+$/).transform(Number),
+]).pipe(z.number().int().min(0));

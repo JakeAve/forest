@@ -891,7 +891,8 @@ function confirmDiscard() {
                  w.pr.reviewDecision &&
                  w.pr.reviewDecision.toLowerCase().replaceAll("_", " "),
                  w.pr.isDraft && "draft",
-               ].filter(Boolean).join(" · ") + (w.pr.title ? ` · ${w.pr.title}` : "")}
+                 w.pr.title,
+               ].filter(Boolean).join(" · ")}
                onclick={(e) => e.stopPropagation()}>#{w.pr.number}{w.pr.reviewDecision ===
               "CHANGES_REQUESTED" ? "!" : ""}</a>
           {/if}
@@ -1083,7 +1084,7 @@ function confirmDiscard() {
         {:else}
           <input id="set-{k}" type="text" bind:value={settings[k]} onchange={saveSettings}>
         {/if}
-        {#if k === "port" || k === "root"}<span class="hint">restart</span>{/if}
+        {#if k === "port" || k === "root" || k === "host"}<span class="hint">restart</span>{/if}
       </div>
     {/if}
   {/each}
@@ -1513,16 +1514,16 @@ select.theme {
   color: var(--bg);
   background: var(--acc);
 }
+.pr.draft {
+  border-color: var(--acc);
+  color: var(--acc);
+  background: transparent;
+}
 .pr.pending {
   background: var(--warn);
 }
 .pr.fail {
   background: var(--danger);
-}
-.pr.draft {
-  border-color: var(--acc);
-  color: var(--acc);
-  background: transparent;
 }
 .pr.merged {
   border-color: transparent;

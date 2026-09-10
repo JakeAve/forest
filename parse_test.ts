@@ -16,7 +16,6 @@ import {
   parseUpstreamTrack,
   parseWorktreeList,
   pool,
-  portsByCwd,
   procsByCwd,
   qbool,
   qnum,
@@ -100,13 +99,6 @@ Deno.test("lsof: pid ports, cwd join, dedupes v4+v6 and sorts", () => {
   assertEquals(byPid.get("100"), [7420, 5173]);
   assertEquals(byPid.get("200"), [7420]);
   assertEquals(byPid.has("300"), false);
-
-  const byCwd = portsByCwd(
-    byPid,
-    "p100\nn/Repos/forest\np200\nn/Repos/forest\np300\nn/Repos/other\n",
-  );
-  assertEquals(byCwd.get("/Repos/forest"), [5173, 7420]);
-  assertEquals(byCwd.has("/Repos/other"), false);
 });
 
 Deno.test("ownerWorktree: deepest match wins, no partial-segment match", () => {
@@ -676,6 +668,14 @@ Deno.test("statusCounts: staged/modified from xy, untracked separate", () => {
   assertEquals(statusCounts(entries), { staged: 1, modified: 1, untracked: 1 });
 });
 
+Deno.test("statusCounts: a conflict is modified, never staged", () => {
+  assertEquals(statusCounts([{ xy: "UU" }]), {
+    staged: 0,
+    modified: 1,
+    untracked: 0,
+  });
+});
+
 Deno.test("statusCounts: untracked only", () => {
   assertEquals(statusCounts([{ xy: "??" }, { xy: "??" }]), {
     staged: 0,
@@ -773,6 +773,14 @@ Deno.test("selectWt: exact path wins over any text match", () => {
   assertEquals(selectWt("/r/c", WT_ROWS), { wt: WT_ROWS[2] });
 });
 
+Deno.test("selectWt: a nested path resolves to its worktree", () => {
+  assertEquals(selectWt("/r/a/src/main.ts", WT_ROWS), { wt: WT_ROWS[0] });
+});
+
+Deno.test("selectWt: a trailing slash still resolves", () => {
+  assertEquals(selectWt("/r/a/", WT_ROWS), { wt: WT_ROWS[0] });
+});
+
 Deno.test("selectWt: zero matches", () => {
   assertEquals(selectWt("nomatch", WT_ROWS), { candidates: [] });
 });
@@ -796,4 +804,6 @@ Deno.test("qbool: parses string and boolean forms, rejects garbage", () => {
 
 Deno.test("qnum: coerces to a non-negative int", () => {
   assertEquals(qnum.parse("3"), 3);
+  assertEquals(qnum.parse(3), 3);
+  assertThrows(() => qnum.parse(""));
 });

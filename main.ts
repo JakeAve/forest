@@ -1,8 +1,12 @@
 import process from "node:process"; // cpuUsage(): self CPU, see stats above
 import { serveDir } from "@std/http/file-server";
 import {
+  createMcpHandler,
+  hostHeaderValidationResponse,
+  localhostAllowedHostnames,
+  localhostAllowedOrigins,
   McpServer,
-  WebStandardStreamableHTTPServerTransport,
+  originValidationResponse,
 } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { basename, dirname, join, resolve } from "@std/path";
@@ -19,6 +23,7 @@ import {
   fillCommand,
   hotBackoff,
   type HotState,
+  normPath,
   ownerWorktree,
   parseDiffHunks,
   parseLsofCommands,
@@ -27,7 +32,6 @@ import {
   parseUpstreamTrack,
   parseWorktreeList,
   pool,
-  portsByCwd,
   procsByCwd,
   qbool,
   qnum,
@@ -321,7 +325,6 @@ type Repo = {
   worktrees: Worktree[];
 };
 
-// repo main path -> refs/remotes/origin/<default>; not serialized
 const defaultRefByRepo = new Map<string, string>();
 
 async function mergeBase(wt: string): Promise<string> {
@@ -410,13 +413,17 @@ async function loadWorktree(
 
   let state: Worktree["state"] = wt.branch === "(detached)" ? "detached" : null;
   const lines = (statePaths ?? "").split("\n");
-  for (let i = 0; i < STATE_BY_GIT_PATH.length; i++) {
-    if (!lines[i]) continue;
-    if (await Deno.stat(resolve(wt.path, lines[i])).catch(() => null)) {
-      state = STATE_BY_GIT_PATH[i];
-      break;
-    }
-  }
+  const hits = await Promise.all(
+    STATE_BY_GIT_PATH.map((_, i) =>
+      lines[i]
+        ? Deno.stat(resolve(wt.path, lines[i])).then(() => true).catch(() =>
+          false
+        )
+        : false
+    ),
+  );
+  const hit = hits.indexOf(true);
+  if (hit >= 0) state = STATE_BY_GIT_PATH[hit];
 
   let lastActivity = Number(ct ?? 0) * 1000;
   const changed = await tryGit(wt.path, "diff", "--name-only", "-z", "HEAD");
@@ -466,12 +473,41 @@ async function repoDirs(): Promise<{ name: string; path: string }[]> {
   return candidates;
 }
 
+// what every worktree of one repo needs, read once: the worktree list, the
+// branches that exist on origin, the upstreams that are gone, the default ref
+async function repoFacts(path: string) {
+  const [porcelain, refs, track, headRef] = await Promise.all([
+    tryGit(path, "worktree", "list", "--porcelain"),
+    tryGit(path, "for-each-ref", "--format=%(refname:short)", "refs/remotes"),
+    tryGit(
+      path,
+      "for-each-ref",
+      "--format=%(refname:short) %(upstream:track)",
+      "refs/heads",
+    ),
+    tryGit(path, "symbolic-ref", "refs/remotes/origin/HEAD"),
+  ]);
+  const defaultRef = headRef?.trim() || null;
+  if (defaultRef) defaultRefByRepo.set(path, defaultRef);
+  else defaultRefByRepo.delete(path);
+  return {
+    list: porcelain ? parseWorktreeList(porcelain) : null,
+    // ponytail: assumes the remote is "origin"; widen if a second remote ever matters
+    pushed: new Set(
+      (refs ?? "").split("\n").filter((r) => r.startsWith("origin/")).map((r) =>
+        r.slice(7)
+      ),
+    ),
+    gone: parseUpstreamTrack(track ?? ""),
+    defaultRef,
+  };
+}
+
 // the unit the watcher invalidates: everything the snapshot knows about one repo
 // Recompute only the named worktrees of one repo, reusing the repo-level data
-// every worktree needs: the list (for a fresh head/branch and who is primary)
-// and refs/remotes (for `pushed`). That is 2 git calls plus loadWorktree's 5
-// each, against computeRepo's 3 + 5 per *every* worktree — on a 29-worktree
-// repo, 7 calls instead of 148.
+// every worktree needs. That is repoFacts' 4 git calls plus loadWorktree's 5
+// each, against computeRepo's 5 + 5 per *every* worktree — on a 29-worktree
+// repo, 9 calls instead of 150.
 //
 // Returns null when the worktree list itself moved, which means a worktree was
 // added or removed and every isPrimary/primaryBranch answer may have changed:
@@ -481,35 +517,14 @@ async function recomputeWorktrees(
   repo: Repo,
   want: Set<string>,
 ): Promise<Repo | null> {
-  const [porcelain, refs, track] = await Promise.all([
-    tryGit(repo.path, "worktree", "list", "--porcelain"),
-    tryGit(
-      repo.path,
-      "for-each-ref",
-      "--format=%(refname:short)",
-      "refs/remotes",
-    ),
-    tryGit(
-      repo.path,
-      "for-each-ref",
-      "--format=%(refname:short) %(upstream:track)",
-      "refs/heads",
-    ),
-  ]);
-  if (!porcelain) return null;
-  const list = parseWorktreeList(porcelain);
+  const { list, pushed, gone, defaultRef } = await repoFacts(repo.path);
+  if (!list) return null;
   if (
     list.length !== repo.worktrees.length ||
     list.some((w, i) => w.path !== repo.worktrees[i].path)
   ) {
     return null;
   }
-  const pushed = new Set(
-    (refs ?? "").split("\n").filter((r) => r.startsWith("origin/")).map((r) =>
-      r.slice(7)
-    ),
-  );
-  const gone = parseUpstreamTrack(track ?? "");
   const targets = list.map((w, i) => ({ w, i })).filter(({ w }) =>
     want.has(w.path)
   );
@@ -525,7 +540,7 @@ async function recomputeWorktrees(
         list[0].branch,
         pushed,
         gone,
-        defaultRefByRepo.get(repo.path) ?? null,
+        defaultRef,
       ),
   );
   const byPath = new Map(fresh.map((w) => [w.path, w]));
@@ -536,33 +551,15 @@ async function recomputeWorktrees(
 }
 
 async function computeRepo(name: string, path: string): Promise<Repo | null> {
-  const [porcelain, originUrl, refs, headRef, track] = await Promise.all([
-    tryGit(path, "worktree", "list", "--porcelain"),
+  const [facts, originUrl] = await Promise.all([
+    repoFacts(path),
     tryGit(path, "remote", "get-url", "origin"),
-    tryGit(path, "for-each-ref", "--format=%(refname:short)", "refs/remotes"),
-    tryGit(path, "symbolic-ref", "refs/remotes/origin/HEAD"),
-    tryGit(
-      path,
-      "for-each-ref",
-      "--format=%(refname:short) %(upstream:track)",
-      "refs/heads",
-    ),
   ]);
-  if (!porcelain) return null;
-  const list = parseWorktreeList(porcelain);
+  const { list, pushed, gone, defaultRef } = facts;
+  if (!list) return null;
   // a linked worktree parked at the root is not a repo: its main repo already
   // lists it, and listing it twice gives the client duplicate keys
   if (list[0].path !== path) return null;
-  // ponytail: assumes the remote is "origin"; widen if a second remote ever matters
-  const pushed = new Set(
-    (refs ?? "").split("\n").filter((r) => r.startsWith("origin/")).map((r) =>
-      r.slice(7)
-    ),
-  );
-  const defaultRef = headRef?.trim() || null;
-  if (defaultRef) defaultRefByRepo.set(path, defaultRef);
-  else defaultRefByRepo.delete(path);
-  const gone = parseUpstreamTrack(track ?? "");
   const worktrees = await pool(
     WT_JOBS,
     list,
@@ -594,7 +591,6 @@ async function lsof(...args: string[]): Promise<string> {
 // GLOBAL and timed: one lsof for the whole machine, PID -> cwd -> worktree.
 // It cannot be attributed to one repo, so it can never be recomputed per repo;
 // it gets its own cadence and is merged into the snapshot by publish().
-let portsByCwdCache = new Map<string, number[]>();
 let procsByCwdCache = new Map<
   string,
   { port: number; pid: number; command: string }[]
@@ -616,20 +612,15 @@ async function timed<T>(
 }
 
 async function refreshPorts() {
-  const { ports, procs } = await timed("portsMs", listeningPorts());
-  portsByCwdCache = ports;
-  procsByCwdCache = procs;
+  procsByCwdCache = await timed("portsMs", listeningPorts());
 }
 
 async function listeningPorts(): Promise<
-  {
-    ports: Map<string, number[]>;
-    procs: Map<string, { port: number; pid: number; command: string }[]>;
-  }
+  Map<string, { port: number; pid: number; command: string }[]>
 > {
   const net = await lsof("-nP", "-iTCP", "-sTCP:LISTEN", "-Fpcn");
   const byPid = parseLsofPidPorts(net);
-  if (!byPid.size) return { ports: new Map(), procs: new Map() };
+  if (!byPid.size) return new Map();
   const cmds = parseLsofCommands(net);
   const cwds = await lsof(
     "-a",
@@ -639,10 +630,7 @@ async function listeningPorts(): Promise<
     "-p",
     [...byPid.keys()].join(","),
   );
-  return {
-    ports: portsByCwd(byPid, cwds),
-    procs: procsByCwd(byPid, cmds, cwds),
-  };
+  return procsByCwd(byPid, cmds, cwds);
 }
 
 // ---- open pull requests ----
@@ -736,9 +724,9 @@ async function refreshPrs(repos: Repo[]) {
     // cannot change anything Forest draws.
     const open = [
       ...new Set(
-        r.worktrees.map((w) => prFor(r.path, byBranch, w)).filter((p) =>
-          p?.state === "OPEN"
-        ).map((p) => p!.number),
+        r.worktrees.map((w) =>
+          byBranch.get(w.branch) ?? (w.remote ? byBranch.get(w.remote) : null)
+        ).filter((p) => p?.state === "OPEN").map((p) => p!.number),
       ),
     ];
     const keep = new Set(open.map((n) => `${r.path}#${n}`));
@@ -759,21 +747,35 @@ async function refreshPrs(repos: Repo[]) {
       String(n),
       "--json",
       "title,isDraft,baseRefName,reviewDecision,mergeable,statusCheckRollup",
-    ]).catch(() => {
+    ]).catch((e) => {
       stats.ghFailTotal++;
+      const first = !ghFailed.has(repo);
+      if (first) {
+        ghFailed.add(repo);
+        console.error(`gh pr view failed in ${repo}:`, e.message);
+      }
+      ghNextAt.set(repo, Date.now() + GH_RETRY_MS[first ? 0 : 1]);
       return null;
     });
     if (out === null) return;
     const d = JSON.parse(out);
-    prDetail.set(`${repo}#${n}`, {
+    const fields = {
       title: d.title,
       isDraft: d.isDraft,
       baseRefName: d.baseRefName,
       reviewDecision: d.reviewDecision ?? "",
       mergeable: d.mergeable,
       ci: ciSummary(d.statusCheckRollup ?? []),
-      detailAt: Date.now(),
-    });
+    };
+    const prev = prDetail.get(`${repo}#${n}`);
+    if (
+      prev &&
+      JSON.stringify({ ...prev, detailAt: null }) ===
+        JSON.stringify({ ...fields, detailAt: null })
+    ) {
+      return;
+    }
+    prDetail.set(`${repo}#${n}`, { ...fields, detailAt: Date.now() });
   });
 }
 
@@ -929,10 +931,6 @@ function publish() {
     }
   }
   const wtPaths = [...wtByPath.keys()];
-  for (const [cwd, ports] of portsByCwdCache) {
-    const w = wtByPath.get(ownerWorktree(cwd, wtPaths) ?? "");
-    if (w) w.ports = [...new Set([...w.ports, ...ports])].sort((a, b) => a - b);
-  }
   for (const [cwd, procs] of procsByCwdCache) {
     const w = wtByPath.get(ownerWorktree(cwd, wtPaths) ?? "");
     if (w) {
@@ -941,6 +939,9 @@ function publish() {
       );
       w.procs = [...byKey.values()].sort((a, b) => a.port - b.port);
     }
+  }
+  for (const w of wtByPath.values()) {
+    w.ports = [...new Set(w.procs.map((p) => p.port))].sort((a, b) => a - b);
   }
   const s = JSON.stringify(repos);
   if (s !== snapshot) {
@@ -1652,7 +1653,7 @@ function wtRows(): WtRow[] {
 }
 
 function resolveWt(sel: string): WtRow {
-  const hit = selectWt(sel, wtRows());
+  const hit = selectWt(sel, wtRows(), HOME);
   if ("wt" in hit) return hit.wt;
   const e = new ToolError(
     hit.candidates.length ? "ambiguous worktree" : "no worktree matches",
@@ -1702,7 +1703,10 @@ const tools: Record<string, Tool> = {
     desc: "The worktree that owns a path, or null.",
     input: { path: z.string() },
     run: (a) => {
-      const owner = ownerWorktree(String(a.path), [...knownWorktrees.keys()]);
+      const owner = ownerWorktree(
+        normPath(String(a.path), HOME),
+        [...knownWorktrees.keys()],
+      );
       return wtRows().find((w) => w.path === owner) ?? null;
     },
   },
@@ -1733,7 +1737,10 @@ const tools: Record<string, Tool> = {
       for (const k of ["file", "line", "base"]) {
         if (a[k] !== undefined) p.set(k, String(a[k]));
       }
-      return { url: `http://localhost:${SETTINGS.port}/?${p}` };
+      const host = SETTINGS.host === "0.0.0.0" || SETTINGS.host === "127.0.0.1"
+        ? "localhost"
+        : SETTINGS.host;
+      return { url: `http://${host}:${SETTINGS.port}/?${p}` };
     },
   },
 };
@@ -1748,33 +1755,33 @@ const toolError = (e: unknown) => ({
     : {}),
 });
 
-const mcp = new McpServer({ name: "forest", version: "0" });
-for (const [name, tool] of Object.entries(tools)) {
-  mcp.registerTool(
-    name,
-    { description: tool.desc, inputSchema: tool.input },
-    async (args: Record<string, unknown>) => {
-      try {
-        const out = await callTool(name, args);
-        return {
-          content: [{ type: "text" as const, text: JSON.stringify(out) }],
-        };
-      } catch (e) {
-        return {
-          isError: true,
-          content: [{
-            type: "text" as const,
-            text: JSON.stringify(toolError(e)),
-          }],
-        };
-      }
-    },
-  );
+function buildMcp() {
+  const mcp = new McpServer({ name: "forest", version: "0" });
+  for (const [name, tool] of Object.entries(tools)) {
+    mcp.registerTool(
+      name,
+      { description: tool.desc, inputSchema: tool.input },
+      async (args: Record<string, unknown>) => {
+        try {
+          const out = await callTool(name, args);
+          return {
+            content: [{ type: "text" as const, text: JSON.stringify(out) }],
+          };
+        } catch (e) {
+          return {
+            isError: true,
+            content: [{
+              type: "text" as const,
+              text: JSON.stringify(toolError(e)),
+            }],
+          };
+        }
+      },
+    );
+  }
+  return mcp;
 }
-const mcpTransport = new WebStandardStreamableHTTPServerTransport({
-  sessionIdGenerator: undefined,
-});
-await mcp.connect(mcpTransport);
+const mcpHandler = createMcpHandler(buildMcp);
 
 const server = Deno.serve({
   hostname: SETTINGS.host,
@@ -1804,10 +1811,16 @@ const server = Deno.serve({
       });
     }
     if (url.pathname === "/api/stats") return json(statsLine());
-    if (url.pathname === "/mcp") return mcpTransport.handleRequest(req);
+    if (url.pathname === "/mcp") {
+      return hostHeaderValidationResponse(req, localhostAllowedHostnames()) ??
+        originValidationResponse(req, localhostAllowedOrigins()) ??
+        mcpHandler.fetch(req);
+    }
     if (url.pathname.startsWith("/api/t/")) {
       const name = url.pathname.slice("/api/t/".length);
-      if (!(name in tools)) return new Response("not found", { status: 404 });
+      if (!Object.hasOwn(tools, name)) {
+        return new Response("not found", { status: 404 });
+      }
       try {
         return json(await callTool(name, Object.fromEntries(url.searchParams)));
       } catch (e) {
