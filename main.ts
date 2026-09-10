@@ -140,6 +140,8 @@ const stats = {
   logRotationsTotal: 0,
   pollMsMax: 0,
   gitMsMax: 0,
+  recomputeMsMax: 0,
+  drainMsMax: 0,
   lagMsMax: 0,
   subprocessPeak: 0, // high-water concurrent children
   // ---- watcher (step 4) ----
@@ -154,6 +156,12 @@ const stats = {
   watchDebounceCollapsedTotal: 0, // marks that landed on an already-dirty repo
   watchRootCollapsedTotal: 0, // root rescans that landed on an already-dirty root
   watcherRestartsTotal: 0,
+  // the watch path's own cost, so the per-worktree recompute can be measured
+  // rather than just counted: pairs with watchRecomputesTotal, and drains are
+  // the watch-path analogue of a poll
+  recomputeMsTotal: 0,
+  drainsTotal: 0,
+  drainMsTotal: 0,
   // ---- backoff + storm: the safety valve (step 6) ----
   watchBackoffEntriesTotal: 0, // repos that went hot
   watchBackoffExitsTotal: 0, // ...and later went quiet again
@@ -192,6 +200,8 @@ const stats = {
 const MAX_FIELDS = [
   "pollMsMax",
   "gitMsMax",
+  "recomputeMsMax",
+  "drainMsMax",
   "lagMsMax",
   "subprocessPeak",
 ] as const;
@@ -989,6 +999,7 @@ let rootRescanning = false;
 async function drain() {
   if (draining) return schedule();
   draining = true;
+  const dt0 = performance.now();
   firstMarkAt = 0; // this batch is being consumed; the next mark starts a new one
   try {
     if (rootDirty) {
@@ -1042,6 +1053,7 @@ async function drain() {
         touched.add(path); // recomputed inside a sweep window: not judgeable
         const known = repoByPath.get(path);
         if (!known) return;
+        const rt0 = performance.now();
         const fresh = await (async () => {
           const partial = await recomputeWorktrees(known, wts);
           // null means the worktree list moved: only a full recompute can say
@@ -1059,12 +1071,19 @@ async function drain() {
           repoByPath.delete(path);
         }
         stats.watchRecomputesTotal++;
+        const rms = performance.now() - rt0;
+        stats.recomputeMsTotal += rms;
+        bumpMax("recomputeMsMax", rms);
         for (const wt of wts) hotEntry(wt).win.add(Date.now());
       });
       if (run.length) publish();
     }
   } finally {
     draining = false;
+    const dms = performance.now() - dt0;
+    stats.drainsTotal++;
+    stats.drainMsTotal += dms;
+    bumpMax("drainMsMax", dms);
     // inside the finally: a throw that skipped this would leave deferred repos
     // dirty with no timer — never recomputed, and never judged either.
     if (dirty.size || rootDirty) schedule();
@@ -1170,6 +1189,10 @@ const statsLine = () => {
     subprocessMsTotal: Math.round(stats.subprocessMsTotal),
     lagMsTotal: Math.round(stats.lagMsTotal),
     lagMsMax: Math.round(stats.lagMsMax),
+    recomputeMsTotal: Math.round(stats.recomputeMsTotal),
+    drainMsTotal: Math.round(stats.drainMsTotal),
+    recomputeMsMax: Math.round(stats.recomputeMsMax),
+    drainMsMax: Math.round(stats.drainMsMax),
     rss: mem.rss,
     clients: clients.size,
     pollMsSetting: SETTINGS.pollMs,
