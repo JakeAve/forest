@@ -511,8 +511,7 @@ const enc = new TextEncoder();
 const clients = new Set<ReadableStreamDefaultController>();
 let snapshot = "[]";
 
-function broadcast(s: string) {
-  const chunk = enc.encode(`data: ${s}\n\n`);
+function send(chunk: Uint8Array) {
   for (const c of clients) {
     try {
       c.enqueue(chunk);
@@ -521,6 +520,16 @@ function broadcast(s: string) {
     }
   }
 }
+
+function broadcast(s: string) {
+  send(enc.encode(`data: ${s}\n\n`));
+}
+
+// A silent stream is indistinguishable from a dead one: enqueue on a dead
+// socket buffers rather than throwing, so the server keeps a zombie client and
+// the browser fires no error, never reconnects, and shows stale data until a
+// manual refresh. EventSource ignores comment lines.
+setInterval(() => send(enc.encode(": ping\n\n")), 20_000);
 
 // ---- snapshot assembly ----
 // The snapshot has three sources on three cadences (docs/fs-watch.md): git data
