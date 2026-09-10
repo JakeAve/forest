@@ -54,18 +54,23 @@ authenticated; everything else works without it.
 Stored at `~/.forest/settings.json` — only values that differ from the defaults
 are written.
 
-| key               | default   |                                                |
-| ----------------- | --------- | ---------------------------------------------- |
-| `port`            | `7420`    | server port (restart)                          |
-| `root`            | `~/Repos` | directory scanned for repos (restart)          |
-| `pollMs`          | `5000`    | worktree rescan interval                       |
-| `prPollMs`        | `60000`   | `gh pr list` interval                          |
-| `recentCount`     | `10`      | rows in the Recent group                       |
-| `agoRefreshMs`    | `30000`   | how often relative times re-render             |
-| `toastMs`         | `7000`    | toast lifetime                                 |
-| `collapseMargin`  | `3`       | context lines kept around a hunk               |
-| `collapseMinSize` | `5`       | shortest run of unchanged lines that collapses |
-| `launchers`       | `{}`      | per-repo worktree-creation commands            |
+| key               | default     |                                                |
+| ----------------- | ----------- | ---------------------------------------------- |
+| `port`            | `7420`      | server port (restart)                          |
+| `host`            | `127.0.0.1` | address the server binds (restart)             |
+| `root`            | `~/Repos`   | directory scanned for repos (restart)          |
+| `pollMs`          | `5000`      | worktree rescan interval                       |
+| `prPollMs`        | `60000`     | `gh pr list` interval                          |
+| `recentCount`     | `10`        | rows in the Recent group                       |
+| `agoRefreshMs`    | `30000`     | how often relative times re-render             |
+| `toastMs`         | `7000`      | toast lifetime                                 |
+| `collapseMargin`  | `3`         | context lines kept around a hunk               |
+| `collapseMinSize` | `5`         | shortest run of unchanged lines that collapses |
+| `launchers`       | `{}`        | per-repo worktree-creation commands            |
+
+`host` defaults to loopback for a reason: setting it to `0.0.0.0` serves your
+repository metadata — paths, branches, diffs — and the unauthenticated `/mcp`
+endpoint to everything on the LAN.
 
 ### Launchers
 

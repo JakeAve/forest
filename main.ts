@@ -1,5 +1,10 @@
 import process from "node:process"; // cpuUsage(): self CPU, see stats above
 import { serveDir } from "@std/http/file-server";
+import {
+  McpServer,
+  WebStandardStreamableHTTPServerTransport,
+} from "@modelcontextprotocol/server";
+import { z } from "zod";
 import { basename, dirname, join } from "@std/path";
 import { mergeInclude, parseThemeText, resolveTheme } from "./src/theme.js";
 import {
@@ -24,6 +29,7 @@ import {
 
 const HOME = Deno.env.get("HOME")!;
 const DEFAULTS = {
+  host: "127.0.0.1",
   port: 7420,
   root: "~/Repos",
   pollMs: 5000,
@@ -1409,7 +1415,85 @@ const BW = (Deno as unknown as {
   BrowserWindow?: new (opts: Record<string, unknown>) => unknown;
 }).BrowserWindow;
 
-const server = Deno.serve({ port: SETTINGS.port }, async (req) => {
+// ---- tools ----
+
+type Tool = {
+  desc: string;
+  input: Record<string, z.ZodType>;
+  run: (a: Record<string, unknown>) => unknown | Promise<unknown>;
+};
+
+class ToolError extends Error {
+  candidates?: unknown[];
+}
+
+const tools: Record<string, Tool> = {
+  snapshot: {
+    desc: "Every repo forest watches, with its worktrees, status and PRs.",
+    input: {},
+    run: () =>
+      [...repoByPath.values()].sort((a, b) => a.name.localeCompare(b.name)),
+  },
+  link: {
+    desc: "A forest URL that opens a worktree, optionally at a file and line.",
+    input: {
+      wt: z.string(),
+      file: z.string().optional(),
+      line: z.coerce.number().int().min(0).optional(),
+      base: z.enum(["branch", "head"]).optional(),
+    },
+    run: (a) => {
+      const p = new URLSearchParams({ wt: guardWt(String(a.wt)) });
+      for (const k of ["file", "line", "base"]) {
+        if (a[k] !== undefined) p.set(k, String(a[k]));
+      }
+      return { url: `http://localhost:${SETTINGS.port}/?${p}` };
+    },
+  },
+};
+
+const callTool = (name: string, raw: Record<string, unknown>) =>
+  tools[name].run(z.object(tools[name].input).parse(raw));
+
+const toolError = (e: unknown) => ({
+  error: e instanceof Error ? e.message : String(e),
+  ...(e instanceof ToolError && e.candidates
+    ? { candidates: e.candidates }
+    : {}),
+});
+
+const mcp = new McpServer({ name: "forest", version: "0" });
+for (const [name, tool] of Object.entries(tools)) {
+  mcp.registerTool(
+    name,
+    { description: tool.desc, inputSchema: tool.input },
+    async (args: Record<string, unknown>) => {
+      try {
+        const out = await callTool(name, args);
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(out) }],
+        };
+      } catch (e) {
+        return {
+          isError: true,
+          content: [{
+            type: "text" as const,
+            text: JSON.stringify(toolError(e)),
+          }],
+        };
+      }
+    },
+  );
+}
+const mcpTransport = new WebStandardStreamableHTTPServerTransport({
+  sessionIdGenerator: undefined,
+});
+await mcp.connect(mcpTransport);
+
+const server = Deno.serve({
+  hostname: SETTINGS.host,
+  port: SETTINGS.port,
+}, async (req) => {
   const url = new URL(req.url);
   try {
     if (url.pathname === "/api/events") {
@@ -1434,6 +1518,19 @@ const server = Deno.serve({ port: SETTINGS.port }, async (req) => {
       });
     }
     if (url.pathname === "/api/stats") return json(statsLine());
+    if (url.pathname === "/mcp") return mcpTransport.handleRequest(req);
+    if (url.pathname.startsWith("/api/t/")) {
+      const name = url.pathname.slice("/api/t/".length);
+      if (!(name in tools)) return new Response("not found", { status: 404 });
+      try {
+        return json(await callTool(name, Object.fromEntries(url.searchParams)));
+      } catch (e) {
+        return new Response(JSON.stringify(toolError(e)), {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        });
+      }
+    }
     if (url.pathname === "/api/settings") {
       if (req.method === "PUT") {
         Object.assign(SETTINGS, coerceSettings(DEFAULTS, await req.json()));
