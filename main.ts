@@ -27,7 +27,8 @@ const DEFAULTS = {
   port: 7420,
   root: "~/Repos",
   pollMs: 5000,
-  prPollMs: 60000,
+  prPollMs: 60000, // a repo with an open PR: only that state can still change
+  prIdleMs: 300000, // a repo without one: catches PRs opened outside this machine
   watch: true,
   watchDebounceMs: 300,
   watchMaxWaitMs: 2000,
@@ -510,7 +511,6 @@ const prFor = (prs: Map<string, Pr> | undefined, w: Worktree) =>
 // a browser, cheap enough to leave running all day.
 const ghNextAt = new Map<string, number>();
 const ghFailed = new Set<string>(); // reported once per repo, not once per call
-const PR_IDLE_MS = 300_000;
 const PR_PUSH_MS = 10_000;
 const GH_RETRY_MS = [600_000, 3_600_000];
 
@@ -558,7 +558,10 @@ async function refreshPrs(repos: Repo[]) {
     // read off this repo's own worktrees, not the PR list: a teammate's open PR
     // cannot change anything Forest draws.
     const open = r.worktrees.some((w) => prFor(byBranch, w)?.state === "OPEN");
-    ghNextAt.set(r.path, Date.now() + (open ? SETTINGS.prPollMs : PR_IDLE_MS));
+    ghNextAt.set(
+      r.path,
+      Date.now() + (open ? SETTINGS.prPollMs : SETTINGS.prIdleMs),
+    );
   });
 }
 
