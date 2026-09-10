@@ -1,3 +1,4 @@
+import process from "node:process"; // cpuUsage(): self CPU, see stats above
 import { serveDir } from "@std/http/file-server";
 import { basename, dirname, join } from "@std/path";
 import { mergeInclude, parseThemeText, resolveTheme } from "./src/theme.js";
@@ -102,21 +103,45 @@ const dec = new TextDecoder();
 // Everything else is a gauge, true only at the instant the line was written.
 const stats = {
   startedAt: Date.now(),
-  sweepsTotal: 0,
-  sweepMsTotal: 0, // divide by sweepsTotal for mean duration over any window
+  pollsTotal: 0,
+  pollMsTotal: 0, // divide by pollsTotal for a mean over any window
+  pollMs: 0,
+  // ponytail: cpu*MsTotal is RUSAGE_SELF — this process only. The git and gh
+  // children are the bulk of the machine cost and land in subprocessMsTotal as
+  // wall time instead. Read the two together; neither alone is "CPU used".
+  cpuUserMsTotal: 0,
+  cpuSystemMsTotal: 0,
   subprocessesTotal: 0,
   gitTotal: 0,
   ghTotal: 0,
   otherTotal: 0,
-  broadcastsTotal: 0,
-  errorsTotal: 0,
-  // swallowed per-repo failures; a repo can vanish from the snapshot without
-  // errorsTotal moving. Never zero: repos with no origin/HEAD or no upstream
-  // fail two calls every sweep. Watch the rate, not the value.
+  subprocessMsTotal: 0, // summed wall time across the three spawn chokepoints
+  subprocessInflight: 0,
+  // the three phases of a poll, so a slow one names its own culprit
+  gitMs: 0,
+  gitMsTotal: 0,
+  portsMs: 0,
+  portsMsTotal: 0,
+  prsMs: 0, // 0 on polls where prPollMs rate-limits the call away
+  prsMsTotal: 0,
+  // swallowed per-repo failures: a repo can vanish from the snapshot without
+  // errorsTotal moving. Never zero — a repo with no upstream fails every poll.
+  // Watch the rate, not the value.
   gitFailTotal: 0,
   ghFailTotal: 0,
+  errorsTotal: 0,
+  broadcastsTotal: 0,
+  // event-loop lag: the honest "is it struggling" number. A 250ms timer that
+  // fires late means the loop was blocked, whatever the cause.
+  lagSamplesTotal: 0,
+  lagMsTotal: 0,
   logWritesTotal: 0,
   logFailTotal: 0,
+  logRotationsTotal: 0,
+  pollMsMax: 0,
+  gitMsMax: 0,
+  lagMsMax: 0,
+  subprocessPeak: 0, // high-water concurrent children
   // ---- watcher (step 4) ----
   watchEventsTotal: 0, // one per event *path*, not per FsEvent
   watchIgnoredTotal: 0,
@@ -158,28 +183,43 @@ const stats = {
   divergenceWorktreeRemovedTotal: 0,
   divergenceRepoAddedTotal: 0,
   divergenceRepoRemovedTotal: 0,
-  gitSweepMs: 0, // last git-only sweep; sweepMs also covers ports/PRs/publish
-  gitSweepMsTotal: 0,
-  sweepMs: 0, // last sweep
   snapshotBytes: 0, // last snapshot that changed
   repos: 0,
   worktrees: 0,
+  heapBytes: 0,
+  load1: 0, // machine-wide: separates "the box was busy" from "we were busy"
 };
+const MAX_FIELDS = [
+  "pollMsMax",
+  "gitMsMax",
+  "lagMsMax",
+  "subprocessPeak",
+] as const;
+const bumpMax = (k: typeof MAX_FIELDS[number], v: number) => {
+  if (v > stats[k]) stats[k] = v;
+};
+
 const spawned = (bin: string) => {
   stats.subprocessesTotal++;
   if (bin === "git") stats.gitTotal++;
   else if (bin === "gh") stats.ghTotal++;
   else stats.otherTotal++;
+  const t0 = performance.now();
+  bumpMax("subprocessPeak", ++stats.subprocessInflight);
+  return () => {
+    stats.subprocessInflight--;
+    stats.subprocessMsTotal += performance.now() - t0;
+  };
 };
 
 async function exec(cwd: string, cmd: string[]): Promise<string> {
-  spawned(cmd[0]);
+  const done = spawned(cmd[0]);
   const out = await new Deno.Command(cmd[0], {
     args: cmd.slice(1),
     cwd,
     stdout: "piped",
     stderr: "piped",
-  }).output();
+  }).output().finally(done);
   if (!out.success) {
     throw new Error(
       dec.decode(out.stderr).trim() || dec.decode(out.stdout).trim(),
@@ -202,19 +242,23 @@ const WT_JOBS = 4; // worktrees per repo at once
 const PR_JOBS = 8; // `gh`: own knob, 7x `git`'s RSS per process
 
 async function gitIn(cwd: string, stdin: string, ...args: string[]) {
-  spawned("git");
-  const p = new Deno.Command("git", {
-    args,
-    cwd,
-    stdin: "piped",
-    stdout: "piped",
-    stderr: "piped",
-  }).spawn();
-  const w = p.stdin.getWriter();
-  await w.write(new TextEncoder().encode(stdin));
-  await w.close();
-  const out = await p.output();
-  if (!out.success) throw new Error(dec.decode(out.stderr).trim());
+  const done = spawned("git");
+  try {
+    const p = new Deno.Command("git", {
+      args,
+      cwd,
+      stdin: "piped",
+      stdout: "piped",
+      stderr: "piped",
+    }).spawn();
+    const w = p.stdin.getWriter();
+    await w.write(new TextEncoder().encode(stdin));
+    await w.close();
+    const out = await p.output();
+    if (!out.success) throw new Error(dec.decode(out.stderr).trim());
+  } finally {
+    done();
+  }
 }
 
 type Worktree = {
@@ -399,13 +443,13 @@ async function computeRepo(name: string, path: string): Promise<Repo | null> {
 // ---- listening dev servers ----
 
 async function lsof(...args: string[]): Promise<string> {
-  spawned("lsof");
+  const done = spawned("lsof");
   const out = await new Deno.Command("lsof", {
     args,
     stdout: "piped",
     stderr: "null",
   })
-    .output().catch(() => null);
+    .output().catch(() => null).finally(done);
   return out ? dec.decode(out.stdout) : "";
 }
 
@@ -414,8 +458,23 @@ async function lsof(...args: string[]): Promise<string> {
 // it gets its own cadence and is merged into the snapshot by publish().
 let portsByCwdCache = new Map<string, number[]>();
 
+// `timed` records one phase of a poll. The three partition it, so a slow poll
+// says which stage was slow instead of needing to be reproduced.
+async function timed<T>(
+  key: "gitMs" | "portsMs",
+  p: Promise<T>,
+): Promise<T> {
+  const t0 = performance.now();
+  try {
+    return await p;
+  } finally {
+    stats[key] = Math.round(performance.now() - t0);
+    stats[`${key}Total`] += stats[key];
+  }
+}
+
 async function refreshPorts() {
-  portsByCwdCache = await listeningPorts();
+  portsByCwdCache = await timed("portsMs", listeningPorts());
 }
 
 async function listeningPorts(): Promise<Map<string, number[]>> {
@@ -755,8 +814,9 @@ function sweepAll(): Promise<void> {
     }
     repoByPath.clear();
     for (const [k, v] of next) repoByPath.set(k, v);
-    stats.gitSweepMs = Math.round(performance.now() - t0);
-    stats.gitSweepMsTotal += stats.gitSweepMs;
+    stats.gitMs = Math.round(performance.now() - t0);
+    stats.gitMsTotal += stats.gitMs;
+    bumpMax("gitMsMax", stats.gitMs);
   })().finally(() => {
     sweeping = null;
   });
@@ -783,9 +843,10 @@ async function poll() {
     booted = true;
     setStatus({ phase: "ready" });
   }
-  stats.sweepsTotal++;
-  stats.sweepMs = Math.round(performance.now() - t0);
-  stats.sweepMsTotal += stats.sweepMs;
+  stats.pollsTotal++;
+  stats.pollMs = Math.round(performance.now() - t0);
+  stats.pollMsTotal += stats.pollMs;
+  bumpMax("pollMsMax", stats.pollMs);
 }
 
 // ---- watcher: invalidate, never compute (docs/fs-watch.md) ----
@@ -1093,32 +1154,47 @@ async function watchLoop() {
   }
 }
 
-const statsLine = () => ({
-  t: new Date().toISOString(),
-  uptimeMs: Date.now() - stats.startedAt,
-  ...stats,
-  rss: Deno.memoryUsage().rss,
-  clients: clients.size,
-  pollMs: SETTINGS.pollMs,
-  mode: mode(),
-  watchDebounceMs: SETTINGS.watchDebounceMs,
-  watchMaxWaitMs: SETTINGS.watchMaxWaitMs,
-  watchSweepMs: SETTINGS.watchSweepMs,
-  watchHotThreshold: SETTINGS.watchHotThreshold,
-  watchBackoffMaxMs: SETTINGS.watchBackoffMaxMs,
-  watchStormRate: SETTINGS.watchStormRate,
-  watchDirty: dirty.size,
-  // renamed from hotRepos: backoff is keyed per worktree now, so the old name
-  // would silently mean something else on the same schema
-  hotWts: [...hot.values()].filter((h) => h.st).length, // in backoff now
-  watchEventRate: Math.round(eventRate(Date.now())),
-  storm,
-});
+const statsLine = () => {
+  const cpu = process.cpuUsage(); // cumulative µs since start, self only
+  const mem = Deno.memoryUsage();
+  stats.cpuUserMsTotal = Math.round(cpu.user / 1000);
+  stats.cpuSystemMsTotal = Math.round(cpu.system / 1000);
+  stats.heapBytes = mem.heapUsed;
+  stats.load1 = Math.round(Deno.loadavg()[0] * 100) / 100;
+  return {
+    t: new Date().toISOString(),
+    uptimeMs: Date.now() - stats.startedAt,
+    ...stats,
+    // accumulated as a float for precision, emitted rounded: sub-ms children
+    // still sum correctly and the log stays readable through jq
+    subprocessMsTotal: Math.round(stats.subprocessMsTotal),
+    lagMsTotal: Math.round(stats.lagMsTotal),
+    lagMsMax: Math.round(stats.lagMsMax),
+    rss: mem.rss,
+    clients: clients.size,
+    pollMsSetting: SETTINGS.pollMs,
+    mode: mode(),
+    watchDebounceMs: SETTINGS.watchDebounceMs,
+    watchMaxWaitMs: SETTINGS.watchMaxWaitMs,
+    watchSweepMs: SETTINGS.watchSweepMs,
+    watchHotThreshold: SETTINGS.watchHotThreshold,
+    watchBackoffMaxMs: SETTINGS.watchBackoffMaxMs,
+    watchStormRate: SETTINGS.watchStormRate,
+    watchDirty: dirty.size,
+    // renamed from hotRepos: backoff is keyed per worktree now, so the old name
+    hotWts: [...hot.values()].filter((h) => h.st).length, // in backoff now
+    watchEventRate: Math.round(eventRate(Date.now())),
+    storm,
+  };
+};
 
-// One flat line a minute, plus one per divergence; failures are logged once
-// and never reach the caller. `type` tells the two apart. The schema is
-// append-only: add fields, never redefine one.
-const LOG_PATH = join(HOME, ".forest", "watch-log.jsonl");
+// One flat line a minute, plus one per notable event; `type` tells them apart.
+// Rotation keeps at most one previous generation, so history stays between
+// LOG_MAX_LINES and twice it and never grows without bound. A rename is O(1) —
+// a true one-in-one-out ring would rewrite the whole file on every append.
+const LOG_PATH = join(HOME, ".forest", "forest-log.jsonl");
+const LOG_MAX_LINES = 10_000;
+let logLines = -1; // unknown until the first write counts what is already there
 let logFailed = false;
 let logQueue: Promise<void> = Promise.resolve();
 
@@ -1126,31 +1202,79 @@ function logLine(o: Record<string, unknown>) {
   logQueue = logQueue.then(async () => {
     try {
       await Deno.mkdir(join(HOME, ".forest"), { recursive: true });
+      if (logLines < 0) {
+        logLines = await Deno.readTextFile(LOG_PATH)
+          .then((t) => t.split("\n").length - 1)
+          .catch(() => 0);
+      }
+      if (logLines >= LOG_MAX_LINES) {
+        // replaces any previous .1: exactly one generation is kept
+        await Deno.rename(LOG_PATH, LOG_PATH + ".1");
+        logLines = 0;
+        stats.logRotationsTotal++;
+      }
       await Deno.writeTextFile(
         LOG_PATH,
         JSON.stringify({ t: new Date().toISOString(), ...o }) + "\n",
         { append: true },
       );
+      logLines++;
       stats.logWritesTotal++;
       logFailed = false;
     } catch (e) {
       stats.logFailTotal++;
-      if (!logFailed) console.error("watch-log write failed:", e);
+      // a failure is reported once per streak, not every minute
+      if (!logFailed) console.error("forest-log write failed:", e);
       logFailed = true;
     }
   });
 }
 
-setInterval(() => logLine({ type: "stats", ...statsLine() }), 60_000);
+// A 250ms timer that fires late means the loop was blocked. Machine-independent
+// stress signal: it moves when we are starved, whatever else the box is doing.
+const LAG_MS = 250;
+let lagLast = performance.now();
+setInterval(() => {
+  const now = performance.now();
+  const lag = Math.max(0, now - lagLast - LAG_MS);
+  lagLast = now;
+  stats.lagSamplesTotal++;
+  stats.lagMsTotal += lag;
+  bumpMax("lagMsMax", lag);
+}, LAG_MS);
+
+setInterval(() => {
+  logLine({ type: "stats", ...statsLine() });
+  // statsLine() is synchronous and already spread above, so the window closes
+  // here: every *Max on the next line describes only the coming minute.
+  for (const k of MAX_FIELDS) stats[k] = 0;
+  stats.subprocessPeak = stats.subprocessInflight; // children still running
+}, 60_000);
 
 if (SETTINGS.watch) watchLoop();
 
 let lastSafetySweep = Date.now();
 
 (async () => {
+  const bootT0 = performance.now();
   await poll().catch((e) => {
     stats.errorsTotal++;
     console.error(e);
+  });
+  // emitted the moment the UI has something to render, not on the 60s tick,
+  // and partitioned so a slow start names its own culprit
+  logLine({
+    type: "startup",
+    bootMs: Math.round(performance.now() - bootT0),
+    gitMs: stats.gitMs,
+    portsMs: stats.portsMs,
+    prsMs: stats.prsMs,
+    repos: stats.repos,
+    worktrees: stats.worktrees,
+    git: stats.gitTotal,
+    gh: stats.ghTotal,
+    other: stats.otherTotal,
+    snapshotBytes: stats.snapshotBytes,
   });
   while (true) {
     await new Promise((r) => setTimeout(r, SETTINGS.pollMs));
