@@ -17,12 +17,14 @@ import {
   type HotState,
   ownerWorktree,
   parseDiffHunks,
+  parseLsofCommands,
   parseLsofPidPorts,
   parseStatus,
   parseUpstreamTrack,
   parseWorktreeList,
   pool,
   portsByCwd,
+  procsByCwd,
   rateWindow,
   remoteWebUrl,
   settingsOverrides,
@@ -301,6 +303,7 @@ type Worktree = {
   isPrimary: boolean;
   remote: string | null;
   ports: number[];
+  procs: { port: number; pid: number; command: string }[];
   pr: Pr | null;
 };
 type Repo = {
@@ -438,6 +441,7 @@ async function loadWorktree(
     isPrimary,
     remote,
     ports: [],
+    procs: [],
     pr: null,
   };
 }
@@ -584,6 +588,10 @@ async function lsof(...args: string[]): Promise<string> {
 // It cannot be attributed to one repo, so it can never be recomputed per repo;
 // it gets its own cadence and is merged into the snapshot by publish().
 let portsByCwdCache = new Map<string, number[]>();
+let procsByCwdCache = new Map<
+  string,
+  { port: number; pid: number; command: string }[]
+>();
 
 // `timed` records one phase of a poll. The three partition it, so a slow poll
 // says which stage was slow instead of needing to be reproduced.
@@ -601,18 +609,33 @@ async function timed<T>(
 }
 
 async function refreshPorts() {
-  portsByCwdCache = await timed("portsMs", listeningPorts());
+  const { ports, procs } = await timed("portsMs", listeningPorts());
+  portsByCwdCache = ports;
+  procsByCwdCache = procs;
 }
 
-async function listeningPorts(): Promise<Map<string, number[]>> {
-  const byPid = parseLsofPidPorts(
-    await lsof("-nP", "-iTCP", "-sTCP:LISTEN", "-Fpn"),
+async function listeningPorts(): Promise<
+  {
+    ports: Map<string, number[]>;
+    procs: Map<string, { port: number; pid: number; command: string }[]>;
+  }
+> {
+  const net = await lsof("-nP", "-iTCP", "-sTCP:LISTEN", "-Fpcn");
+  const byPid = parseLsofPidPorts(net);
+  if (!byPid.size) return { ports: new Map(), procs: new Map() };
+  const cmds = parseLsofCommands(net);
+  const cwds = await lsof(
+    "-a",
+    "-d",
+    "cwd",
+    "-Fpn",
+    "-p",
+    [...byPid.keys()].join(","),
   );
-  if (!byPid.size) return new Map();
-  return portsByCwd(
-    byPid,
-    await lsof("-a", "-d", "cwd", "-Fpn", "-p", [...byPid.keys()].join(",")),
-  );
+  return {
+    ports: portsByCwd(byPid, cwds),
+    procs: procsByCwd(byPid, cmds, cwds),
+  };
 }
 
 // ---- open pull requests ----
@@ -832,12 +855,22 @@ function publish() {
       wtByPath.set(w.path, w);
       w.pr = prFor(prsByRepo.get(r.path), w);
       w.ports = []; // recomputed from scratch: publish() runs on live objects
+      w.procs = [];
     }
   }
   const wtPaths = [...wtByPath.keys()];
   for (const [cwd, ports] of portsByCwdCache) {
     const w = wtByPath.get(ownerWorktree(cwd, wtPaths) ?? "");
     if (w) w.ports = [...new Set([...w.ports, ...ports])].sort((a, b) => a - b);
+  }
+  for (const [cwd, procs] of procsByCwdCache) {
+    const w = wtByPath.get(ownerWorktree(cwd, wtPaths) ?? "");
+    if (w) {
+      const byKey = new Map(
+        [...w.procs, ...procs].map((p) => [`${p.pid}:${p.port}`, p]),
+      );
+      w.procs = [...byKey.values()].sort((a, b) => a.port - b.port);
+    }
   }
   const s = JSON.stringify(repos);
   if (s !== snapshot) {
