@@ -49,6 +49,30 @@ Port detection reads `lsof` and maps listening PIDs to their cwd, then to the
 owning worktree. PRs come from `gh pr list`, so PR badges need the `gh` CLI
 authenticated; everything else works without it.
 
+## Agents
+
+The daemon exposes the same data read-only to agents, over plain
+`GET /api/t/<name>?k=v` and over MCP at `/mcp`. Nothing here writes; a `wt` is
+any unique substring of a branch or repo name (or a full path), and an ambiguous
+one comes back as a 400 listing the candidates.
+
+| tool       | params                                  | returns                    |
+| ---------- | --------------------------------------- | -------------------------- |
+| `snapshot` | —                                       | every repo, with worktrees |
+| `wts`      | `q`, `dirty`, `running`, `pr`, `recent` | worktrees, newest first    |
+| `whoami`   | `path`                                  | the worktree owning a path |
+| `files`    | `wt`, `q`, `base=branch\|head`          | changed files              |
+| `link`     | `wt`, `file`, `line`, `base`            | `{ url }`                  |
+
+That URL is the deep-link contract, and it works typed by hand too:
+`/?wt=<path>&file=<path>&line=<n>&base=branch|head` opens the worktree, selects
+the file, and scrolls to the line.
+
+```sh
+curl -s 'localhost:7420/api/t/wts?q=1234&recent=3'
+claude mcp add --transport http forest http://localhost:7420/mcp
+```
+
 ## Settings
 
 Stored at `~/.forest/settings.json` — only values that differ from the defaults

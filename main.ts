@@ -6,6 +6,7 @@ import {
 } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { basename, dirname, join, resolve } from "@std/path";
+import { matchWt } from "./src/filter.js";
 import { mergeInclude, parseThemeText, resolveTheme } from "./src/theme.js";
 import {
   backoffOver,
@@ -13,6 +14,8 @@ import {
   classifyPath,
   coerceSettings,
   diffSnapshots,
+  type FileRow,
+  type Files,
   fillCommand,
   hotBackoff,
   type HotState,
@@ -26,8 +29,11 @@ import {
   pool,
   portsByCwd,
   procsByCwd,
+  qbool,
+  qnum,
   rateWindow,
   remoteWebUrl,
+  selectWt,
   settingsOverrides,
   statusCounts,
 } from "./parse.ts";
@@ -798,7 +804,11 @@ function guardPath(p: string | null): string {
 const resolveBase = (wt: string, mode: string) =>
   mode === "head" ? Promise.resolve("HEAD") : mergeBase(wt);
 
-async function listFiles(wt: string, mode: string) {
+async function listFiles(
+  wt: string,
+  mode: string,
+  q?: string,
+): Promise<Files> {
   const base = await resolveBase(wt, mode);
   const [nameStatus, numstat, statusZ] = await Promise.all([
     tryGit(wt, "diff", "--no-renames", "--name-status", "-z", base),
@@ -814,14 +824,7 @@ async function listFiles(wt: string, mode: string) {
   const st = parseStatus(statusZ ?? "");
   const xy = new Map(st.entries.map((e) => [e.path, e.xy]));
 
-  const files: {
-    path: string;
-    status: string;
-    added: number;
-    removed: number;
-    staged: boolean;
-    unstaged: boolean;
-  }[] = [];
+  const files: FileRow[] = [];
   const flags = (path: string) => {
     const s = xy.get(path) ?? "..";
     return {
@@ -846,7 +849,7 @@ async function listFiles(wt: string, mode: string) {
     files.push({ path: p, status: "U", added: lines, removed: 0, ...flags(p) });
   }
   files.sort((a, b) => a.path.localeCompare(b.path));
-  return { base, files };
+  return { base, files: q ? files.filter((f) => f.path.includes(q)) : files };
 }
 
 async function fileContents(wt: string, path: string, mode: string) {
@@ -1634,12 +1637,88 @@ class ToolError extends Error {
   candidates?: unknown[];
 }
 
+type WtRow = Worktree & { webUrl: string | null; defaultBranch: string | null };
+
+function wtRows(): WtRow[] {
+  return [...repoByPath.values()]
+    .flatMap((r) =>
+      r.worktrees.map((w) => ({
+        ...w,
+        webUrl: r.webUrl,
+        defaultBranch: r.defaultBranch,
+      }))
+    )
+    .sort((a, b) => b.lastActivity - a.lastActivity);
+}
+
+function resolveWt(sel: string): WtRow {
+  const hit = selectWt(sel, wtRows());
+  if ("wt" in hit) return hit.wt;
+  const e = new ToolError(
+    hit.candidates.length ? "ambiguous worktree" : "no worktree matches",
+  );
+  e.candidates = hit.candidates;
+  throw e;
+}
+
 const tools: Record<string, Tool> = {
   snapshot: {
     desc: "Every repo forest watches, with its worktrees, status and PRs.",
     input: {},
     run: () =>
       [...repoByPath.values()].sort((a, b) => a.name.localeCompare(b.name)),
+  },
+  wts: {
+    desc: "Worktrees, newest activity first, filtered.",
+    input: {
+      q: z.string().optional(),
+      dirty: qbool.optional(),
+      running: qbool.optional(),
+      pr: z.enum(["open", "merged", "closed", "none"]).optional(),
+      recent: qnum.optional(),
+    },
+    run: (a) => {
+      const pr = a.pr as string | undefined;
+      let rows = wtRows().filter((w) =>
+        matchWt(
+          {
+            q: a.q as string | undefined,
+            dirtyOnly: a.dirty as boolean | undefined,
+            runningOnly: a.running as boolean | undefined,
+          },
+          w.repo,
+          w,
+        )
+      );
+      if (pr) {
+        rows = rows.filter((w) =>
+          pr === "none" ? w.pr === null : w.pr?.state === pr.toUpperCase()
+        );
+      }
+      return a.recent === undefined ? rows : rows.slice(0, a.recent as number);
+    },
+  },
+  whoami: {
+    desc: "The worktree that owns a path, or null.",
+    input: { path: z.string() },
+    run: (a) => {
+      const owner = ownerWorktree(String(a.path), [...knownWorktrees.keys()]);
+      return wtRows().find((w) => w.path === owner) ?? null;
+    },
+  },
+  files: {
+    desc: "Changed files in a worktree, since the branch point or uncommitted.",
+    input: {
+      wt: z.string(),
+      q: z.string().optional(),
+      base: z.enum(["branch", "head"]).optional(),
+    },
+    run: (a) =>
+      listFiles(
+        resolveWt(String(a.wt)).path,
+        String(a.base ?? "branch"),
+        a.q as string | undefined,
+      ),
   },
   link: {
     desc: "A forest URL that opens a worktree, optionally at a file and line.",
@@ -1650,7 +1729,7 @@ const tools: Record<string, Tool> = {
       base: z.enum(["branch", "head"]).optional(),
     },
     run: (a) => {
-      const p = new URLSearchParams({ wt: guardWt(String(a.wt)) });
+      const p = new URLSearchParams({ wt: resolveWt(String(a.wt)).path });
       for (const k of ["file", "line", "base"]) {
         if (a[k] !== undefined) p.set(k, String(a[k]));
       }
