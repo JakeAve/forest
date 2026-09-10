@@ -317,6 +317,58 @@ async function repoDirs(): Promise<{ name: string; path: string }[]> {
 }
 
 // the unit the watcher invalidates: everything the snapshot knows about one repo
+// Recompute only the named worktrees of one repo, reusing the repo-level data
+// every worktree needs: the list (for a fresh head/branch and who is primary)
+// and refs/remotes (for `pushed`). That is 2 git calls plus loadWorktree's 5
+// each, against computeRepo's 3 + 5 per *every* worktree — on a 29-worktree
+// repo, 7 calls instead of 148.
+//
+// Returns null when the worktree list itself moved, which means a worktree was
+// added or removed and every isPrimary/primaryBranch answer may have changed:
+// only computeRepo can reconcile that, so the caller falls back to it. The
+// cheap path detecting when it is not enough is what keeps this safe.
+async function recomputeWorktrees(
+  repo: Repo,
+  want: Set<string>,
+): Promise<Repo | null> {
+  const [porcelain, refs] = await Promise.all([
+    tryGit(repo.path, "worktree", "list", "--porcelain"),
+    tryGit(
+      repo.path,
+      "for-each-ref",
+      "--format=%(refname:short)",
+      "refs/remotes",
+    ),
+  ]);
+  if (!porcelain) return null;
+  const list = parseWorktreeList(porcelain);
+  if (
+    list.length !== repo.worktrees.length ||
+    list.some((w, i) => w.path !== repo.worktrees[i].path)
+  ) {
+    return null;
+  }
+  const pushed = new Set(
+    (refs ?? "").split("\n").filter((r) => r.startsWith("origin/")).map((r) =>
+      r.slice(7)
+    ),
+  );
+  const targets = list.map((w, i) => ({ w, i })).filter(({ w }) =>
+    want.has(w.path)
+  );
+  if (!targets.length) return repo;
+  const fresh = await pool(
+    WT_JOBS,
+    targets,
+    ({ w, i }) => loadWorktree(repo.name, w, i === 0, list[0].branch, pushed),
+  );
+  const byPath = new Map(fresh.map((w) => [w.path, w]));
+  return {
+    ...repo,
+    worktrees: repo.worktrees.map((w) => byPath.get(w.path) ?? w),
+  };
+}
+
 async function computeRepo(name: string, path: string): Promise<Repo | null> {
   const [porcelain, originUrl, refs] = await Promise.all([
     tryGit(path, "worktree", "list", "--porcelain"),
@@ -631,9 +683,14 @@ function recordDivergences(truth: Map<string, Repo>) {
     // window OR still owed a recompute". The cost is that a repo which is
     // never both quiet and clean is never judged; what says how much that
     // costs is divergenceReposExcludedTotal vs divergenceReposCheckedTotal
-    // (and watchDirty per line). NOT hotRepos: backoff is a subset of dirty,
-    // so hotRepos can read 0 while repos are being excluded every check.
-    const excluded = touched.union(dirty);
+    // (and watchDirty per line). NOT hotWts: backoff is a subset of dirty,
+    // so hotWts can read 0 while repos are being excluded every check.
+    // `dirty` holds worktree paths but the comparison is per repo, so map them
+    // back before the union: a repo with any worktree still owed a recompute is
+    // not judgeable, exactly as when the whole repo was the unit.
+    const excluded = touched.union(
+      new Set([...dirty].map((wt) => knownWorktrees.get(wt) ?? wt)),
+    );
     let checked = 0;
     for (const p of truth.keys()) if (!excluded.has(p)) checked++;
     stats.divergenceReposCheckedTotal += checked;
@@ -668,7 +725,7 @@ function sweepAll(): Promise<void> {
     const startedAt = Date.now();
     // repos already dirty at sweep start belong to the window too: the watcher
     // knows about them and simply has not caught up yet
-    touched = new Set(dirty);
+    touched = new Set([...dirty].map((wt) => knownWorktrees.get(wt) ?? wt));
     const t0 = performance.now();
     const dirs = await repoDirs();
     if (!booted) setStatus({ phase: "repos", done: 0, total: dirs.length });
@@ -836,10 +893,20 @@ function schedule() {
   }, SETTINGS.watchDebounceMs);
 }
 
-function markRepo(repo: string) {
-  if (dirty.has(repo)) stats.watchDebounceCollapsedTotal++;
-  dirty.add(repo);
+// `dirty` holds worktree paths, not repo paths: one changed file only
+// invalidates the worktree it is in.
+function markWt(wt: string) {
+  if (dirty.has(wt)) stats.watchDebounceCollapsedTotal++;
+  dirty.add(wt);
   schedule();
+}
+
+// A .git path is repo-wide (shared refs, or a linked worktree's metadata that
+// names it but not its path), so every worktree of the repo is marked. That
+// costs what the old per-repo invalidation always cost; it is just no longer
+// what the common case pays.
+function markRepo(repo: string) {
+  for (const [wt, r] of knownWorktrees) if (r === repo) markWt(wt);
 }
 
 function markRoot() {
@@ -900,11 +967,26 @@ async function drain() {
         if (d.run) run.push(path);
         else dirty.add(path); // deferred, not dropped
       }
-      await pool(REPO_JOBS, run, async (path) => {
+      // Group by repo so the two repo-level calls are paid once even when
+      // several worktrees of the same repo changed in one batch.
+      const byRepo = new Map<string, Set<string>>();
+      for (const wt of run) {
+        const repo = knownWorktrees.get(wt);
+        if (!repo) continue; // vanished between mark and drain
+        const set = byRepo.get(repo) ?? new Set<string>();
+        set.add(wt);
+        byRepo.set(repo, set);
+      }
+      await pool(REPO_JOBS, [...byRepo], async ([path, wts]) => {
         touched.add(path); // recomputed inside a sweep window: not judgeable
         const known = repoByPath.get(path);
         if (!known) return;
-        const fresh = await computeRepo(known.name, path).catch((e) => {
+        const fresh = await (async () => {
+          const partial = await recomputeWorktrees(known, wts);
+          // null means the worktree list moved: only a full recompute can say
+          // what the repo looks like now
+          return partial ?? await computeRepo(known.name, path);
+        })().catch((e) => {
           stats.errorsTotal++;
           console.error(e);
           return known;
@@ -916,7 +998,7 @@ async function drain() {
           repoByPath.delete(path);
         }
         stats.watchRecomputesTotal++;
-        hotEntry(path).win.add(Date.now());
+        for (const wt of wts) hotEntry(wt).win.add(Date.now());
       });
       if (run.length) publish();
     }
@@ -943,7 +1025,7 @@ function onEvent(ev: Deno.FsEvent) {
     stats.watchEventsTotal++;
     // knownWorktrees is already "every repo and worktree path -> repo path":
     // a repo's primary worktree path is the repo path.
-    const { bucket, repo } = classifyPath(path, ROOT, knownWorktrees);
+    const { bucket, repo, wt } = classifyPath(path, ROOT, knownWorktrees);
     stats[BUCKET_STAT[bucket]]++;
     // Classification runs in a storm too, so entry and exit measure the same
     // population: an ignored flood (`npm ci` in node_modules) must not hold us
@@ -962,7 +1044,8 @@ function onEvent(ev: Deno.FsEvent) {
     } else if (offenders.size) offenders.clear();
     if (storm) continue; // counted, never marked: that is what bounds the work
     if (rate > SETTINGS.watchStormRate) return enterStorm(rate);
-    if (repo) markRepo(repo);
+    if (wt) markWt(wt);
+    else if (repo) markRepo(repo);
     else markRoot();
   }
 }
@@ -1025,7 +1108,9 @@ const statsLine = () => ({
   watchBackoffMaxMs: SETTINGS.watchBackoffMaxMs,
   watchStormRate: SETTINGS.watchStormRate,
   watchDirty: dirty.size,
-  hotRepos: [...hot.values()].filter((h) => h.st).length, // in backoff now
+  // renamed from hotRepos: backoff is keyed per worktree now, so the old name
+  // would silently mean something else on the same schema
+  hotWts: [...hot.values()].filter((h) => h.st).length, // in backoff now
   watchEventRate: Math.round(eventRate(Date.now())),
   storm,
 });

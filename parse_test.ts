@@ -240,7 +240,7 @@ Deno.test("classifyPath: ignored paths never reach a repo", () => {
       "/r/twilight/src/.#a.py",
     ]
   ) {
-    assertEquals(cls(p), { bucket: "ignore", repo: null }, p);
+    assertEquals(cls(p), { bucket: "ignore", repo: null, wt: null }, p);
   }
 });
 
@@ -254,20 +254,23 @@ Deno.test("classifyPath: .git internals bucket as refs or index", () => {
     "/r/twilight/.git/worktrees/feat/HEAD",
   ];
   for (const p of refs) {
-    assertEquals(cls(p), { bucket: "refs", repo: "/r/twilight" }, p);
+    assertEquals(cls(p), { bucket: "refs", repo: "/r/twilight", wt: null }, p);
   }
   assertEquals(cls("/r/twilight/.git/index"), {
     bucket: "index",
     repo: "/r/twilight",
+    wt: null,
   });
   // anything else under .git is still a change: dirty, not dropped
   assertEquals(cls("/r/twilight/.git/logs/HEAD"), {
     bucket: "refs",
     repo: "/r/twilight",
+    wt: null,
   });
   assertEquals(cls("/r/twilight/.git/config"), {
     bucket: "worktree",
     repo: "/r/twilight",
+    wt: null,
   });
 });
 
@@ -275,20 +278,24 @@ Deno.test("classifyPath: worktree files map to their repo", () => {
   assertEquals(cls("/r/twilight/src/a.py"), {
     bucket: "worktree",
     repo: "/r/twilight",
+    wt: "/r/twilight",
   });
   // a linked worktree lives outside the repo dir and reports the repo
   assertEquals(cls("/r/twilight-wt/feat/src/a.py"), {
     bucket: "worktree",
     repo: "/r/twilight",
+    wt: "/r/twilight-wt/feat",
   });
   // nested repo wins over the repo containing it (longest prefix)
   assertEquals(cls("/r/forest/vendor/inner/src/x.ts"), {
     bucket: "worktree",
     repo: "/r/forest/vendor/inner",
+    wt: "/r/forest/vendor/inner",
   });
   assertEquals(cls("/r/forest/vendor/other/x.ts"), {
     bucket: "worktree",
     repo: "/r/forest",
+    wt: "/r/forest",
   });
 });
 
@@ -297,35 +304,62 @@ Deno.test("classifyPath: directory events dirty the repo, never 'no match'", () 
   assertEquals(cls("/r/twilight/src"), {
     bucket: "worktree",
     repo: "/r/twilight",
+    wt: "/r/twilight",
   });
   assertEquals(cls("/r/twilight"), {
     bucket: "worktree",
     repo: "/r/twilight",
+    wt: "/r/twilight",
   });
   assertEquals(cls("/r/twilight/.git"), {
     bucket: "worktree",
     repo: "/r/twilight",
+    wt: null,
   });
+});
+
+Deno.test("classifyPath: only working-tree files name a single worktree", () => {
+  // the point of `wt`: a file in a linked worktree invalidates that worktree
+  // alone, not the 29 others sharing the repo
+  assertEquals(cls("/r/twilight-wt/feat/src/a.py").wt, "/r/twilight-wt/feat");
+  assertEquals(cls("/r/twilight/src/a.py").wt, "/r/twilight");
+  // but everything under .git is repo-wide and must stay that way: refs/heads
+  // is shared, so one branch update moves ahead/behind for any worktree, and
+  // .git/worktrees/<name>/ names a worktree without giving its path
+  for (
+    const p of [
+      "/r/twilight/.git/HEAD",
+      "/r/twilight/.git/refs/heads/feat/x",
+      "/r/twilight/.git/worktrees/feat/HEAD",
+      "/r/twilight/.git/index",
+      "/r/twilight/.git/config",
+    ]
+  ) {
+    assertEquals(cls(p).wt, null, p);
+    assertEquals(cls(p).repo, "/r/twilight", p);
+  }
 });
 
 Deno.test("classifyPath: unknown means rescan the root", () => {
   // ROOT itself: a new directory appeared directly under it
-  assertEquals(cls("/r"), { bucket: "unknown", repo: null });
+  assertEquals(cls("/r"), { bucket: "unknown", repo: null, wt: null });
   assertEquals(cls("/r/brand-new/README.md"), {
     bucket: "unknown",
     repo: null,
+    wt: null,
   });
   // a bare repo is not a repo Forest tracks, so it reads as unknown
   assertEquals(cls("/r/mirror.git/refs/heads/main"), {
     bucket: "unknown",
     repo: null,
+    wt: null,
   });
 });
 
 Deno.test("classifyPath: paths outside ROOT are dropped, not rescanned", () => {
-  assertEquals(cls("/elsewhere/x"), { bucket: "ignore", repo: null });
+  assertEquals(cls("/elsewhere/x"), { bucket: "ignore", repo: null, wt: null });
   // a sibling whose name merely starts with ROOT
-  assertEquals(cls("/root-ish/x"), { bucket: "ignore", repo: null });
+  assertEquals(cls("/root-ish/x"), { bucket: "ignore", repo: null, wt: null });
   // ROOT's own path is never scanned for ignore segments
   assertEquals(
     classifyPath(
@@ -336,7 +370,7 @@ Deno.test("classifyPath: paths outside ROOT are dropped, not rescanned", () => {
         "/build/twilight",
       ]]),
     ),
-    { bucket: "worktree", repo: "/build/twilight" },
+    { bucket: "worktree", repo: "/build/twilight", wt: "/build/twilight" },
   );
 });
 
@@ -348,10 +382,12 @@ Deno.test("classifyPath: sibling repo names are not confused", () => {
   assertEquals(classifyPath("/r/bookish/x", "/r", owners), {
     bucket: "worktree",
     repo: "/r/bookish",
+    wt: "/r/bookish",
   });
   assertEquals(classifyPath("/r/book/x", "/r", owners), {
     bucket: "worktree",
     repo: "/r/book",
+    wt: "/r/book",
   });
 });
 
@@ -359,10 +395,12 @@ Deno.test("classifyPath: a trailing slash on root still matches", () => {
   assertEquals(classifyPath("/r/twilight/src/a.py", "/r/", OWNERS), {
     bucket: "worktree",
     repo: "/r/twilight",
+    wt: "/r/twilight",
   });
   assertEquals(classifyPath("/r", "/r//", OWNERS), {
     bucket: "unknown",
     repo: null,
+    wt: null,
   });
 });
 
@@ -374,15 +412,18 @@ Deno.test("classifyPath: a repo named after an ignore dir is still watched", () 
   assertEquals(classifyPath("/r/build/src/a.ts", "/r", owners), {
     bucket: "worktree",
     repo: "/r/build",
+    wt: "/r/build",
   });
   assertEquals(classifyPath("/r/target/.git/HEAD", "/r", owners), {
     bucket: "refs",
     repo: "/r/target",
+    wt: null,
   });
   // its own build output is still ignored
   assertEquals(classifyPath("/r/build/dist/a.js", "/r", owners), {
     bucket: "ignore",
     repo: null,
+    wt: null,
   });
 });
 
@@ -393,10 +434,12 @@ Deno.test("classifyPath: no owners yet means rescan, never silence", () => {
   assertEquals(classifyPath("/r/twilight/src/a.py", "/r", none), {
     bucket: "unknown",
     repo: null,
+    wt: null,
   });
   assertEquals(classifyPath("/r/twilight/.git/HEAD", "/r", none), {
     bucket: "unknown",
     repo: null,
+    wt: null,
   });
 });
 

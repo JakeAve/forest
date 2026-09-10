@@ -259,6 +259,10 @@ export type WatchBucket = "ignore" | "refs" | "index" | "worktree" | "unknown";
  * exactly this map). Longest matching prefix wins, so a nested repo beats the
  * repo it sits inside.
  *
+ * Returns the owning worktree as well as its repo: one changed file only
+ * invalidates that worktree, and a repo with 29 of them costs 148 git calls to
+ * recompute whole against 7 for one worktree.
+ *
  * A directory event — FSEvents coalesces bursts into the parent dir — is just
  * a path under a repo, so it dirties that repo like anything else. There is no
  * "no file matched" outcome.
@@ -270,13 +274,13 @@ export function classifyPath(
   path: string,
   rootArg: string,
   owners: Map<string, string>,
-): { bucket: WatchBucket; repo: string | null } {
+): { bucket: WatchBucket; repo: string | null; wt: string | null } {
   // a trailing slash on the `root` setting would otherwise make every
   // startsWith below fail, silently classifying every event as ignore
   const root = rootArg.replace(/(?!^)\/+$/, "");
-  const ignore = { bucket: "ignore", repo: null } as const;
+  const ignore = { bucket: "ignore", repo: null, wt: null } as const;
   // a new dir directly under ROOT may be a new repo; ROOT itself means rescan
-  if (path === root) return { bucket: "unknown", repo: null };
+  if (path === root) return { bucket: "unknown", repo: null, wt: null };
   if (!path.startsWith(root + "/")) return ignore; // we only watch ROOT
   const segs = path.slice(root.length + 1).split("/");
   const last = segs[segs.length - 1];
@@ -292,19 +296,26 @@ export function classifyPath(
     if (last.endsWith(".lock")) return ignore;
   }
   const owner = ownerWorktree(path, [...owners.keys()]);
-  if (!owner) return { bucket: "unknown", repo: null }; // new repo appeared
+  // new repo appeared
+  if (!owner) return { bucket: "unknown", repo: null, wt: null };
   const repo = owners.get(owner)!;
+  // Everything under .git is repo-wide, so wt stays null: refs/heads is shared
+  // by every worktree, so one branch update moves ahead/behind for any of them,
+  // and a linked worktree's own HEAD and index live under .git/worktrees/<name>/,
+  // which names the worktree but not its path. Only a working-tree file belongs
+  // to exactly one worktree.
   if (inGit) {
     // linked worktrees keep refs/index under .git/worktrees/<name>/, so match
     // on position within .git rather than on an exact path
     if (
       inGit.includes("refs") || /^(HEAD|packed-refs|MERGE_HEAD)$/.test(last)
     ) {
-      return { bucket: "refs", repo };
+      return { bucket: "refs", repo, wt: null };
     }
-    if (last === "index") return { bucket: "index", repo };
+    if (last === "index") return { bucket: "index", repo, wt: null };
+    return { bucket: "worktree", repo, wt: null };
   }
-  return { bucket: "worktree", repo };
+  return { bucket: "worktree", repo, wt: owner };
 }
 
 // ---- divergence: did the watcher miss a change? (docs/fs-watch.md) ----
