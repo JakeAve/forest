@@ -531,6 +531,19 @@ function broadcast(s: string) {
 // manual refresh. EventSource ignores comment lines.
 setInterval(() => send(enc.encode(": ping\n\n")), 20_000);
 
+// Boot progress rides a named event so the snapshot stays a bare array. The
+// first sweep publishes each repo as it lands, so the list fills in instead of
+// appearing all at once; this says how much is still coming.
+let booted = false;
+let bootStatus = { phase: "repos", done: 0, total: 0 };
+const statusChunk = () =>
+  enc.encode(`event: status\ndata: ${JSON.stringify(bootStatus)}\n\n`);
+
+function setStatus(o: Partial<typeof bootStatus>) {
+  bootStatus = { ...bootStatus, ...o };
+  send(statusChunk());
+}
+
 // ---- snapshot assembly ----
 // The snapshot has three sources on three cadences (docs/fs-watch.md): git data
 // per repo (event-driven), ports globally (timed), PRs per repo (timed). This
@@ -658,10 +671,24 @@ function sweepAll(): Promise<void> {
     touched = new Set(dirty);
     const t0 = performance.now();
     const dirs = await repoDirs();
+    if (!booted) setStatus({ phase: "repos", done: 0, total: dirs.length });
+    let done = 0;
     const repos = await pool(
       REPO_JOBS,
       dirs,
-      (d) => computeRepo(d.name, d.path),
+      async (d) => {
+        const r = await computeRepo(d.name, d.path);
+        // Boot only: land each repo as it resolves so the list fills in rather
+        // than appearing all at once. knownWorktrees is rebuilt from a partial
+        // map here, so an early event may classify as unknown and force one
+        // extra root rescan — it self-corrects on the next publish.
+        if (!booted) {
+          if (r) repoByPath.set(r.path, r);
+          setStatus({ done: ++done });
+          publish();
+        }
+        return r;
+      },
     );
     const next = new Map<string, Repo>();
     for (const r of repos) if (r) next.set(r.path, r);
@@ -686,8 +713,19 @@ async function poll() {
   const t0 = performance.now();
   await sweepAll();
   const repos = [...repoByPath.values()];
-  await Promise.all([refreshPorts(), refreshPrs(repos)]);
+  // PRs are decoration; the repo list is the content. Start the gh fan-out but
+  // paint without it — at boot that is ~half the wait, and it is the only stage
+  // that depends on the network. The PR tags land on the second publish.
+  const prs = refreshPrs(repos);
+  await refreshPorts();
   publish();
+  if (!booted) setStatus({ phase: "prs" });
+  await prs;
+  publish();
+  if (!booted) {
+    booted = true;
+    setStatus({ phase: "ready" });
+  }
   stats.sweepsTotal++;
   stats.sweepMs = Math.round(performance.now() - t0);
   stats.sweepMsTotal += stats.sweepMs;
@@ -1112,6 +1150,8 @@ const server = Deno.serve({ port: SETTINGS.port }, async (req) => {
           ctrl = c;
           clients.add(c);
           c.enqueue(enc.encode(`data: ${snapshot}\n\n`));
+          // a client that connects after boot must not be left on a spinner
+          c.enqueue(statusChunk());
         },
         cancel() {
           clients.delete(ctrl);

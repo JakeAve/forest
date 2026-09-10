@@ -35,6 +35,9 @@ let closed = $state({});
 let pinned = $state({});
 let checked = $state({});
 let ready = $state(false);
+// boot progress from the server's `status` SSE event; the repo list streams in
+// during the first sweep, so this says what is still coming.
+let boot = $state({ phase: "repos", done: 0, total: 0 });
 fetch("/api/layout").then((r) => r.json()).then((l) => {
   if (l.b1) b1 = l.b1;
   if (l.b2) b2 = l.b2;
@@ -154,6 +157,7 @@ const allClosed = $derived(closed.__all ?? true);
 
 $effect(() => {
   const es = new EventSource("/api/events");
+  es.addEventListener("status", (e) => (boot = JSON.parse(e.data)));
   es.onmessage = (e) => {
     const next = JSON.parse(e.data);
     const prev = new Map(
@@ -807,6 +811,16 @@ function confirmDiscard() {
         <span class="rn">All worktrees</span>
         <span class="ct">{shownWts.length}</span>
       </div>
+      {#if boot.phase !== "ready"}
+        <div class="boot">
+          <span class="spin"></span>
+          {#if boot.phase === "repos"}
+            reading branches{boot.total ? ` ${boot.done}/${boot.total}` : ""}…
+          {:else}
+            loading pull requests…
+          {/if}
+        </div>
+      {/if}
       {#if !allClosed}
       {#each repos as r (r.name)}
         {@const wts = r.worktrees.filter((w) => match(r, w))}
@@ -1591,6 +1605,36 @@ select.theme {
   padding: 1.5rem;
   text-align: center;
   font: 0.75rem var(--sans);
+}
+
+.boot {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0.6rem;
+  color: var(--dim);
+  font: 0.75rem var(--sans);
+}
+
+.boot .spin {
+  width: 0.7rem;
+  height: 0.7rem;
+  border: 2px solid var(--dimmer);
+  border-top-color: var(--acc);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .boot .spin {
+    animation: none;
+  }
 }
 
 .sechd {
