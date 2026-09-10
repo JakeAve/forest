@@ -878,10 +878,22 @@ function confirmDiscard() {
         <span class="prc">
           {#if w.pr}
             <a class="port pr" class:merged={w.pr.state === "MERGED"}
-               class:closed={w.pr.state === "CLOSED"} href={w.pr.url}
+               class:closed={w.pr.state === "CLOSED"}
+               class:pending={w.pr.ci?.state === "pending"}
+               class:fail={w.pr.ci?.state === "fail"}
+               class:draft={w.pr.isDraft} href={w.pr.url}
                target="_blank" rel="noreferrer"
-               title="{w.pr.state.toLowerCase()} PR #{w.pr.number}"
-               onclick={(e) => e.stopPropagation()}>#{w.pr.number}</a>
+               title={[
+                 `${w.pr.state.toLowerCase()} PR #${w.pr.number}`,
+                 w.pr.ci?.state && `CI ${w.pr.ci.state}${
+                   w.pr.ci.failing?.length ? `: ${w.pr.ci.failing.join(", ")}` : ""
+                 }`,
+                 w.pr.reviewDecision &&
+                 w.pr.reviewDecision.toLowerCase().replaceAll("_", " "),
+                 w.pr.isDraft && "draft",
+               ].filter(Boolean).join(" · ") + (w.pr.title ? ` · ${w.pr.title}` : "")}
+               onclick={(e) => e.stopPropagation()}>#{w.pr.number}{w.pr.reviewDecision ===
+              "CHANGES_REQUESTED" ? "!" : ""}</a>
           {/if}
         </span>
         <span class="ports">
@@ -1501,10 +1513,25 @@ select.theme {
   color: var(--bg);
   background: var(--acc);
 }
+.pr.pending {
+  background: var(--warn);
+}
+.pr.fail {
+  background: var(--danger);
+}
+.pr.draft {
+  border-color: var(--acc);
+  color: var(--acc);
+  background: transparent;
+}
 .pr.merged {
+  border-color: transparent;
+  color: var(--bg);
   background: var(--merged);
 }
 .pr.closed {
+  border-color: transparent;
+  color: var(--bg);
   background: var(--dim);
 }
 .port:hover {
