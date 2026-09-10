@@ -432,6 +432,9 @@ async function computeRepo(name: string, path: string): Promise<Repo | null> {
   ]);
   if (!porcelain) return null;
   const list = parseWorktreeList(porcelain);
+  // a linked worktree parked at the root is not a repo: its main repo already
+  // lists it, and listing it twice gives the client duplicate keys
+  if (list[0].path !== path) return null;
   // ponytail: assumes the remote is "origin"; widen if a second remote ever matters
   const pushed = new Set(
     (refs ?? "").split("\n").filter((r) => r.startsWith("origin/")).map((r) =>
