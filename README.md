@@ -93,8 +93,9 @@ are written.
 | `launchers`       | `{}`        | per-repo worktree-creation commands            |
 
 `host` defaults to loopback for a reason: setting it to `0.0.0.0` serves your
-repository metadata — paths, branches, diffs — and the unauthenticated `/mcp`
-endpoint to everything on the LAN.
+repository metadata — paths, branches, diffs — unauthenticated to everything on
+the LAN. `/mcp` only answers requests whose `Host` header is localhost, so it
+stays local either way.
 
 ### Launchers
 

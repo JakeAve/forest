@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { resolve } from "@std/path";
 import { matchWt } from "./src/filter.js";
 
 export function parseWorktreeList(porcelain: string) {
@@ -581,7 +580,7 @@ export function ciSummary(
 
 /** Path-shaped input only: anything else is a fuzzy selector, left alone. */
 export const normPath = (p: string, home = "") =>
-  /^[~/]/.test(p) ? resolve(p.replace(/^~(?=$|\/)/, home)) : p;
+  p.replace(/^~(?=$|\/)/, home).replace(/\/+/g, "/").replace(/(.)\/$/, "$1");
 
 export function selectWt<
   T extends { path: string; branch: string; repo: string },
