@@ -9,6 +9,9 @@ Deno server + Svelte frontend. No database, no config to write by hand.
 
 ## Quick start
 
+Needs Deno 2, Node 20.19+ (for Vite 7), and git. `lsof` ships with macOS. PR
+badges also need the `gh` CLI, authenticated.
+
 ```sh
 npm install       # frontend deps
 npm run build     # builds dist/, which the server serves
@@ -122,13 +125,13 @@ accent vanishes against its own background gets a readable fallback instead.
 ## Development
 
 ```sh
-npm run dev       # vite on :38472, proxies /api to the deno server on :38471
+npm run dev       # http://forest-app.localhost:38472, proxies /api to :38471
 deno task serve   # run this alongside it
 ```
 
 ```sh
 deno task check   # fmt + lint + typecheck
-deno task test    # 42 unit tests, no network or fixtures
+deno task test    # unit tests, no network or fixtures
 deno task setup   # wire .githooks (check + test on commit and push)
 ```
 
