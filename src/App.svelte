@@ -531,6 +531,14 @@ function wtItems(w) {
       label: w.isPrimary ? "Pull" : "Fetch + rebase",
       fn: (e) => rebase(w, e),
     },
+    !many && w.procs?.length > 0 && "-",
+    ...(!many
+      ? (w.procs ?? []).map((p) => ({
+        label: `Kill pid ${p.pid} (:${p.port})`,
+        danger: true,
+        fn: (e) => act("kill-pid", { pid: p.pid }, "kill:" + p.pid, e),
+      }))
+      : []),
     !w.isPrimary && "-",
     !w.isPrimary && {
       label: many ? `Remove ${t.length} worktrees…` : "Remove worktree…",

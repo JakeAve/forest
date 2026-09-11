@@ -1903,7 +1903,8 @@ const server = Deno.serve({
       const b = await req.json();
       const noWt = url.pathname === "/api/wt-create" ||
         url.pathname === "/api/theme-import" ||
-        url.pathname === "/api/wt-remove";
+        url.pathname === "/api/wt-remove" ||
+        url.pathname === "/api/kill-pid";
       const wt = noWt ? "" : guardWt(b.wt ?? null);
       switch (url.pathname) {
         case "/api/rebase":
@@ -1928,6 +1929,17 @@ const server = Deno.serve({
           }
           afterMutation();
           return json({ ok: !failed.length, failed });
+        }
+        case "/api/kill-pid": {
+          const pid = Number(b.pid);
+          const known = [...procsByCwdCache.values()].some((procs) =>
+            procs.some((p) => p.pid === pid)
+          );
+          if (!Number.isInteger(pid) || !known) {
+            throw new Error("not a known listening process");
+          }
+          Deno.kill(pid, "SIGTERM");
+          break;
         }
         case "/api/wt-create": {
           const repoPath = repoPaths.get(String(b.repo));
