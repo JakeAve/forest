@@ -45,7 +45,7 @@ import {
 const HOME = Deno.env.get("HOME")!;
 const DEFAULTS = {
   host: "127.0.0.1",
-  port: 7420,
+  port: 38471,
   root: "~/Repos",
   pollMs: 5000,
   prPollMs: 60000, // a repo with an open PR: only that state can still change
@@ -1738,7 +1738,7 @@ const tools: Record<string, Tool> = {
         if (a[k] !== undefined) p.set(k, String(a[k]));
       }
       const host = SETTINGS.host === "0.0.0.0" || SETTINGS.host === "127.0.0.1"
-        ? "localhost"
+        ? "forest-app.localhost"
         : SETTINGS.host;
       return { url: `http://${host}:${SETTINGS.port}/?${p}` };
     },
@@ -1812,7 +1812,7 @@ const server = Deno.serve({
     }
     if (url.pathname === "/api/stats") return json(statsLine());
     if (url.pathname === "/mcp") {
-      return hostHeaderValidationResponse(req, localhostAllowedHostnames()) ??
+      return hostHeaderValidationResponse(req, [...localhostAllowedHostnames(), "forest-server.localhost"]) ??
         originValidationResponse(req, localhostAllowedOrigins()) ??
         mcpHandler.fetch(req);
     }
@@ -2027,4 +2027,4 @@ if (BW) {
   });
 }
 
-console.log(`forest on http://localhost:${SETTINGS.port}  root=${ROOT}`);
+console.log(`forest on http://forest-app.localhost:${SETTINGS.port}  root=${ROOT}`);
