@@ -1812,7 +1812,10 @@ const server = Deno.serve({
     }
     if (url.pathname === "/api/stats") return json(statsLine());
     if (url.pathname === "/mcp") {
-      return hostHeaderValidationResponse(req, [...localhostAllowedHostnames(), "forest-server.localhost"]) ??
+      return hostHeaderValidationResponse(req, [
+        ...localhostAllowedHostnames(),
+        "forest-server.localhost",
+      ]) ??
         originValidationResponse(req, localhostAllowedOrigins()) ??
         mcpHandler.fetch(req);
     }
@@ -2027,4 +2030,6 @@ if (BW) {
   });
 }
 
-console.log(`forest on http://forest-app.localhost:${SETTINGS.port}  root=${ROOT}`);
+console.log(
+  `forest on http://forest-app.localhost:${SETTINGS.port}  root=${ROOT}`,
+);
