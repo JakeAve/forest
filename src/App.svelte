@@ -1497,7 +1497,7 @@ select.theme {
 .prc,
 .ports {
   display: flex;
-  justify-content: flex-end;
+  justify-content: center;
   gap: 0.25rem;
 }
 .port {
@@ -1508,8 +1508,11 @@ select.theme {
   padding: 0 0.25rem;
   text-decoration: none;
 }
-.pr,
-.pr:hover {
+.port:hover {
+  border-color: var(--acc);
+  text-decoration: underline;
+}
+.pr {
   border-color: transparent;
   color: var(--bg);
   background: var(--acc);
@@ -1535,9 +1538,14 @@ select.theme {
   color: var(--bg);
   background: var(--dim);
 }
-.port:hover {
-  border-color: var(--acc);
+.pr:hover {
+  border-color: transparent;
+  filter: brightness(1.15);
   text-decoration: underline;
+}
+.pr.draft:hover {
+  border-color: var(--acc);
+  filter: none;
 }
 .wt .dirty {
   font: 0.6875rem var(--mono);
