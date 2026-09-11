@@ -1492,7 +1492,8 @@ function logLine(o: Record<string, unknown>) {
       }
       await Deno.writeTextFile(
         LOG_PATH,
-        JSON.stringify({ t: new Date().toISOString(), ...o }) + "\n",
+        JSON.stringify({ t: new Date().toISOString(), build: "fs-watch", ...o }) +
+          "\n",
         { append: true },
       );
       logLines++;
