@@ -6,5 +6,5 @@ export default defineConfig({
   resolve: {
     dedupe: ["@codemirror/state", "@codemirror/view", "@codemirror/language"],
   },
-  server: { proxy: { "/api": "http://localhost:7420" } },
+  server: { port: 38472, proxy: { "/api": "http://localhost:38471" } },
 });

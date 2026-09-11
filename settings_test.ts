@@ -60,3 +60,21 @@ Deno.test("settingsOverrides compares nested maps by value", () => {
     launchers: {},
   });
 });
+
+Deno.test("booleans are coerced, non-booleans ignored", () => {
+  const B = { watch: true };
+  assertEquals(coerceSettings(B, { watch: false }), { watch: false });
+  assertEquals(coerceSettings(B, { watch: "false" }), {});
+});
+
+Deno.test("coerceSettings: a zero threshold would disable the watcher forever", () => {
+  // watchStormRate 0 makes rate > 0 true on the first event and the exit
+  // (rate < 0/4) unreachable; watchHotThreshold 0 backs every repo off.
+  assertEquals(
+    coerceSettings(
+      { watchStormRate: 2000, watchHotThreshold: 10 },
+      { watchStormRate: 0, watchHotThreshold: -5 },
+    ),
+    { watchStormRate: 1, watchHotThreshold: 1 },
+  );
+});

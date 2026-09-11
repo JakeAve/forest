@@ -1,26 +1,62 @@
 import process from "node:process"; // cpuUsage(): self CPU, see stats above
 import { serveDir } from "@std/http/file-server";
-import { basename, dirname, join } from "@std/path";
+import {
+  createMcpHandler,
+  hostHeaderValidationResponse,
+  localhostAllowedHostnames,
+  localhostAllowedOrigins,
+  McpServer,
+  originValidationResponse,
+} from "@modelcontextprotocol/server";
+import { z } from "zod";
+import { basename, dirname, join, resolve } from "@std/path";
+import { matchWt } from "./src/filter.js";
 import { mergeInclude, parseThemeText, resolveTheme } from "./src/theme.js";
 import {
+  backoffOver,
+  ciSummary,
+  classifyPath,
   coerceSettings,
+  diffSnapshots,
+  type FileRow,
+  type Files,
   fillCommand,
+  hotBackoff,
+  type HotState,
+  normPath,
   ownerWorktree,
   parseDiffHunks,
+  parseLsofCommands,
   parseLsofPidPorts,
   parseStatus,
+  parseUpstreamTrack,
   parseWorktreeList,
-  portsByCwd,
+  pool,
+  procsByCwd,
+  qbool,
+  qnum,
+  rateWindow,
   remoteWebUrl,
+  selectWt,
   settingsOverrides,
+  statusCounts,
 } from "./parse.ts";
 
 const HOME = Deno.env.get("HOME")!;
 const DEFAULTS = {
-  port: 7420,
+  host: "127.0.0.1",
+  port: 38471,
   root: "~/Repos",
   pollMs: 5000,
-  prPollMs: 60000,
+  prPollMs: 60000, // a repo with an open PR: only that state can still change
+  prIdleMs: 300000, // a repo without one: catches PRs opened outside this machine
+  watch: true,
+  watchDebounceMs: 300,
+  watchMaxWaitMs: 2000,
+  watchSweepMs: 300000,
+  watchHotThreshold: 10,
+  watchBackoffMaxMs: 30000,
+  watchStormRate: 2000,
   recentCount: 10,
   agoRefreshMs: 30000,
   toastMs: 7000,
@@ -83,16 +119,10 @@ async function loadVsCodeTheme(path: string): Promise<unknown> {
 }
 const dec = new TextDecoder();
 
-// ---- observability ----
-// Forest's cost is subprocesses, not compute: a poll fans out to hundreds of
-// `git` calls, so the numbers that matter are spawn rate, how long children
-// live, and whether the loop stays responsive while they do.
-//
-// *Total fields are cumulative since startedAt — diff any two log lines for a
-// rate over that window. *Max fields are per-line: reset after each line is
-// written, so each describes only that minute rather than repeating one old
-// spike forever. Everything else is a gauge, true only at the instant of the
-// line. The schema is append-only: add fields, never redefine one.
+// ---- baseline metrics (experiment; see docs/fs-watch.md) ----
+// Cumulative since start. Diff two log lines to get a rate.
+// *Total fields are cumulative since startedAt — diff two lines for a rate.
+// Everything else is a gauge, true only at the instant the line was written.
 const stats = {
   startedAt: Date.now(),
   pollsTotal: 0,
@@ -132,8 +162,57 @@ const stats = {
   logRotationsTotal: 0,
   pollMsMax: 0,
   gitMsMax: 0,
+  recomputeMsMax: 0,
+  drainMsMax: 0,
   lagMsMax: 0,
   subprocessPeak: 0, // high-water concurrent children
+  // ---- watcher (step 4) ----
+  watchEventsTotal: 0, // one per event *path*, not per FsEvent
+  watchIgnoredTotal: 0,
+  watchRefsTotal: 0,
+  watchIndexTotal: 0,
+  watchWorktreeTotal: 0,
+  watchUnknownTotal: 0,
+  watchRecomputesTotal: 0, // single repos recomputed from an event
+  watchRootRescansTotal: 0, // full sweeps forced by an unknown path
+  watchDebounceCollapsedTotal: 0, // marks that landed on an already-dirty repo
+  watchRootCollapsedTotal: 0, // root rescans that landed on an already-dirty root
+  watcherRestartsTotal: 0,
+  // the watch path's own cost, so the per-worktree recompute can be measured
+  // rather than just counted: pairs with watchRecomputesTotal, and drains are
+  // the watch-path analogue of a poll
+  recomputeMsTotal: 0,
+  drainsTotal: 0,
+  drainMsTotal: 0,
+  // ---- backoff + storm: the safety valve (step 6) ----
+  watchBackoffEntriesTotal: 0, // repos that went hot
+  watchBackoffExitsTotal: 0, // ...and later went quiet again
+  watchStormEntriesTotal: 0,
+  watchStormMsTotal: 0, // time spent degraded to plain polling
+  // ---- safety net + divergence (step 5) ----
+  // sweepsTotal counts every full sweep, whatever fired it (timer, mutating
+  // POST, root rescan). This counts only the timed safety-net ones, so
+  // divergences-per-sweep has a denominator that means something.
+  watchSafetySweepsTotal: 0,
+  divergencesTotal: 0,
+  // a divergence check skipped WHOLESALE, which now only happens for a root
+  // rescan: a repo may have appeared or vanished, which is not per-repo
+  divergenceChecksSkippedTotal: 0,
+  // per-repo exclusion instead. A sweep spans seconds, so a repo touched
+  // anywhere in that window cannot be judged; the other 120 still are.
+  divergenceReposCheckedTotal: 0,
+  divergenceReposExcludedTotal: 0,
+  divergenceBranchTotal: 0,
+  divergenceHeadTotal: 0,
+  divergenceAheadTotal: 0,
+  divergenceBehindTotal: 0,
+  divergenceDirtyTotal: 0,
+  divergenceLastActivityTotal: 0,
+  divergenceRemoteTotal: 0,
+  divergenceWorktreeAddedTotal: 0,
+  divergenceWorktreeRemovedTotal: 0,
+  divergenceRepoAddedTotal: 0,
+  divergenceRepoRemovedTotal: 0,
   snapshotBytes: 0, // last snapshot that changed
   repos: 0,
   worktrees: 0,
@@ -143,6 +222,8 @@ const stats = {
 const MAX_FIELDS = [
   "pollMsMax",
   "gitMsMax",
+  "recomputeMsMax",
+  "drainMsMax",
   "lagMsMax",
   "subprocessPeak",
 ] as const;
@@ -150,7 +231,6 @@ const bumpMax = (k: typeof MAX_FIELDS[number], v: number) => {
   if (v > stats[k]) stats[k] = v;
 };
 
-// returns a done() that must run on every path, success or throw
 const spawned = (bin: string) => {
   stats.subprocessesTotal++;
   if (bin === "git") stats.gitTotal++;
@@ -180,11 +260,18 @@ async function exec(cwd: string, cmd: string[]): Promise<string> {
   return dec.decode(out.stdout);
 }
 const git = (cwd: string, ...args: string[]) => exec(cwd, ["git", ...args]);
+// read-only calls only: the flag keeps polling from rewriting .git/index
 const tryGit = (cwd: string, ...args: string[]) =>
-  git(cwd, ...args).catch(() => {
+  git(cwd, "--no-optional-locks", ...args).catch(() => {
     stats.gitFailTotal++;
     return null;
   });
+
+// ponytail: fixed ceilings, not adaptive — ~128 `git` and 8 `gh` per sweep;
+// concurrent polls stack on top, so this is a per-sweep bound, not a system one.
+const REPO_JOBS = 8; // repos swept at once
+const WT_JOBS = 4; // worktrees per repo at once
+const PR_JOBS = 8; // `gh`: own knob, 7x `git`'s RSS per process
 
 async function gitIn(cwd: string, stdin: string, ...args: string[]) {
   const done = spawned("git");
@@ -213,24 +300,45 @@ type Worktree = {
   head: string;
   ahead: number | null;
   behind: number | null;
+  aheadMain: number | null;
+  behindMain: number | null;
+  gone: boolean;
+  state: "rebase" | "merge" | "cherry-pick" | "detached" | null;
   dirty: number;
+  staged: number;
+  modified: number;
+  untracked: number;
+  subject: string;
+  author: string;
   lastActivity: number;
   isPrimary: boolean;
   remote: string | null;
   ports: number[];
+  procs: { port: number; pid: number; command: string }[];
   pr: Pr | null;
 };
 type Repo = {
   name: string;
   path: string;
   webUrl: string | null;
+  defaultBranch: string | null;
   worktrees: Worktree[];
 };
 
+const defaultRefByRepo = new Map<string, string>();
+
 async function mergeBase(wt: string): Promise<string> {
-  return (await tryGit(wt, "merge-base", "origin/HEAD", "HEAD"))?.trim() ??
-    "HEAD";
+  const ref = defaultRefByRepo.get(knownWorktrees.get(wt) ?? "") ??
+    "origin/HEAD";
+  return (await tryGit(wt, "merge-base", ref, "HEAD"))?.trim() ?? "HEAD";
 }
+
+const STATE_BY_GIT_PATH = [
+  "rebase",
+  "rebase",
+  "merge",
+  "cherry-pick",
+] as const;
 
 async function loadWorktree(
   repoName: string,
@@ -238,25 +346,55 @@ async function loadWorktree(
   isPrimary: boolean,
   primaryBranch: string,
   pushed: Set<string>,
+  gone: Set<string>,
+  defaultRef: string | null,
 ): Promise<Worktree> {
-  const [statusZ, ab, headTime, upstream] = await Promise.all([
-    tryGit(wt.path, "status", "--porcelain=v2", "-z", "--untracked-files=all"),
-    tryGit(
-      wt.path,
-      "rev-list",
-      "--left-right",
-      "--count",
-      "@{upstream}...HEAD",
-    ),
-    tryGit(wt.path, "log", "-1", "--format=%ct"),
-    tryGit(
-      wt.path,
-      "rev-parse",
-      "--abbrev-ref",
-      "--symbolic-full-name",
-      "@{upstream}",
-    ),
-  ]);
+  const [statusZ, ab, headLog, upstream, abMain, statePaths] = await Promise
+    .all([
+      tryGit(
+        wt.path,
+        "status",
+        "--porcelain=v2",
+        "-z",
+        "--untracked-files=all",
+      ),
+      tryGit(
+        wt.path,
+        "rev-list",
+        "--left-right",
+        "--count",
+        "@{upstream}...HEAD",
+      ),
+      tryGit(wt.path, "log", "-1", "--format=%ct%n%s%n%an"),
+      tryGit(
+        wt.path,
+        "rev-parse",
+        "--abbrev-ref",
+        "--symbolic-full-name",
+        "@{upstream}",
+      ),
+      defaultRef
+        ? tryGit(
+          wt.path,
+          "rev-list",
+          "--left-right",
+          "--count",
+          `${defaultRef}...HEAD`,
+        )
+        : Promise.resolve(null),
+      tryGit(
+        wt.path,
+        "rev-parse",
+        "--git-path",
+        "rebase-merge",
+        "--git-path",
+        "rebase-apply",
+        "--git-path",
+        "MERGE_HEAD",
+        "--git-path",
+        "CHERRY_PICK_HEAD",
+      ),
+    ]);
   // upstream set to the primary branch means "branched off it", not "pushed as it"
   const tracked = upstream?.trim().split("/").slice(1).join("/") || null;
   const remote = tracked && tracked !== primaryBranch
@@ -264,10 +402,30 @@ async function loadWorktree(
     : pushed.has(wt.branch)
     ? wt.branch
     : null;
-  const { dirty, untracked } = parseStatus(statusZ ?? "");
+  const st = parseStatus(statusZ ?? "");
+  const { dirty, untracked } = st;
+  const counts = statusCounts(st.entries);
   const [behind, ahead] = ab ? ab.trim().split("\t").map(Number) : [null, null];
+  const [behindMain, aheadMain] = abMain
+    ? abMain.trim().split("\t").map(Number)
+    : [null, null];
+  const [ct, subject, author] = (headLog ?? "").split("\n");
 
-  let lastActivity = Number(headTime?.trim() ?? 0) * 1000;
+  let state: Worktree["state"] = wt.branch === "(detached)" ? "detached" : null;
+  const lines = (statePaths ?? "").split("\n");
+  const hits = await Promise.all(
+    STATE_BY_GIT_PATH.map((_, i) =>
+      lines[i]
+        ? Deno.stat(resolve(wt.path, lines[i])).then(() => true).catch(() =>
+          false
+        )
+        : false
+    ),
+  );
+  const hit = hits.indexOf(true);
+  if (hit >= 0) state = STATE_BY_GIT_PATH[hit];
+
+  let lastActivity = Number(ct ?? 0) * 1000;
   const changed = await tryGit(wt.path, "diff", "--name-only", "-z", "HEAD");
   const paths = [...(changed ?? "").split("\0").filter(Boolean), ...untracked];
   for (const p of paths) {
@@ -283,16 +441,26 @@ async function loadWorktree(
     head: wt.head,
     ahead,
     behind,
+    aheadMain,
+    behindMain,
+    gone: gone.has(wt.branch),
+    state,
     dirty,
+    staged: counts.staged,
+    modified: counts.modified,
+    untracked: counts.untracked,
+    subject: subject ?? "",
+    author: author ?? "",
     lastActivity,
     isPrimary,
     remote,
     ports: [],
+    procs: [],
     pr: null,
   };
 }
 
-async function computeRepos(): Promise<Repo[]> {
+async function repoDirs(): Promise<{ name: string; path: string }[]> {
   const candidates: { name: string; path: string }[] = [];
   for await (const e of Deno.readDir(ROOT)) {
     if (!e.isDirectory) continue;
@@ -302,35 +470,109 @@ async function computeRepos(): Promise<Repo[]> {
     );
     if (hasGit) candidates.push({ name: e.name, path: p });
   }
-  const repos = await Promise.all(candidates.map(async ({ name, path }) => {
-    const [porcelain, originUrl, refs] = await Promise.all([
-      tryGit(path, "worktree", "list", "--porcelain"),
-      tryGit(path, "remote", "get-url", "origin"),
-      tryGit(path, "for-each-ref", "--format=%(refname:short)", "refs/remotes"),
-    ]);
-    if (!porcelain) return null;
-    const list = parseWorktreeList(porcelain);
+  return candidates;
+}
+
+// what every worktree of one repo needs, read once: the worktree list, the
+// branches that exist on origin, the upstreams that are gone, the default ref
+async function repoFacts(path: string) {
+  const [porcelain, refs, track, headRef] = await Promise.all([
+    tryGit(path, "worktree", "list", "--porcelain"),
+    tryGit(path, "for-each-ref", "--format=%(refname:short)", "refs/remotes"),
+    tryGit(
+      path,
+      "for-each-ref",
+      "--format=%(refname:short) %(upstream:track)",
+      "refs/heads",
+    ),
+    tryGit(path, "symbolic-ref", "refs/remotes/origin/HEAD"),
+  ]);
+  const defaultRef = headRef?.trim() || null;
+  if (defaultRef) defaultRefByRepo.set(path, defaultRef);
+  else defaultRefByRepo.delete(path);
+  return {
+    list: porcelain ? parseWorktreeList(porcelain) : null,
     // ponytail: assumes the remote is "origin"; widen if a second remote ever matters
-    const pushed = new Set(
+    pushed: new Set(
       (refs ?? "").split("\n").filter((r) => r.startsWith("origin/")).map((r) =>
         r.slice(7)
       ),
-    );
-    const worktrees = await Promise.all(
-      list.map((wt, i) =>
-        loadWorktree(name, wt, i === 0, list[0].branch, pushed)
-      ),
-    );
-    return {
-      name,
-      path,
-      webUrl: originUrl ? remoteWebUrl(originUrl) : null,
-      worktrees,
-    };
-  }));
-  return repos.filter((r): r is Repo => r !== null).sort((a, b) =>
-    a.name.localeCompare(b.name)
+    ),
+    gone: parseUpstreamTrack(track ?? ""),
+    defaultRef,
+  };
+}
+
+// the unit the watcher invalidates: everything the snapshot knows about one repo
+// Recompute only the named worktrees of one repo, reusing the repo-level data
+// every worktree needs. That is repoFacts' 4 git calls plus loadWorktree's 5
+// each, against computeRepo's 5 + 5 per *every* worktree — on a 29-worktree
+// repo, 9 calls instead of 150.
+//
+// Returns null when the worktree list itself moved, which means a worktree was
+// added or removed and every isPrimary/primaryBranch answer may have changed:
+// only computeRepo can reconcile that, so the caller falls back to it. The
+// cheap path detecting when it is not enough is what keeps this safe.
+async function recomputeWorktrees(
+  repo: Repo,
+  want: Set<string>,
+): Promise<Repo | null> {
+  const { list, pushed, gone, defaultRef } = await repoFacts(repo.path);
+  if (!list) return null;
+  if (
+    list.length !== repo.worktrees.length ||
+    list.some((w, i) => w.path !== repo.worktrees[i].path)
+  ) {
+    return null;
+  }
+  const targets = list.map((w, i) => ({ w, i })).filter(({ w }) =>
+    want.has(w.path)
   );
+  if (!targets.length) return repo;
+  const fresh = await pool(
+    WT_JOBS,
+    targets,
+    ({ w, i }) =>
+      loadWorktree(
+        repo.name,
+        w,
+        i === 0,
+        list[0].branch,
+        pushed,
+        gone,
+        defaultRef,
+      ),
+  );
+  const byPath = new Map(fresh.map((w) => [w.path, w]));
+  return {
+    ...repo,
+    worktrees: repo.worktrees.map((w) => byPath.get(w.path) ?? w),
+  };
+}
+
+async function computeRepo(name: string, path: string): Promise<Repo | null> {
+  const [facts, originUrl] = await Promise.all([
+    repoFacts(path),
+    tryGit(path, "remote", "get-url", "origin"),
+  ]);
+  const { list, pushed, gone, defaultRef } = facts;
+  if (!list) return null;
+  // a linked worktree parked at the root is not a repo: its main repo already
+  // lists it, and listing it twice gives the client duplicate keys
+  if (list[0].path !== path) return null;
+  const worktrees = await pool(
+    WT_JOBS,
+    list,
+    (wt, i) =>
+      loadWorktree(name, wt, i === 0, list[0].branch, pushed, gone, defaultRef),
+  );
+  return {
+    name,
+    path,
+    webUrl: originUrl ? remoteWebUrl(originUrl) : null,
+    defaultBranch: defaultRef?.replace("refs/remotes/origin/", "") ?? null,
+    worktrees,
+  };
 }
 
 // ---- listening dev servers ----
@@ -346,61 +588,195 @@ async function lsof(...args: string[]): Promise<string> {
   return out ? dec.decode(out.stdout) : "";
 }
 
-async function listeningPorts(): Promise<Map<string, number[]>> {
-  const byPid = parseLsofPidPorts(
-    await lsof("-nP", "-iTCP", "-sTCP:LISTEN", "-Fpn"),
-  );
+// GLOBAL and timed: one lsof for the whole machine, PID -> cwd -> worktree.
+// It cannot be attributed to one repo, so it can never be recomputed per repo;
+// it gets its own cadence and is merged into the snapshot by publish().
+let procsByCwdCache = new Map<
+  string,
+  { port: number; pid: number; command: string }[]
+>();
+
+// `timed` records one phase of a poll. The three partition it, so a slow poll
+// says which stage was slow instead of needing to be reproduced.
+async function timed<T>(
+  key: "gitMs" | "portsMs",
+  p: Promise<T>,
+): Promise<T> {
+  const t0 = performance.now();
+  try {
+    return await p;
+  } finally {
+    stats[key] = Math.round(performance.now() - t0);
+    stats[`${key}Total`] += stats[key];
+  }
+}
+
+async function refreshPorts() {
+  procsByCwdCache = await timed("portsMs", listeningPorts());
+}
+
+async function listeningPorts(): Promise<
+  Map<string, { port: number; pid: number; command: string }[]>
+> {
+  const net = await lsof("-nP", "-iTCP", "-sTCP:LISTEN", "-Fpcn");
+  const byPid = parseLsofPidPorts(net);
   if (!byPid.size) return new Map();
-  return portsByCwd(
-    byPid,
-    await lsof("-a", "-d", "cwd", "-Fpn", "-p", [...byPid.keys()].join(",")),
+  const cmds = parseLsofCommands(net);
+  const cwds = await lsof(
+    "-a",
+    "-d",
+    "cwd",
+    "-Fpn",
+    "-p",
+    [...byPid.keys()].join(","),
   );
+  return procsByCwd(byPid, cmds, cwds);
 }
 
 // ---- open pull requests ----
 
-type Pr = { number: number; url: string; state: string };
-const prsByRepo = new Map<string, Map<string, Pr>>();
-let prsAt = 0;
+type Pr = {
+  number: number;
+  url: string;
+  state: "OPEN" | "MERGED" | "CLOSED";
+  title: string;
+  isDraft: boolean;
+  baseRefName: string;
+  reviewDecision: "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED" | "";
+  mergeable: "MERGEABLE" | "CONFLICTING" | "UNKNOWN";
+  ci: { state: "pass" | "fail" | "pending" | null; failing: string[] };
+  detailAt: number | null;
+};
+type PrSlim = Pick<Pr, "number" | "url" | "state">;
+const prsByRepo = new Map<string, Map<string, PrSlim>>();
+const prDetail = new Map<string, Omit<Pr, "number" | "url" | "state">>();
+const NO_DETAIL: Omit<Pr, "number" | "url" | "state"> = {
+  title: "",
+  isDraft: false,
+  baseRefName: "",
+  reviewDecision: "",
+  mergeable: "UNKNOWN",
+  ci: { state: null, failing: [] },
+  detailAt: null,
+};
+const prFor = (
+  repo: string,
+  prs: Map<string, PrSlim> | undefined,
+  w: Worktree,
+): Pr | null => {
+  const p = prs?.get(w.branch) ?? (w.remote ? prs?.get(w.remote) : null);
+  return p
+    ? { ...p, ...(prDetail.get(`${repo}#${p.number}`) ?? NO_DETAIL) }
+    : null;
+};
+
+// repo path -> earliest next gh call. Only an OPEN pr can change under us, so a
+// repo without one is checked on the idle floor: enough to notice a PR opened in
+// a browser, cheap enough to leave running all day.
+const ghNextAt = new Map<string, number>();
+const ghFailed = new Set<string>(); // reported once per repo, not once per call
+const PR_PUSH_MS = 10_000;
+const GH_RETRY_MS = [600_000, 3_600_000];
 
 async function refreshPrs(repos: Repo[]) {
-  if (prsAt && Date.now() - prsAt < SETTINGS.prPollMs) return (stats.prsMs = 0);
-  prsAt = Date.now();
-  const t0 = performance.now();
-  try {
-    await Promise.all(repos.map(async (r) => {
-      const out = await exec(r.path, [
-        "gh",
-        "pr",
-        "list",
-        "--state",
-        "all",
-        "--limit",
-        "200",
-        "--json",
-        "number,url,headRefName,state",
-      ]).catch(() => {
-        stats.ghFailTotal++;
-        return null;
-      });
-      if (out === null) return;
-      const byBranch = new Map<string, Pr>();
-      for (const p of JSON.parse(out) as (Pr & { headRefName: string })[]) {
-        const cur = byBranch.get(p.headRefName);
-        if (!cur || (cur.state !== "OPEN" && p.number > cur.number)) {
-          byBranch.set(p.headRefName, {
-            number: p.number,
-            url: p.url,
-            state: p.state,
-          });
-        }
+  const now = Date.now();
+  // no origin remote, no PRs -- ever. The rest run on their own clock.
+  const due = repos.filter((r) =>
+    r.webUrl && now >= (ghNextAt.get(r.path) ?? 0)
+  );
+  const jobs: [string, number][] = [];
+  await pool(PR_JOBS, due, async (r) => {
+    const out = await exec(r.path, [
+      "gh",
+      "pr",
+      "list",
+      "--state",
+      "all",
+      "--limit",
+      "200",
+      "--json",
+      "number,url,headRefName,state",
+    ]).catch((e) => {
+      stats.ghFailTotal++;
+      const first = !ghFailed.has(r.path);
+      if (first) {
+        ghFailed.add(r.path);
+        console.error(`gh pr list failed in ${r.name}:`, e.message);
       }
-      prsByRepo.set(r.path, byBranch);
-    }));
-  } finally {
-    stats.prsMs = Math.round(performance.now() - t0);
-    stats.prsMsTotal += stats.prsMs;
-  }
+      ghNextAt.set(r.path, Date.now() + GH_RETRY_MS[first ? 0 : 1]);
+      return null;
+    });
+    if (out === null) return;
+    ghFailed.delete(r.path);
+    const byBranch = new Map<string, PrSlim>();
+    for (const p of JSON.parse(out) as (PrSlim & { headRefName: string })[]) {
+      const cur = byBranch.get(p.headRefName);
+      if (!cur || (cur.state !== "OPEN" && p.number > cur.number)) {
+        byBranch.set(p.headRefName, {
+          number: p.number,
+          url: p.url,
+          state: p.state,
+        });
+      }
+    }
+    prsByRepo.set(r.path, byBranch);
+    // read off this repo's own worktrees, not the PR list: a teammate's open PR
+    // cannot change anything Forest draws.
+    const open = [
+      ...new Set(
+        r.worktrees.map((w) =>
+          byBranch.get(w.branch) ?? (w.remote ? byBranch.get(w.remote) : null)
+        ).filter((p) => p?.state === "OPEN").map((p) => p!.number),
+      ),
+    ];
+    const keep = new Set(open.map((n) => `${r.path}#${n}`));
+    for (const k of prDetail.keys()) {
+      if (k.startsWith(`${r.path}#`) && !keep.has(k)) prDetail.delete(k);
+    }
+    for (const n of open) jobs.push([r.path, n]);
+    ghNextAt.set(
+      r.path,
+      Date.now() + (open.length ? SETTINGS.prPollMs : SETTINGS.prIdleMs),
+    );
+  });
+  await pool(PR_JOBS, jobs, async ([repo, n]) => {
+    const out = await exec(repo, [
+      "gh",
+      "pr",
+      "view",
+      String(n),
+      "--json",
+      "title,isDraft,baseRefName,reviewDecision,mergeable,statusCheckRollup",
+    ]).catch((e) => {
+      stats.ghFailTotal++;
+      const first = !ghFailed.has(repo);
+      if (first) {
+        ghFailed.add(repo);
+        console.error(`gh pr view failed in ${repo}:`, e.message);
+      }
+      ghNextAt.set(repo, Date.now() + GH_RETRY_MS[first ? 0 : 1]);
+      return null;
+    });
+    if (out === null) return;
+    const d = JSON.parse(out);
+    const fields = {
+      title: d.title,
+      isDraft: d.isDraft,
+      baseRefName: d.baseRefName,
+      reviewDecision: d.reviewDecision ?? "",
+      mergeable: d.mergeable,
+      ci: ciSummary(d.statusCheckRollup ?? []),
+    };
+    const prev = prDetail.get(`${repo}#${n}`);
+    if (
+      prev &&
+      JSON.stringify({ ...prev, detailAt: null }) ===
+        JSON.stringify({ ...fields, detailAt: null })
+    ) {
+      return;
+    }
+    prDetail.set(`${repo}#${n}`, { ...fields, detailAt: Date.now() });
+  });
 }
 
 // ---- files & diff ----
@@ -430,7 +806,11 @@ function guardPath(p: string | null): string {
 const resolveBase = (wt: string, mode: string) =>
   mode === "head" ? Promise.resolve("HEAD") : mergeBase(wt);
 
-async function listFiles(wt: string, mode: string) {
+async function listFiles(
+  wt: string,
+  mode: string,
+  q?: string,
+): Promise<Files> {
   const base = await resolveBase(wt, mode);
   const [nameStatus, numstat, statusZ] = await Promise.all([
     tryGit(wt, "diff", "--no-renames", "--name-status", "-z", base),
@@ -446,14 +826,7 @@ async function listFiles(wt: string, mode: string) {
   const st = parseStatus(statusZ ?? "");
   const xy = new Map(st.entries.map((e) => [e.path, e.xy]));
 
-  const files: {
-    path: string;
-    status: string;
-    added: number;
-    removed: number;
-    staged: boolean;
-    unstaged: boolean;
-  }[] = [];
+  const files: FileRow[] = [];
   const flags = (path: string) => {
     const s = xy.get(path) ?? "..";
     return {
@@ -478,7 +851,7 @@ async function listFiles(wt: string, mode: string) {
     files.push({ path: p, status: "U", added: lines, removed: 0, ...flags(p) });
   }
   files.sort((a, b) => a.path.localeCompare(b.path));
-  return { base, files };
+  return { base, files: q ? files.filter((f) => f.path.includes(q)) : files };
 }
 
 async function fileContents(wt: string, path: string, mode: string) {
@@ -497,9 +870,7 @@ const enc = new TextEncoder();
 const clients = new Set<ReadableStreamDefaultController>();
 let snapshot = "[]";
 
-function broadcast(s: string) {
-  stats.broadcastsTotal++;
-  const chunk = enc.encode(`data: ${s}\n\n`);
+function send(chunk: Uint8Array) {
   for (const c of clients) {
     try {
       c.enqueue(chunk);
@@ -509,29 +880,43 @@ function broadcast(s: string) {
   }
 }
 
-// `timed` records one phase of a poll. The three partition it, so a slow poll
-// says which stage was slow instead of needing to be reproduced.
-async function timed<T>(
-  key: "gitMs" | "portsMs",
-  p: Promise<T>,
-): Promise<T> {
-  const t0 = performance.now();
-  try {
-    return await p;
-  } finally {
-    stats[key] = Math.round(performance.now() - t0);
-    stats[`${key}Total`] += stats[key];
-  }
+function broadcast(s: string) {
+  send(enc.encode(`data: ${s}\n\n`));
 }
 
-async function poll() {
-  const t0 = performance.now();
-  const [repos, byCwd] = await Promise.all([
-    timed("gitMs", computeRepos()),
-    timed("portsMs", listeningPorts()),
-  ]);
-  bumpMax("gitMsMax", stats.gitMs);
-  await refreshPrs(repos);
+// A silent stream is indistinguishable from a dead one: enqueue on a dead
+// socket buffers rather than throwing, so the server keeps a zombie client and
+// the browser fires no error, never reconnects, and shows stale data until a
+// manual refresh. EventSource ignores comment lines.
+setInterval(() => send(enc.encode(": ping\n\n")), 20_000);
+
+// Boot progress rides a named event so the snapshot stays a bare array. The
+// first sweep publishes each repo as it lands, so the list fills in instead of
+// appearing all at once; this says how much is still coming.
+let booted = false;
+let bootStatus = { phase: "repos", done: 0, total: 0 };
+const statusChunk = () =>
+  enc.encode(`event: status\ndata: ${JSON.stringify(bootStatus)}\n\n`);
+
+function setStatus(o: Partial<typeof bootStatus>) {
+  bootStatus = { ...bootStatus, ...o };
+  send(statusChunk());
+}
+
+// ---- snapshot assembly ----
+// The snapshot has three sources on three cadences (docs/fs-watch.md): git data
+// per repo (event-driven), ports globally (timed), PRs per repo (timed). This
+// map is the source of truth; the snapshot is derived from it, so a partial
+// recompute only has to replace one entry.
+const repoByPath = new Map<string, Repo>();
+
+// Rebuilds knownWorktrees/repoPaths from the whole map every time, so a partial
+// recompute can never drop a still-live worktree from the guardWt allowlist.
+// Synchronous throughout: no request can observe the map half-rebuilt.
+function publish() {
+  const repos = [...repoByPath.values()].sort((a, b) =>
+    a.name.localeCompare(b.name)
+  );
   knownWorktrees.clear();
   repoPaths.clear();
   const wtByPath = new Map<string, Worktree>();
@@ -540,27 +925,506 @@ async function poll() {
     for (const w of r.worktrees) {
       knownWorktrees.set(w.path, r.path);
       wtByPath.set(w.path, w);
-      const prs = prsByRepo.get(r.path);
-      w.pr = prs?.get(w.branch) ?? (w.remote ? prs?.get(w.remote) : null) ??
-        null;
+      w.pr = prFor(r.path, prsByRepo.get(r.path), w);
+      w.ports = []; // recomputed from scratch: publish() runs on live objects
+      w.procs = [];
     }
   }
-  for (const [cwd, ports] of byCwd) {
-    const w = wtByPath.get(ownerWorktree(cwd, [...wtByPath.keys()]) ?? "");
-    if (w) w.ports = [...new Set([...w.ports, ...ports])].sort((a, b) => a - b);
+  const wtPaths = [...wtByPath.keys()];
+  for (const [cwd, procs] of procsByCwdCache) {
+    const w = wtByPath.get(ownerWorktree(cwd, wtPaths) ?? "");
+    if (w) {
+      const byKey = new Map(
+        [...w.procs, ...procs].map((p) => [`${p.pid}:${p.port}`, p]),
+      );
+      w.procs = [...byKey.values()].sort((a, b) => a.port - b.port);
+    }
+  }
+  for (const w of wtByPath.values()) {
+    w.ports = [...new Set(w.procs.map((p) => p.port))].sort((a, b) => a - b);
   }
   const s = JSON.stringify(repos);
   if (s !== snapshot) {
     snapshot = s;
+    stats.broadcastsTotal++;
     stats.snapshotBytes = s.length;
     broadcast(s);
   }
   stats.repos = repos.length;
   stats.worktrees = knownWorktrees.size;
+}
+
+// ---- divergence: the actual experiment (docs/fs-watch.md) ----
+// When the safety-net sweep asked for a check. A timestamp, not a flag,
+// because the tick can land while a sweep is already in flight: that sweep
+// read its repos before the request existed, so it must not answer it. Only a
+// sweep that STARTED at or after the request may.
+let checkRequestedAt = 0;
+// Repos marked dirty or recomputed since the current sweep started. The whole
+// sweep is the window: a repo read early, written mid-sweep and recomputed by
+// the watcher before the sweep ends looks quiescent at the final instant yet
+// legitimately disagrees. Excluding that repo is what keeps the rest measured.
+let touched = new Set<string>();
+
+const DIVERGENCE_STAT = {
+  branch: "divergenceBranchTotal",
+  head: "divergenceHeadTotal",
+  ahead: "divergenceAheadTotal",
+  behind: "divergenceBehindTotal",
+  dirty: "divergenceDirtyTotal",
+  lastActivity: "divergenceLastActivityTotal",
+  remote: "divergenceRemoteTotal",
+  worktreeAdded: "divergenceWorktreeAddedTotal",
+  worktreeRemoved: "divergenceWorktreeRemovedTotal",
+  repoAdded: "divergenceRepoAddedTotal",
+  repoRemoved: "divergenceRepoRemovedTotal",
+} as const;
+
+// A divergence is a measurement, never an error path: this must not be able to
+// fail the sweep that called it.
+function recordDivergences(truth: Map<string, Repo>) {
+  try {
+    // The one genuinely global case: an unknown path means a repo may have
+    // appeared or vanished, which no per-repo exclusion can describe.
+    if (rootDirty || rootRescanning) {
+      stats.divergenceChecksSkippedTotal++;
+      return;
+    }
+    // A repo still dirty at check time has not caught up yet, and a repo in
+    // backoff is dirty for as long as its interval — deliberately stale, by
+    // our own decision. Judging it would report our backoff as a missed event
+    // and make the metric cry wolf, so the exclusion is "touched during the
+    // window OR still owed a recompute". The cost is that a repo which is
+    // never both quiet and clean is never judged; what says how much that
+    // costs is divergenceReposExcludedTotal vs divergenceReposCheckedTotal
+    // (and watchDirty per line). NOT hotWts: backoff is a subset of dirty,
+    // so hotWts can read 0 while repos are being excluded every check.
+    // `dirty` holds worktree paths but the comparison is per repo, so map them
+    // back before the union: a repo with any worktree still owed a recompute is
+    // not judgeable, exactly as when the whole repo was the unit.
+    const excluded = touched.union(
+      new Set([...dirty].map((wt) => knownWorktrees.get(wt) ?? wt)),
+    );
+    let checked = 0;
+    for (const p of truth.keys()) if (!excluded.has(p)) checked++;
+    stats.divergenceReposCheckedTotal += checked;
+    stats.divergenceReposExcludedTotal += truth.size - checked;
+    for (const d of diffSnapshots(repoByPath, truth, excluded)) {
+      stats.divergencesTotal++;
+      const k = DIVERGENCE_STAT[d.field as keyof typeof DIVERGENCE_STAT];
+      if (k) stats[k]++;
+      logLine({ type: "divergence", ...d });
+    }
+  } catch (e) {
+    stats.errorsTotal++;
+    console.error(e);
+  }
+}
+
+// Re-entrancy guard #1: global, because a sweep touches every repo — two at
+// once are pure duplicate work. But a caller arriving mid-sweep may have just
+// mutated a worktree this sweep already read, so it must NOT join: it gets a
+// sweep that starts after the current one ends. At most one is queued.
+let sweeping: Promise<void> | null = null;
+let queuedSweep: Promise<void> | null = null;
+
+function sweepAll(): Promise<void> {
+  if (sweeping) {
+    return queuedSweep ??= sweeping.catch(() => {}).then(() => {
+      queuedSweep = null;
+      return sweepAll();
+    });
+  }
+  sweeping = (async () => {
+    const startedAt = Date.now();
+    // repos already dirty at sweep start belong to the window too: the watcher
+    // knows about them and simply has not caught up yet
+    touched = new Set([...dirty].map((wt) => knownWorktrees.get(wt) ?? wt));
+    const t0 = performance.now();
+    const dirs = await repoDirs();
+    if (!booted) setStatus({ phase: "repos", done: 0, total: dirs.length });
+    let done = 0;
+    const repos = await pool(
+      REPO_JOBS,
+      dirs,
+      async (d) => {
+        const r = await computeRepo(d.name, d.path);
+        // Boot only: land each repo as it resolves so the list fills in rather
+        // than appearing all at once. knownWorktrees is rebuilt from a partial
+        // map here, so an early event may classify as unknown and force one
+        // extra root rescan — it self-corrects on the next publish.
+        if (!booted) {
+          if (r) repoByPath.set(r.path, r);
+          setStatus({ done: ++done });
+          publish();
+        }
+        return r;
+      },
+    );
+    const next = new Map<string, Repo>();
+    for (const r of repos) if (r) next.set(r.path, r);
+    if (checkRequestedAt && startedAt >= checkRequestedAt) {
+      checkRequestedAt = 0;
+      recordDivergences(next);
+    }
+    repoByPath.clear();
+    for (const [k, v] of next) repoByPath.set(k, v);
+    stats.gitMs = Math.round(performance.now() - t0);
+    stats.gitMsTotal += stats.gitMs;
+    bumpMax("gitMsMax", stats.gitMs);
+  })().finally(() => {
+    sweeping = null;
+  });
+  return sweeping;
+}
+
+// everything, the old way. The timed loop when watch is off, and the startup
+// sweep either way. sweepMs spans the whole cycle — same meaning it had in
+// step 3, so the poll-vs-watch baseline stays comparable.
+async function poll() {
+  const t0 = performance.now();
+  await sweepAll();
+  const repos = [...repoByPath.values()];
+  // PRs are decoration; the repo list is the content. Start the gh fan-out but
+  // paint without it — at boot that is ~half the wait, and it is the only stage
+  // that depends on the network. The PR tags land on the second publish.
+  const prs = refreshPrs(repos);
+  await refreshPorts();
+  publish();
+  if (!booted) setStatus({ phase: "prs" });
+  await prs;
+  publish();
+  if (!booted) {
+    booted = true;
+    setStatus({ phase: "ready" });
+  }
   stats.pollsTotal++;
   stats.pollMs = Math.round(performance.now() - t0);
   stats.pollMsTotal += stats.pollMs;
   bumpMax("pollMsMax", stats.pollMs);
+}
+
+// ---- watcher: invalidate, never compute (docs/fs-watch.md) ----
+
+// storm mode is exactly "stop being a watcher": events are dropped and the
+// timed loop polls everything on pollMs, which is what Forest did before this
+// branch. Degrading to the old behaviour is the whole point of the valve.
+const mode = () => SETTINGS.watch && watcherUp && !storm ? "watch" : "poll";
+let watcherUp = false;
+const dirty = new Set<string>(); // repo paths
+
+// ---- storm mode: defence of last resort (docs/fs-watch.md) ----
+// A flood the ignore list did not anticipate. Above watchStormRate we stop
+// acting on events, force one full sweep so no repo is left behind, and let
+// the timed loop poll everything until the flood is over. Events are still
+// classified and counted throughout — entry and exit have to measure the same
+// population, or ignorable traffic would pin the watcher off.
+let storm = false;
+let stormTickAt = 0; // last time watchStormMsTotal was topped up
+let stormStartedAt = 0;
+let stormQuietSince = 0; // when the rate first dropped under threshold/4
+const STORM_WINDOW_MS = 5000;
+const stormWindow = rateWindow(STORM_WINDOW_MS, 10);
+const eventRate = (now: number) =>
+  stormWindow.count(now) / (STORM_WINDOW_MS / 1000);
+// counted only while the rate is already elevated (the run-up) and then
+// throughout the storm itself, so it always names the live offender rather
+// than a lifetime histogram. ponytail: capped at 1000 keys and keyed by parent
+// dir — enough to write an ignore rule from.
+const offenders = new Map<string, number>();
+// the top prefixes are the deliverable: they name the missing ignore rule
+function topOffenders() {
+  const top = [...offenders].sort((a, b) => b[1] - a[1]).slice(0, 3);
+  offenders.clear();
+  return top;
+}
+
+function enterStorm(rate: number) {
+  storm = true;
+  stormStartedAt = stormTickAt = Date.now();
+  stormQuietSince = 0;
+  stats.watchStormEntriesTotal++;
+  const top = topOffenders();
+  console.error(
+    `forest: storm mode, ${Math.round(rate)} events/s; top paths: ` +
+      (top.map(([p, n]) => `${p} (${n})`).join(", ") || "none recorded"),
+  );
+  logLine({
+    type: "storm",
+    rate: Math.round(rate),
+    top: top.map(([prefix, count]) => ({ prefix, count })),
+  });
+  // every repo is suspect while events are being dropped
+  markRoot();
+}
+let rootDirty = false;
+let debounceTimer: ReturnType<typeof setTimeout> | undefined;
+let firstMarkAt = 0; // when the current dirty batch was first marked
+let pending = false; // a drain timer is armed and has not fired yet
+
+// ---- per-repo backoff (docs/fs-watch.md) ----
+// One entry per repo that has recomputed recently; `st` is set only while the
+// repo is in backoff. Dropped again as soon as both are empty, so the map is
+// the hot set, not a registry of every repo.
+const hot = new Map<
+  string,
+  { win: ReturnType<typeof rateWindow>; st?: HotState }
+>();
+
+function hotEntry(path: string) {
+  let h = hot.get(path);
+  if (!h) hot.set(path, h = { win: rateWindow(60_000) });
+  return h;
+}
+
+// Leaving backoff has to be checked when nothing is happening — that is what
+// quiet means — so it rides the timed loop rather than the drain.
+function sweepHot() {
+  const now = Date.now();
+  for (const [path, h] of hot) {
+    if (h.st && !dirty.has(path) && backoffOver(h.st, now)) {
+      h.st = undefined;
+      stats.watchBackoffExitsTotal++;
+    }
+    if (!h.st && !h.win.count(now)) hot.delete(path); // cold: forget it
+  }
+}
+
+// ponytail: one global debounce timer, not one per repo — a repo that never
+// goes quiet delays every other dirty repo with it. Per-repo timers if that
+// shows up; step 6's backoff is the real answer.
+function schedule() {
+  if (!firstMarkAt) firstMarkAt = Date.now();
+  // max wait: past the ceiling, stop deferring and let the armed timer fire.
+  // A pure trailing debounce never drains at all under a steady event stream.
+  if (pending && Date.now() - firstMarkAt >= SETTINGS.watchMaxWaitMs) return;
+  clearTimeout(debounceTimer);
+  pending = true;
+  debounceTimer = setTimeout(() => {
+    pending = false;
+    drain().catch((e) => {
+      stats.errorsTotal++;
+      console.error(e);
+    });
+  }, SETTINGS.watchDebounceMs);
+}
+
+// `dirty` holds worktree paths, not repo paths: one changed file only
+// invalidates the worktree it is in.
+function markWt(wt: string) {
+  if (dirty.has(wt)) stats.watchDebounceCollapsedTotal++;
+  dirty.add(wt);
+  schedule();
+}
+
+// A .git path is repo-wide (shared refs, or a linked worktree's metadata that
+// names it but not its path), so every worktree of the repo is marked. That
+// costs what the old per-repo invalidation always cost; it is just no longer
+// what the common case pays.
+function markRepo(repo: string) {
+  for (const [wt, r] of knownWorktrees) if (r === repo) markWt(wt);
+}
+
+function markRoot() {
+  if (rootDirty) stats.watchRootCollapsedTotal++;
+  rootDirty = true;
+  schedule();
+}
+
+// Re-entrancy guard #2: global, because drain is the single consumer of the
+// single dirty set. It already fans out across repos through `pool`, so a
+// per-repo lock would only add bookkeeping — and a repo re-dirtied during its
+// own recompute is not lost, it stays in the set and the trailing schedule()
+// picks it up.
+let draining = false;
+// a root rescan's own sweep can't be checked: it exists because a path
+// resolved to no repo, so repoByPath is stale by definition, not by miss
+let rootRescanning = false;
+
+async function drain() {
+  if (draining) return schedule();
+  draining = true;
+  const dt0 = performance.now();
+  firstMarkAt = 0; // this batch is being consumed; the next mark starts a new one
+  try {
+    if (rootDirty) {
+      // a new directory under ROOT may be a new repo: only a full sweep knows
+      rootDirty = false;
+      dirty.clear();
+      stats.watchRootRescansTotal++;
+      // poll() can throw (readDir, gh JSON). Losing the flag here would hide a
+      // newly cloned repo until an unrelated event: put it back and retry.
+      rootRescanning = true;
+      await poll().catch((e) => {
+        rootDirty = true;
+        stats.errorsTotal++;
+        console.error(e);
+      }).finally(() => {
+        rootRescanning = false;
+      });
+    } else {
+      const now = Date.now();
+      const todo = [...dirty];
+      dirty.clear();
+      // backoff gate: a hot repo is put back in the dirty set instead of being
+      // recomputed. It is never dropped — it stays dirty, the trailing
+      // schedule() below keeps firing, and it runs when its interval is up.
+      const run: string[] = [];
+      for (const path of todo) {
+        const h = hotEntry(path);
+        const d = hotBackoff(
+          h.st,
+          h.win.count(now),
+          now,
+          SETTINGS.watchHotThreshold,
+          SETTINGS.watchBackoffMaxMs,
+        );
+        if (!h.st && d.state) stats.watchBackoffEntriesTotal++;
+        h.st = d.state; // only sweepHot clears it: exiting needs quiet, not a drain
+        if (d.run) run.push(path);
+        else dirty.add(path); // deferred, not dropped
+      }
+      // Group by repo so the two repo-level calls are paid once even when
+      // several worktrees of the same repo changed in one batch.
+      const byRepo = new Map<string, Set<string>>();
+      for (const wt of run) {
+        const repo = knownWorktrees.get(wt);
+        if (!repo) continue; // vanished between mark and drain
+        const set = byRepo.get(repo) ?? new Set<string>();
+        set.add(wt);
+        byRepo.set(repo, set);
+      }
+      await pool(REPO_JOBS, [...byRepo], async ([path, wts]) => {
+        touched.add(path); // recomputed inside a sweep window: not judgeable
+        const known = repoByPath.get(path);
+        if (!known) return;
+        const rt0 = performance.now();
+        const fresh = await (async () => {
+          const partial = await recomputeWorktrees(known, wts);
+          // null means the worktree list moved: only a full recompute can say
+          // what the repo looks like now
+          return partial ?? await computeRepo(known.name, path);
+        })().catch((e) => {
+          stats.errorsTotal++;
+          console.error(e);
+          return known;
+        });
+        // computeRepo returns null for a transient git failure too, so only a
+        // vanished .git is proof the repo is gone; otherwise keep what we had
+        if (fresh) repoByPath.set(path, fresh);
+        else if (!await Deno.stat(join(path, ".git")).catch(() => null)) {
+          repoByPath.delete(path);
+        }
+        stats.watchRecomputesTotal++;
+        const rms = performance.now() - rt0;
+        stats.recomputeMsTotal += rms;
+        bumpMax("recomputeMsMax", rms);
+        for (const wt of wts) hotEntry(wt).win.add(Date.now());
+      });
+      if (run.length) publish();
+    }
+  } finally {
+    draining = false;
+    const dms = performance.now() - dt0;
+    stats.drainsTotal++;
+    stats.drainMsTotal += dms;
+    bumpMax("drainMsMax", dms);
+    // inside the finally: a throw that skipped this would leave deferred repos
+    // dirty with no timer — never recomputed, and never judged either.
+    if (dirty.size || rootDirty) schedule();
+  }
+}
+
+const BUCKET_STAT = {
+  ignore: "watchIgnoredTotal",
+  refs: "watchRefsTotal",
+  index: "watchIndexTotal",
+  worktree: "watchWorktreeTotal",
+  unknown: "watchUnknownTotal",
+} as const;
+
+function onEvent(ev: Deno.FsEvent) {
+  if (!SETTINGS.watch || !watcherUp) return; // act like poll
+  const now = Date.now();
+  for (const path of ev.paths) {
+    stats.watchEventsTotal++;
+    // knownWorktrees is already "every repo and worktree path -> repo path":
+    // a repo's primary worktree path is the repo path.
+    const { bucket, repo, wt } = classifyPath(path, ROOT, knownWorktrees);
+    stats[BUCKET_STAT[bucket]]++;
+    // Classification runs in a storm too, so entry and exit measure the same
+    // population: an ignored flood (`npm ci` in node_modules) must not hold us
+    // off the watcher. Measured, it is not the expensive part either — the
+    // rate window costs about what the string scan does. What bounds the work
+    // is dropping the event below, not skipping the classify.
+    if (bucket === "ignore") continue;
+    const rate = stormWindow.add(now) / (STORM_WINDOW_MS / 1000);
+    // during a storm this keeps naming what is holding it open, which is the
+    // input to the next ignore rule
+    if (storm || rate > SETTINGS.watchStormRate / 4) {
+      const dir = dirname(path);
+      if (offenders.size < 1000 || offenders.has(dir)) {
+        offenders.set(dir, (offenders.get(dir) ?? 0) + 1);
+      }
+    } else if (offenders.size) offenders.clear();
+    if (storm) continue; // counted, never marked: that is what bounds the work
+    if (rate > SETTINGS.watchStormRate) return enterStorm(rate);
+    // a push writes refs/remotes/<remote>/<branch>, and `gh pr create` opens the
+    // PR a beat after it: look shortly after the ref, not on it. A repo gh cannot
+    // read is left in its backoff -- pushing to it does not fix the auth.
+    if (
+      repo && bucket === "refs" && !ghFailed.has(repo) &&
+      path.includes("/refs/remotes/")
+    ) {
+      ghNextAt.set(repo, now + PR_PUSH_MS);
+    }
+    if (wt) markWt(wt);
+    else if (repo) markRepo(repo);
+    else markRoot();
+  }
+}
+
+async function watchLoop() {
+  let backoff = 1000;
+  let first = true;
+  while (true) {
+    let w: Deno.FsWatcher;
+    try {
+      w = Deno.watchFs(ROOT, { recursive: true });
+    } catch (e) {
+      // non-local filesystem, permissions: log once, keep today's polling
+      if (first) {
+        console.error("forest: watchFs unavailable, polling instead:", e);
+        return;
+      }
+      // a failed re-open retries the OPEN; looping onto the dead stream would
+      // spin restarts forever
+      console.error("forest: watcher re-open failed:", e);
+      await new Promise((r) => setTimeout(r, backoff));
+      backoff = Math.min(backoff * 2, 30_000);
+      continue;
+    }
+    watcherUp = true;
+    if (!first) {
+      backoff = 1000;
+      // whatever this sweep finds is the downtime, not a missed event, so it
+      // declines any pending check rather than logging the gap as misses
+      if (checkRequestedAt) stats.divergenceChecksSkippedTotal++;
+      checkRequestedAt = 0;
+      poll().catch(() => stats.errorsTotal++); // events missed while down
+    }
+    first = false;
+    try {
+      for await (const ev of w) onEvent(ev);
+      console.error("forest: watcher stream ended");
+    } catch (e) {
+      console.error("forest: watcher failed:", e);
+    }
+    watcherUp = false;
+    stats.watcherRestartsTotal++;
+    await new Promise((r) => setTimeout(r, backoff));
+    backoff = Math.min(backoff * 2, 30_000);
+  }
 }
 
 const statsLine = () => {
@@ -579,9 +1443,25 @@ const statsLine = () => {
     subprocessMsTotal: Math.round(stats.subprocessMsTotal),
     lagMsTotal: Math.round(stats.lagMsTotal),
     lagMsMax: Math.round(stats.lagMsMax),
+    recomputeMsTotal: Math.round(stats.recomputeMsTotal),
+    drainMsTotal: Math.round(stats.drainMsTotal),
+    recomputeMsMax: Math.round(stats.recomputeMsMax),
+    drainMsMax: Math.round(stats.drainMsMax),
     rss: mem.rss,
     clients: clients.size,
     pollMsSetting: SETTINGS.pollMs,
+    mode: mode(),
+    watchDebounceMs: SETTINGS.watchDebounceMs,
+    watchMaxWaitMs: SETTINGS.watchMaxWaitMs,
+    watchSweepMs: SETTINGS.watchSweepMs,
+    watchHotThreshold: SETTINGS.watchHotThreshold,
+    watchBackoffMaxMs: SETTINGS.watchBackoffMaxMs,
+    watchStormRate: SETTINGS.watchStormRate,
+    watchDirty: dirty.size,
+    // renamed from hotRepos: backoff is keyed per worktree now, so the old name
+    hotWts: [...hot.values()].filter((h) => h.st).length, // in backoff now
+    watchEventRate: Math.round(eventRate(Date.now())),
+    storm,
   };
 };
 
@@ -648,37 +1528,94 @@ setInterval(() => {
   stats.subprocessPeak = stats.subprocessInflight; // children still running
 }, 60_000);
 
+if (SETTINGS.watch) watchLoop();
+
+let lastSafetySweep = Date.now();
+
 (async () => {
   const bootT0 = performance.now();
+  await poll().catch((e) => {
+    stats.errorsTotal++;
+    console.error(e);
+  });
+  // emitted the moment the UI has something to render, not on the 60s tick,
+  // and partitioned so a slow start names its own culprit
+  logLine({
+    type: "startup",
+    bootMs: Math.round(performance.now() - bootT0),
+    gitMs: stats.gitMs,
+    portsMs: stats.portsMs,
+    prsMs: stats.prsMs,
+    repos: stats.repos,
+    worktrees: stats.worktrees,
+    git: stats.gitTotal,
+    gh: stats.ghTotal,
+    other: stats.otherTotal,
+    snapshotBytes: stats.snapshotBytes,
+  });
   while (true) {
+    await new Promise((r) => setTimeout(r, SETTINGS.pollMs));
     try {
-      await poll();
+      sweepHot();
+      if (storm) {
+        const now = Date.now();
+        // a laptop suspend during a storm would otherwise charge the whole
+        // sleep to the storm; an implausible delta is a stopped clock, not time
+        stats.watchStormMsTotal += Math.min(
+          now - stormTickAt,
+          4 * SETTINGS.pollMs,
+        );
+        stormTickAt = now;
+        // out once the flood has been under a quarter of the threshold for 30 s
+        if (eventRate(now) >= SETTINGS.watchStormRate / 4) stormQuietSince = 0;
+        else if (!stormQuietSince) stormQuietSince = now;
+        else if (now - stormQuietSince >= 30_000) {
+          storm = false;
+          const top = topOffenders(); // what was still arriving during it
+          console.error(
+            "forest: storm over, watching again; top paths: " +
+              (top.map(([p, n]) => `${p} (${n})`).join(", ") ||
+                "none recorded"),
+          );
+          logLine({
+            type: "stormOver",
+            ms: now - stormStartedAt,
+            top: top.map(([prefix, count]) => ({ prefix, count })),
+          });
+          markRoot(); // events were dropped: sweep once before trusting them
+        }
+      }
+      // in watch mode the git sweep is the watcher's job; the timed loop only
+      // carries the two sources that are not per-repo events. ponytail: ports
+      // and PRs share pollMs rather than earning a setting each.
+      if (mode() === "watch") {
+        // safety net: FSEvents can coalesce or drop, so ground truth is
+        // recomputed on watchSweepMs regardless of what events said. Granularity
+        // is pollMs, which is this loop's tick.
+        if (Date.now() - lastSafetySweep >= SETTINGS.watchSweepMs) {
+          lastSafetySweep = Date.now();
+          stats.watchSafetySweepsTotal++;
+          checkRequestedAt = Date.now();
+          await poll();
+        } else {
+          await refreshPorts();
+          await refreshPrs([...repoByPath.values()]);
+          publish();
+        }
+      } else await poll();
     } catch (e) {
       stats.errorsTotal++;
       console.error(e);
     }
-    if (stats.pollsTotal === 1) {
-      // emitted the moment the UI has something to render, not on the 60s
-      // tick, and partitioned so a slow start names its own culprit
-      logLine({
-        type: "startup",
-        bootMs: Math.round(performance.now() - bootT0),
-        gitMs: stats.gitMs,
-        portsMs: stats.portsMs,
-        prsMs: stats.prsMs,
-        repos: stats.repos,
-        worktrees: stats.worktrees,
-        git: stats.gitTotal,
-        gh: stats.ghTotal,
-        other: stats.otherTotal,
-        snapshotBytes: stats.snapshotBytes,
-      });
-    }
-    await new Promise((r) => setTimeout(r, SETTINGS.pollMs));
   }
 })();
 
 // ---- server ----
+
+// a mutation can add or remove a worktree, so it needs the full sweep; in
+// watch mode it is debounced with everything else instead of firing at once.
+const afterMutation = () =>
+  mode() === "watch" ? markRoot() : void poll().catch(() => {});
 
 const json = (body: unknown) =>
   new Response(JSON.stringify(body), {
@@ -689,10 +1626,169 @@ const BW = (Deno as unknown as {
   BrowserWindow?: new (opts: Record<string, unknown>) => unknown;
 }).BrowserWindow;
 
-const server = Deno.serve({ port: SETTINGS.port }, async (req) => {
+// ---- tools ----
+
+type Tool = {
+  desc: string;
+  input: Record<string, z.ZodType>;
+  run: (a: Record<string, unknown>) => unknown | Promise<unknown>;
+};
+
+class ToolError extends Error {
+  candidates?: unknown[];
+}
+
+type WtRow = Worktree & { webUrl: string | null; defaultBranch: string | null };
+
+function wtRows(): WtRow[] {
+  return [...repoByPath.values()]
+    .flatMap((r) =>
+      r.worktrees.map((w) => ({
+        ...w,
+        webUrl: r.webUrl,
+        defaultBranch: r.defaultBranch,
+      }))
+    )
+    .sort((a, b) => b.lastActivity - a.lastActivity);
+}
+
+function resolveWt(sel: string): WtRow {
+  const hit = selectWt(sel, wtRows(), HOME);
+  if ("wt" in hit) return hit.wt;
+  const e = new ToolError(
+    hit.candidates.length ? "ambiguous worktree" : "no worktree matches",
+  );
+  e.candidates = hit.candidates;
+  throw e;
+}
+
+const tools: Record<string, Tool> = {
+  snapshot: {
+    desc: "Every repo forest watches, with its worktrees, status and PRs.",
+    input: {},
+    run: () =>
+      [...repoByPath.values()].sort((a, b) => a.name.localeCompare(b.name)),
+  },
+  wts: {
+    desc: "Worktrees, newest activity first, filtered.",
+    input: {
+      q: z.string().optional(),
+      dirty: qbool.optional(),
+      running: qbool.optional(),
+      pr: z.enum(["open", "merged", "closed", "none"]).optional(),
+      recent: qnum.optional(),
+    },
+    run: (a) => {
+      const pr = a.pr as string | undefined;
+      let rows = wtRows().filter((w) =>
+        matchWt(
+          {
+            q: a.q as string | undefined,
+            dirtyOnly: a.dirty as boolean | undefined,
+            runningOnly: a.running as boolean | undefined,
+          },
+          w.repo,
+          w,
+        )
+      );
+      if (pr) {
+        rows = rows.filter((w) =>
+          pr === "none" ? w.pr === null : w.pr?.state === pr.toUpperCase()
+        );
+      }
+      return a.recent === undefined ? rows : rows.slice(0, a.recent as number);
+    },
+  },
+  whoami: {
+    desc: "The worktree that owns a path, or null.",
+    input: { path: z.string() },
+    run: (a) => {
+      const owner = ownerWorktree(
+        normPath(String(a.path), HOME),
+        [...knownWorktrees.keys()],
+      );
+      return wtRows().find((w) => w.path === owner) ?? null;
+    },
+  },
+  files: {
+    desc: "Changed files in a worktree, since the branch point or uncommitted.",
+    input: {
+      wt: z.string(),
+      q: z.string().optional(),
+      base: z.enum(["branch", "head"]).optional(),
+    },
+    run: (a) =>
+      listFiles(
+        resolveWt(String(a.wt)).path,
+        String(a.base ?? "branch"),
+        a.q as string | undefined,
+      ),
+  },
+  link: {
+    desc: "A forest URL that opens a worktree, optionally at a file and line.",
+    input: {
+      wt: z.string(),
+      file: z.string().optional(),
+      line: z.coerce.number().int().min(0).optional(),
+      base: z.enum(["branch", "head"]).optional(),
+    },
+    run: (a) => {
+      const p = new URLSearchParams({ wt: resolveWt(String(a.wt)).path });
+      for (const k of ["file", "line", "base"]) {
+        if (a[k] !== undefined) p.set(k, String(a[k]));
+      }
+      const host = SETTINGS.host === "0.0.0.0" || SETTINGS.host === "127.0.0.1"
+        ? "forest-app.localhost"
+        : SETTINGS.host;
+      return { url: `http://${host}:${SETTINGS.port}/?${p}` };
+    },
+  },
+};
+
+const callTool = (name: string, raw: Record<string, unknown>) =>
+  tools[name].run(z.object(tools[name].input).parse(raw));
+
+const toolError = (e: unknown) => ({
+  error: e instanceof Error ? e.message : String(e),
+  ...(e instanceof ToolError && e.candidates
+    ? { candidates: e.candidates }
+    : {}),
+});
+
+function buildMcp() {
+  const mcp = new McpServer({ name: "forest", version: "0" });
+  for (const [name, tool] of Object.entries(tools)) {
+    mcp.registerTool(
+      name,
+      { description: tool.desc, inputSchema: tool.input },
+      async (args: Record<string, unknown>) => {
+        try {
+          const out = await callTool(name, args);
+          return {
+            content: [{ type: "text" as const, text: JSON.stringify(out) }],
+          };
+        } catch (e) {
+          return {
+            isError: true,
+            content: [{
+              type: "text" as const,
+              text: JSON.stringify(toolError(e)),
+            }],
+          };
+        }
+      },
+    );
+  }
+  return mcp;
+}
+const mcpHandler = createMcpHandler(buildMcp);
+
+const server = Deno.serve({
+  hostname: SETTINGS.host,
+  port: SETTINGS.port,
+}, async (req) => {
   const url = new URL(req.url);
   try {
-    if (url.pathname === "/api/stats") return json(statsLine());
     if (url.pathname === "/api/events") {
       let ctrl: ReadableStreamDefaultController;
       const stream = new ReadableStream({
@@ -700,6 +1796,8 @@ const server = Deno.serve({ port: SETTINGS.port }, async (req) => {
           ctrl = c;
           clients.add(c);
           c.enqueue(enc.encode(`data: ${snapshot}\n\n`));
+          // a client that connects after boot must not be left on a spinner
+          c.enqueue(statusChunk());
         },
         cancel() {
           clients.delete(ctrl);
@@ -711,6 +1809,29 @@ const server = Deno.serve({ port: SETTINGS.port }, async (req) => {
           "cache-control": "no-cache",
         },
       });
+    }
+    if (url.pathname === "/api/stats") return json(statsLine());
+    if (url.pathname === "/mcp") {
+      return hostHeaderValidationResponse(req, [
+        ...localhostAllowedHostnames(),
+        "forest-server.localhost",
+      ]) ??
+        originValidationResponse(req, localhostAllowedOrigins()) ??
+        mcpHandler.fetch(req);
+    }
+    if (url.pathname.startsWith("/api/t/")) {
+      const name = url.pathname.slice("/api/t/".length);
+      if (!Object.hasOwn(tools, name)) {
+        return new Response("not found", { status: 404 });
+      }
+      try {
+        return json(await callTool(name, Object.fromEntries(url.searchParams)));
+      } catch (e) {
+        return new Response(JSON.stringify(toolError(e)), {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        });
+      }
     }
     if (url.pathname === "/api/settings") {
       if (req.method === "PUT") {
@@ -790,7 +1911,7 @@ const server = Deno.serve({ port: SETTINGS.port }, async (req) => {
           try {
             await git(wt, "rebase", "origin/HEAD");
           } catch (e) {
-            await tryGit(wt, "rebase", "--abort");
+            await git(wt, "rebase", "--abort").catch(() => {});
             throw new Error(
               `rebase failed — aborted, use a terminal. ${
                 (e as Error).message
@@ -805,7 +1926,7 @@ const server = Deno.serve({ port: SETTINGS.port }, async (req) => {
             await git(knownWorktrees.get(p)!, "worktree", "remove", ...force, p)
               .catch((e) => failed.push({ path: p, error: e.message }));
           }
-          poll().catch(() => {});
+          afterMutation();
           return json({ ok: !failed.length, failed });
         }
         case "/api/wt-create": {
@@ -887,7 +2008,7 @@ const server = Deno.serve({ port: SETTINGS.port }, async (req) => {
         default:
           return new Response("not found", { status: 404 });
       }
-      poll().catch(() => {});
+      afterMutation();
       return json({ ok: true });
     }
     return serveDir(req, {
@@ -909,4 +2030,6 @@ if (BW) {
   });
 }
 
-console.log(`forest on http://localhost:${SETTINGS.port}  root=${ROOT}`);
+console.log(
+  `forest on http://forest-app.localhost:${SETTINGS.port}  root=${ROOT}`,
+);

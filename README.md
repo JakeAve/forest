@@ -9,10 +9,13 @@ Deno server + Svelte frontend. No database, no config to write by hand.
 
 ## Quick start
 
+Needs Deno 2, Node 20.19+ (for Vite 7), and git. `lsof` ships with macOS. PR
+badges also need the `gh` CLI, authenticated.
+
 ```sh
 npm install       # frontend deps
 npm run build     # builds dist/, which the server serves
-deno task serve   # http://localhost:7420
+deno task serve   # http://forest-app.localhost:38471
 ```
 
 Set `root` to the directory your repos live in — whatever that is on your
@@ -49,23 +52,56 @@ Port detection reads `lsof` and maps listening PIDs to their cwd, then to the
 owning worktree. PRs come from `gh pr list`, so PR badges need the `gh` CLI
 authenticated; everything else works without it.
 
+## Agents
+
+The daemon exposes the same data read-only to agents, over plain
+`GET /api/t/<name>?k=v` and over MCP at `/mcp`. Nothing here writes; a `wt` is
+any unique substring of a branch or repo name (or a full path), and an ambiguous
+one comes back as a 400 listing the candidates.
+
+| tool       | params                                  | returns                    |
+| ---------- | --------------------------------------- | -------------------------- |
+| `snapshot` | —                                       | every repo, with worktrees |
+| `wts`      | `q`, `dirty`, `running`, `pr`, `recent` | worktrees, newest first    |
+| `whoami`   | `path`                                  | the worktree owning a path |
+| `files`    | `wt`, `q`, `base=branch\|head`          | changed files              |
+| `link`     | `wt`, `file`, `line`, `base`            | `{ url }`                  |
+
+That URL is the deep-link contract, and it works typed by hand too:
+`/?wt=<path>&file=<path>&line=<n>&base=branch|head` opens the worktree, selects
+the file, and scrolls to the line.
+
+```sh
+curl -s 'forest-server.localhost:38471/api/t/wts?q=1234&recent=3'
+claude mcp add --transport http forest http://forest-server.localhost:38471/mcp
+```
+
+`*.localhost` resolves to loopback with no setup. Existing installs re-run
+`claude mcp remove forest` before the add above.
+
 ## Settings
 
 Stored at `~/.forest/settings.json` — only values that differ from the defaults
 are written.
 
-| key               | default   |                                                |
-| ----------------- | --------- | ---------------------------------------------- |
-| `port`            | `7420`    | server port (restart)                          |
-| `root`            | `~/Repos` | directory scanned for repos (restart)          |
-| `pollMs`          | `5000`    | worktree rescan interval                       |
-| `prPollMs`        | `60000`   | `gh pr list` interval                          |
-| `recentCount`     | `10`      | rows in the Recent group                       |
-| `agoRefreshMs`    | `30000`   | how often relative times re-render             |
-| `toastMs`         | `7000`    | toast lifetime                                 |
-| `collapseMargin`  | `3`       | context lines kept around a hunk               |
-| `collapseMinSize` | `5`       | shortest run of unchanged lines that collapses |
-| `launchers`       | `{}`      | per-repo worktree-creation commands            |
+| key               | default     |                                                |
+| ----------------- | ----------- | ---------------------------------------------- |
+| `port`            | `38471`     | server port (restart)                          |
+| `host`            | `127.0.0.1` | address the server binds (restart)             |
+| `root`            | `~/Repos`   | directory scanned for repos (restart)          |
+| `pollMs`          | `5000`      | worktree rescan interval                       |
+| `prPollMs`        | `60000`     | `gh pr list` interval                          |
+| `recentCount`     | `10`        | rows in the Recent group                       |
+| `agoRefreshMs`    | `30000`     | how often relative times re-render             |
+| `toastMs`         | `7000`      | toast lifetime                                 |
+| `collapseMargin`  | `3`         | context lines kept around a hunk               |
+| `collapseMinSize` | `5`         | shortest run of unchanged lines that collapses |
+| `launchers`       | `{}`        | per-repo worktree-creation commands            |
+
+`host` defaults to loopback for a reason: setting it to `0.0.0.0` serves your
+repository metadata — paths, branches, diffs — unauthenticated to everything on
+the LAN. `/mcp` only answers requests whose `Host` header is localhost or
+`forest-server.localhost`, so it stays local either way.
 
 ### Launchers
 
@@ -89,13 +125,13 @@ accent vanishes against its own background gets a readable fallback instead.
 ## Development
 
 ```sh
-npm run dev       # vite on :5173, proxies /api to the deno server on :7420
+npm run dev       # http://forest-app.localhost:38472, proxies /api to :38471
 deno task serve   # run this alongside it
 ```
 
 ```sh
 deno task check   # fmt + lint + typecheck
-deno task test    # 42 unit tests, no network or fixtures
+deno task test    # unit tests, no network or fixtures
 deno task setup   # wire .githooks (check + test on commit and push)
 ```
 

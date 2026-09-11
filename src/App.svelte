@@ -35,6 +35,9 @@ let closed = $state({});
 let pinned = $state({});
 let checked = $state({});
 let ready = $state(false);
+// boot progress from the server's `status` SSE event; the repo list streams in
+// during the first sweep, so this says what is still coming.
+let boot = $state({ phase: "repos", done: 0, total: 0 });
 fetch("/api/layout").then((r) => r.json()).then((l) => {
   if (l.b1) b1 = l.b1;
   if (l.b2) b2 = l.b2;
@@ -154,6 +157,7 @@ const allClosed = $derived(closed.__all ?? true);
 
 $effect(() => {
   const es = new EventSource("/api/events");
+  es.addEventListener("status", (e) => (boot = JSON.parse(e.data)));
   es.onmessage = (e) => {
     const next = JSON.parse(e.data);
     const prev = new Map(
@@ -807,6 +811,16 @@ function confirmDiscard() {
         <span class="rn">All worktrees</span>
         <span class="ct">{shownWts.length}</span>
       </div>
+      {#if boot.phase !== "ready"}
+        <div class="boot">
+          <span class="spin"></span>
+          {#if boot.phase === "repos"}
+            reading branches{boot.total ? ` ${boot.done}/${boot.total}` : ""}…
+          {:else}
+            loading pull requests…
+          {/if}
+        </div>
+      {/if}
       {#if !allClosed}
       {#each repos as r (r.name)}
         {@const wts = r.worktrees.filter((w) => match(r, w))}
@@ -864,10 +878,23 @@ function confirmDiscard() {
         <span class="prc">
           {#if w.pr}
             <a class="port pr" class:merged={w.pr.state === "MERGED"}
-               class:closed={w.pr.state === "CLOSED"} href={w.pr.url}
+               class:closed={w.pr.state === "CLOSED"}
+               class:pending={w.pr.ci?.state === "pending"}
+               class:fail={w.pr.ci?.state === "fail"}
+               class:draft={w.pr.isDraft} href={w.pr.url}
                target="_blank" rel="noreferrer"
-               title="{w.pr.state.toLowerCase()} PR #{w.pr.number}"
-               onclick={(e) => e.stopPropagation()}>#{w.pr.number}</a>
+               title={[
+                 `${w.pr.state.toLowerCase()} PR #${w.pr.number}`,
+                 w.pr.ci?.state && `CI ${w.pr.ci.state}${
+                   w.pr.ci.failing?.length ? `: ${w.pr.ci.failing.join(", ")}` : ""
+                 }`,
+                 w.pr.reviewDecision &&
+                 w.pr.reviewDecision.toLowerCase().replaceAll("_", " "),
+                 w.pr.isDraft && "draft",
+                 w.pr.title,
+               ].filter(Boolean).join(" · ")}
+               onclick={(e) => e.stopPropagation()}>#{w.pr.number}{w.pr.reviewDecision ===
+              "CHANGES_REQUESTED" ? "!" : ""}</a>
           {/if}
         </span>
         <span class="ports">
@@ -1057,7 +1084,7 @@ function confirmDiscard() {
         {:else}
           <input id="set-{k}" type="text" bind:value={settings[k]} onchange={saveSettings}>
         {/if}
-        {#if k === "port" || k === "root"}<span class="hint">restart</span>{/if}
+        {#if k === "port" || k === "root" || k === "host"}<span class="hint">restart</span>{/if}
       </div>
     {/if}
   {/each}
@@ -1487,10 +1514,25 @@ select.theme {
   color: var(--bg);
   background: var(--acc);
 }
+.pr.draft {
+  border-color: var(--acc);
+  color: var(--acc);
+  background: transparent;
+}
+.pr.pending {
+  background: var(--warn);
+}
+.pr.fail {
+  background: var(--danger);
+}
 .pr.merged {
+  border-color: transparent;
+  color: var(--bg);
   background: var(--merged);
 }
 .pr.closed {
+  border-color: transparent;
+  color: var(--bg);
   background: var(--dim);
 }
 .port:hover {
@@ -1591,6 +1633,36 @@ select.theme {
   padding: 1.5rem;
   text-align: center;
   font: 0.75rem var(--sans);
+}
+
+.boot {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0.6rem;
+  color: var(--dim);
+  font: 0.75rem var(--sans);
+}
+
+.boot .spin {
+  width: 0.7rem;
+  height: 0.7rem;
+  border: 2px solid var(--dimmer);
+  border-top-color: var(--acc);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .boot .spin {
+    animation: none;
+  }
 }
 
 .sechd {
