@@ -10,7 +10,8 @@ Deno server + Svelte frontend. No database, no config to write by hand.
 ## Quick start
 
 Needs Deno 2, Node 20.19+ (for Vite 7), and git. `lsof` ships with macOS. PR
-badges also need the `gh` CLI, authenticated.
+badges also need the `gh` CLI, authenticated (`gh auth login`) — without it,
+Forest logs a warning once per repo and just runs with PR badges off.
 
 ```sh
 npm install       # frontend deps
