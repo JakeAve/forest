@@ -1455,6 +1455,13 @@ select.theme {
   cursor: pointer;
   font-size: 0.75rem;
   border-left: 2px solid transparent;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 40%, transparent);
+}
+.wt:last-child {
+  border-bottom: none;
+}
+.wt:nth-child(even) {
+  background: color-mix(in srgb, var(--bg3) 45%, var(--bg));
 }
 .wt:hover {
   background: var(--bg2);
@@ -1590,10 +1597,17 @@ select.theme {
   grid-template-columns: 0.875rem 1rem 1fr auto auto 5.75rem;
   align-items: center;
   gap: 0.5rem;
-  padding: 0.125rem 0.625rem;
+  padding: 0.25rem 0.625rem;
   cursor: pointer;
   font: 0.75rem var(--mono);
   border-left: 2px solid transparent;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 40%, transparent);
+}
+.f:last-child {
+  border-bottom: none;
+}
+.f:nth-child(even) {
+  background: color-mix(in srgb, var(--bg3) 45%, var(--bg));
 }
 .f:hover {
   background: var(--bg2);
