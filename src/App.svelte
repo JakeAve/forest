@@ -590,6 +590,33 @@ function repoItems(r, shown) {
   ];
 }
 
+function fileItems(f, mode) {
+  return [
+    {
+      label: "Copy path (relative)",
+      fn: (e) => copy(e, f.path, f.path + ":r"),
+    },
+    {
+      label: "Copy path (absolute)",
+      fn: (e) => copy(e, sel + "/" + f.path, f.path + ":a"),
+    },
+    "-",
+    mode === "staged" && {
+      label: "Unstage",
+      fn: (e) => op("unstage", { path: f.path }, e),
+    },
+    mode === "unstaged" && {
+      label: "Stage",
+      fn: (e) => op("stage", { path: f.path }, e),
+    },
+    mode === "unstaged" && {
+      label: "Discard changes",
+      danger: true,
+      fn: (e) => discardArm(f, e),
+    },
+  ];
+}
+
 async function createWt(r) {
   const s = slug.trim();
   if (!s) return;
@@ -947,7 +974,8 @@ function confirmDiscard() {
         {@const [dir, name] = splitPath(f.path)}
         <div class="f" class:sel={file === f.path} role="button" tabindex="0"
              onclick={() => pick(f)}
-             onkeydown={(e) => e.key === "Enter" && pick(f)}>
+             onkeydown={(e) => e.key === "Enter" ? pick(f) : menuKey(e, fileItems(f, mode))}
+             oncontextmenu={(e) => openMenu(e, fileItems(f, mode))}>
           {#if mode === "committed"}
             <span></span>
           {:else}
@@ -959,12 +987,6 @@ function confirmDiscard() {
           {/if}
           <span class="st {f.status}">{f.status === "U" ? "?" : f.status}</span>
           <span class="p"><span class="dir">{dir}</span>{name}</span>
-          <span class="cp">
-            <button class="cbtn" title="copy path relative to repo root"
-                    onclick={(e) => copy(e, f.path, f.path + ":r")}>{copied === f.path + ":r" ? "✓" : "rel"}</button>
-            <button class="cbtn" title="copy absolute path"
-                    onclick={(e) => copy(e, sel + "/" + f.path, f.path + ":a")}>{copied === f.path + ":a" ? "✓" : "abs"}</button>
-          </span>
           <span class="acts">
             {#if mode === "staged"}
               <button onclick={(e) => op("unstage", { path: f.path }, e)}>unstage</button>
@@ -1594,7 +1616,7 @@ select.theme {
 
 .f {
   display: grid;
-  grid-template-columns: 0.875rem 1rem 1fr auto auto 5.75rem;
+  grid-template-columns: 0.875rem 1rem 1fr auto 5.75rem;
   align-items: center;
   gap: 0.5rem;
   padding: 0.25rem 0.625rem;
@@ -1810,30 +1832,6 @@ select.theme {
   text-transform: none;
   letter-spacing: 0;
   font: 0.6875rem var(--mono);
-}
-.cp {
-  display: flex;
-  gap: 0.25rem;
-}
-.cbtn {
-  background: var(--bg3);
-  border: 1px solid var(--line);
-  color: var(--dim);
-  border-radius: 0.1875rem;
-  font: 0.5625rem var(--sans);
-  letter-spacing: .05em;
-  padding: 0.0625rem 0.3125rem;
-  cursor: pointer;
-  text-transform: uppercase;
-  min-width: 1.75rem;
-}
-.cbtn:hover {
-  color: var(--acc);
-  border-color: var(--dimmer);
-}
-.cbtn:disabled {
-  opacity: .6;
-  cursor: default;
 }
 .repo .plus {
   visibility: hidden;
