@@ -306,6 +306,39 @@ function gutterKey(e, band, el) {
   saveLayout();
 }
 
+// while a PR is open, "behind" should mean behind its base branch, not behind
+// this worktree's own pushed remote (which is usually 0 once it's pushed).
+function prAb(w) {
+  const open = w.pr?.state === "OPEN";
+  return {
+    ahead: open ? w.aheadMain : w.ahead,
+    behind: open ? w.behindMain : w.behind,
+  };
+}
+
+function prTimer(pr) {
+  if (pr.ci?.state === "fail") {
+    return { cls: "fail", label: "failing", text: ago(pr.ciSince) };
+  }
+  if (pr.ci?.state === "pending") {
+    return { cls: "pending", label: "running", text: ago(pr.ciSince) };
+  }
+  if (pr.reviewDecision === "APPROVED") {
+    return { cls: "approved", label: "approved", text: ago(pr.reviewSince) };
+  }
+  // fallback: every PR gets some timer, even once merged/closed and its CI
+  // detail has been dropped.
+  return {
+    cls: pr.state === "MERGED"
+      ? "merged"
+      : pr.state === "CLOSED"
+      ? "closed"
+      : "open",
+    label: pr.state.toLowerCase(),
+    text: ago(pr.stateSince),
+  };
+}
+
 function ago(ms) {
   if (!ms) return "—";
   const s = Math.max(0, (now - ms) / 1000);
@@ -385,6 +418,15 @@ async function op(ep, body, e) {
 }
 
 const rebase = (w, e) => act("rebase", { wt: w.path }, "rb:" + w.path, e);
+const updateBranch = (w, e) =>
+  act("update-branch", { wt: w.path, number: w.pr.number }, "ub:" + w.path, e);
+const toggleAutoMerge = (w, e) =>
+  act(
+    "auto-merge",
+    { wt: w.path, number: w.pr.number, enable: !w.pr.autoMerge },
+    "am:" + w.path,
+    e,
+  );
 
 async function removeWts(wts, force) {
   const live = wts.filter((w) => allWts.some((a) => a.path === w.path));
@@ -516,6 +558,10 @@ function wtItems(w) {
       label: `Open pull request #${w.pr.number}`,
       fn: () => open(w.pr.url, "_blank", "noreferrer"),
     },
+    !many && w.pr?.state === "OPEN" && w.behindMain > 0 && {
+      label: `Update branch (↓${w.behindMain} from ${w.pr.baseRefName})`,
+      fn: (e) => updateBranch(w, e),
+    },
     "-",
     {
       label: `${pin ? "Unpin" : "Pin"}${many ? ` ${t.length}` : ""}`,
@@ -526,6 +572,10 @@ function wtItems(w) {
         }
         saveLayout();
       },
+    },
+    !many && w.pr?.state === "OPEN" && {
+      label: w.pr.autoMerge ? "Disable auto-merge" : "Enable auto-merge",
+      fn: (e) => toggleAutoMerge(w, e),
     },
     !many && {
       label: w.isPrimary ? "Pull" : "Fetch + rebase",
@@ -912,11 +962,13 @@ function confirmDiscard() {
           dirName(w)}<span class="dir">{dirName(w)}</span>{/if}</span>
         <span class="prc">
           {#if w.pr}
+            {@const t = prTimer(w.pr)}
             <a class="port pr" class:merged={w.pr.state === "MERGED"}
                class:closed={w.pr.state === "CLOSED"}
                class:pending={w.pr.ci?.state === "pending"}
                class:fail={w.pr.ci?.state === "fail"}
-               class:draft={w.pr.isDraft} href={w.pr.url}
+               class:draft={w.pr.isDraft} class:automerge={w.pr.autoMerge}
+               href={w.pr.url}
                target="_blank" rel="noreferrer"
                title={[
                  `${w.pr.state.toLowerCase()} PR #${w.pr.number}`,
@@ -926,10 +978,18 @@ function confirmDiscard() {
                  w.pr.reviewDecision &&
                  w.pr.reviewDecision.toLowerCase().replaceAll("_", " "),
                  w.pr.isDraft && "draft",
+                 w.pr.autoMerge && "auto-merge enabled",
                  w.pr.title,
                ].filter(Boolean).join(" · ")}
                onclick={(e) => e.stopPropagation()}>#{w.pr.number}{w.pr.reviewDecision ===
-              "CHANGES_REQUESTED" ? "!" : ""}</a>
+              "CHANGES_REQUESTED" ? "!" : ""}{#if w.pr.autoMerge}
+                <svg class="am-icon" viewBox="0 0 16 16" width="10" height="10">
+                  <path d="M1.896 4.559a6.25 6.25 0 0 1 8.839 0 .75.75 0 0 1-1.06 1.061 4.75 4.75 0 1 0 0 6.717L13.03 8.98l-1.553-1.554A.25.25 0 0 1 11.654 7h4.096a.25.25 0 0 1 .25.25v4.096a.25.25 0 0 1-.427.177l-1.482-1.482-3.356 3.356a6.25 6.25 0 0 1-8.839-8.838Z" />
+                </svg>
+              {/if}</a>
+            {#if t}
+              <span class="prt {t.cls}" title="{t.label} for {t.text}">{t.text}</span>
+            {/if}
           {/if}
         </span>
         <span class="ports">
@@ -939,7 +999,15 @@ function confirmDiscard() {
           {/each}
         </span>
         <span class="dirty" class:zero={!w.dirty}>{w.dirty ? "●" + w.dirty : "—"}</span>
-        <span class="ab">{(w.ahead ? `↑${w.ahead}` : "") + (w.behind ? ` ↓${w.behind}` : "") || "—"}</span>
+        <span class="ab" class:behind={prAb(w).behind > 0}
+              title={w.pr?.state === "OPEN"
+                ? `${prAb(w).behind} behind ${w.pr.baseRefName}, ${
+                  prAb(w).ahead
+                } ahead${
+                  prAb(w).behind > 0 ? " — right-click to update branch" : ""
+                }`
+                : null}>{(prAb(w).ahead ? `↑${prAb(w).ahead}` : "") +
+              (prAb(w).behind ? ` ↓${prAb(w).behind}` : "") || "—"}</span>
         <span class="ago">{ago(w.lastActivity)}</span>
       </div>
     {/key}
@@ -1470,7 +1538,7 @@ select.theme {
 .wt {
   display: grid;
   grid-template-columns:
-    0.75rem 1fr 3rem minmax(5.25rem, auto) 4.625rem 3.875rem 2.875rem;
+    0.75rem 1fr 5rem minmax(5.25rem, auto) 4.625rem 3.875rem 2.875rem;
   align-items: center;
   gap: 0.5rem;
   padding: 0.1875rem 0.625rem 0.1875rem 0.5rem;
@@ -1554,6 +1622,33 @@ select.theme {
   color: var(--bg);
   background: var(--acc);
 }
+.am-icon {
+  fill: currentColor;
+  vertical-align: -1px;
+  margin-left: 0.125rem;
+}
+.prt {
+  font: 0.625rem var(--mono);
+  white-space: nowrap;
+}
+.prt.pending {
+  color: var(--warn);
+}
+.prt.fail {
+  color: var(--danger);
+}
+.prt.approved {
+  color: var(--acc);
+}
+.prt.open {
+  color: var(--dim);
+}
+.prt.merged {
+  color: var(--merged);
+}
+.prt.closed {
+  color: var(--dim);
+}
 .pr.draft {
   border-color: var(--acc);
   color: var(--acc);
@@ -1596,6 +1691,9 @@ select.theme {
   font: 0.6875rem var(--mono);
   color: var(--dim);
   text-align: right;
+}
+.wt .ab.behind {
+  color: var(--warn);
 }
 .wt .ago {
   font: 0.6875rem var(--mono);

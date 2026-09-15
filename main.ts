@@ -639,24 +639,38 @@ type Pr = {
   number: number;
   url: string;
   state: "OPEN" | "MERGED" | "CLOSED";
+  // when we first observed the *current* state — not from GitHub, so it
+  // undercounts a PR that merged/closed before Forest was watching.
+  stateSince: number;
   title: string;
   isDraft: boolean;
   baseRefName: string;
   reviewDecision: "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED" | "";
   mergeable: "MERGEABLE" | "CONFLICTING" | "UNKNOWN";
+  autoMerge: boolean;
   ci: { state: "pass" | "fail" | "pending" | null; failing: string[] };
+  // when we first observed the *current* ci.state / reviewDecision — not from
+  // GitHub, so it undercounts a state that started before Forest was watching.
+  ciSince: number | null;
+  reviewSince: number | null;
   detailAt: number | null;
 };
-type PrSlim = Pick<Pr, "number" | "url" | "state">;
+type PrSlim = Pick<Pr, "number" | "url" | "state" | "stateSince">;
 const prsByRepo = new Map<string, Map<string, PrSlim>>();
-const prDetail = new Map<string, Omit<Pr, "number" | "url" | "state">>();
-const NO_DETAIL: Omit<Pr, "number" | "url" | "state"> = {
+const prDetail = new Map<
+  string,
+  Omit<Pr, "number" | "url" | "state" | "stateSince">
+>();
+const NO_DETAIL: Omit<Pr, "number" | "url" | "state" | "stateSince"> = {
   title: "",
   isDraft: false,
   baseRefName: "",
   reviewDecision: "",
   mergeable: "UNKNOWN",
+  autoMerge: false,
   ci: { state: null, failing: [] },
+  ciSince: null,
+  reviewSince: null,
   detailAt: null,
 };
 const prFor = (
@@ -677,6 +691,10 @@ const ghNextAt = new Map<string, number>();
 const ghFailed = new Set<string>(); // reported once per repo, not once per call
 const PR_PUSH_MS = 10_000;
 const GH_RETRY_MS = [600_000, 3_600_000];
+
+// "repo#number" -> when we first saw the PR in its current state. Pruned to
+// whatever gh pr list --limit 200 still returns, same as prDetail below.
+const prStateAt = new Map<string, { state: string; since: number }>();
 
 async function refreshPrs(repos: Repo[]) {
   const now = Date.now();
@@ -709,15 +727,29 @@ async function refreshPrs(repos: Repo[]) {
     if (out === null) return;
     ghFailed.delete(r.path);
     const byBranch = new Map<string, PrSlim>();
-    for (const p of JSON.parse(out) as (PrSlim & { headRefName: string })[]) {
+    const seenPrs = new Set<string>();
+    for (
+      const p of JSON.parse(
+        out,
+      ) as (Omit<PrSlim, "stateSince"> & { headRefName: string })[]
+    ) {
+      const key = `${r.path}#${p.number}`;
+      seenPrs.add(key);
+      const prev = prStateAt.get(key);
+      const since = prev && prev.state === p.state ? prev.since : now;
+      prStateAt.set(key, { state: p.state, since });
       const cur = byBranch.get(p.headRefName);
       if (!cur || (cur.state !== "OPEN" && p.number > cur.number)) {
         byBranch.set(p.headRefName, {
           number: p.number,
           url: p.url,
           state: p.state,
+          stateSince: since,
         });
       }
+    }
+    for (const k of prStateAt.keys()) {
+      if (k.startsWith(`${r.path}#`) && !seenPrs.has(k)) prStateAt.delete(k);
     }
     prsByRepo.set(r.path, byBranch);
     // read off this repo's own worktrees, not the PR list: a teammate's open PR
@@ -746,7 +778,7 @@ async function refreshPrs(repos: Repo[]) {
       "view",
       String(n),
       "--json",
-      "title,isDraft,baseRefName,reviewDecision,mergeable,statusCheckRollup",
+      "title,isDraft,baseRefName,reviewDecision,mergeable,autoMergeRequest,statusCheckRollup",
     ]).catch((e) => {
       stats.ghFailTotal++;
       const first = !ghFailed.has(repo);
@@ -759,15 +791,23 @@ async function refreshPrs(repos: Repo[]) {
     });
     if (out === null) return;
     const d = JSON.parse(out);
+    const reviewDecision = d.reviewDecision ?? "";
+    const ci = ciSummary(d.statusCheckRollup ?? []);
+    const prev = prDetail.get(`${repo}#${n}`);
+    const now = Date.now();
     const fields = {
       title: d.title,
       isDraft: d.isDraft,
       baseRefName: d.baseRefName,
-      reviewDecision: d.reviewDecision ?? "",
+      reviewDecision,
       mergeable: d.mergeable,
-      ci: ciSummary(d.statusCheckRollup ?? []),
+      autoMerge: !!d.autoMergeRequest,
+      ci,
+      ciSince: prev && prev.ci.state === ci.state ? prev.ciSince : now,
+      reviewSince: prev && prev.reviewDecision === reviewDecision
+        ? prev.reviewSince
+        : now,
     };
-    const prev = prDetail.get(`${repo}#${n}`);
     if (
       prev &&
       JSON.stringify({ ...prev, detailAt: null }) ===
@@ -777,6 +817,57 @@ async function refreshPrs(repos: Repo[]) {
     }
     prDetail.set(`${repo}#${n}`, { ...fields, detailAt: Date.now() });
   });
+}
+
+// After a user-triggered mutation (update-branch, auto-merge) on one PR, pull
+// it straight from gh instead of waiting for the next refreshPrs sweep — the
+// change should show up now, not up to prPollMs later. Best-effort: caller
+// swallows failures, since the mutation itself already succeeded.
+async function refreshOnePr(repo: string, n: number): Promise<void> {
+  const out = await exec(repo, [
+    "gh",
+    "pr",
+    "view",
+    String(n),
+    "--json",
+    "state,title,isDraft,baseRefName,reviewDecision,mergeable,autoMergeRequest,statusCheckRollup",
+  ]);
+  const d = JSON.parse(out);
+  const key = `${repo}#${n}`;
+  const now = Date.now();
+
+  const prevState = prStateAt.get(key);
+  const since = prevState && prevState.state === d.state
+    ? prevState.since
+    : now;
+  prStateAt.set(key, { state: d.state, since });
+  const byBranch = prsByRepo.get(repo);
+  if (byBranch) {
+    for (const [branch, slim] of byBranch) {
+      if (slim.number === n) {
+        byBranch.set(branch, { ...slim, state: d.state, stateSince: since });
+      }
+    }
+  }
+
+  const reviewDecision = d.reviewDecision ?? "";
+  const ci = ciSummary(d.statusCheckRollup ?? []);
+  const prev = prDetail.get(key);
+  prDetail.set(key, {
+    title: d.title,
+    isDraft: d.isDraft,
+    baseRefName: d.baseRefName,
+    reviewDecision,
+    mergeable: d.mergeable,
+    autoMerge: !!d.autoMergeRequest,
+    ci,
+    ciSince: prev && prev.ci.state === ci.state ? prev.ciSince : now,
+    reviewSince: prev && prev.reviewDecision === reviewDecision
+      ? prev.reviewSince
+      : now,
+    detailAt: now,
+  });
+  publish();
 }
 
 // ---- files & diff ----
@@ -1920,6 +2011,35 @@ const server = Deno.serve({
             );
           }
           break;
+        case "/api/update-branch": {
+          const n = Number(b.number);
+          if (!Number.isInteger(n) || n <= 0) throw new Error("bad pr number");
+          await exec(wt, [
+            "gh",
+            "api",
+            "-X",
+            "PUT",
+            `repos/{owner}/{repo}/pulls/${n}/update-branch`,
+          ]);
+          await refreshOnePr(knownWorktrees.get(wt)!, n).catch(() => {});
+          break;
+        }
+        case "/api/auto-merge": {
+          const n = Number(b.number);
+          if (!Number.isInteger(n) || n <= 0) throw new Error("bad pr number");
+          await exec(
+            wt,
+            b.enable
+              ? ["gh", "pr", "merge", String(n), "--auto", "--squash"]
+              : ["gh", "pr", "merge", String(n), "--disable-auto"],
+          );
+          await refreshOnePr(knownWorktrees.get(wt)!, n).catch(() => {});
+          // the merge landed on the remote, not locally — fetch so the
+          // ahead/behind-vs-base afterMutation() recomputes below isn't
+          // reading last sweep's now-stale refs.
+          await git(wt, "fetch", "origin").catch(() => {});
+          break;
+        }
         case "/api/wt-remove": {
           const force = b.force ? ["--force"] : [];
           const failed: { path: string; error: string }[] = [];
