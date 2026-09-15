@@ -14,6 +14,7 @@ import { matchWt } from "./src/filter.js";
 import { mergeInclude, parseThemeText, resolveTheme } from "./src/theme.js";
 import {
   backoffOver,
+  ciSince,
   ciSummary,
   classifyPath,
   coerceSettings,
@@ -37,6 +38,7 @@ import {
   qnum,
   rateWindow,
   remoteWebUrl,
+  reviewSince,
   selectWt,
   settingsOverrides,
   statusCounts,
@@ -639,8 +641,7 @@ type Pr = {
   number: number;
   url: string;
   state: "OPEN" | "MERGED" | "CLOSED";
-  // when we first observed the *current* state — not from GitHub, so it
-  // undercounts a PR that merged/closed before Forest was watching.
+  // GitHub's own createdAt/closedAt/mergedAt for the current state.
   stateSince: number;
   title: string;
   isDraft: boolean;
@@ -649,8 +650,9 @@ type Pr = {
   mergeable: "MERGEABLE" | "CONFLICTING" | "UNKNOWN";
   autoMerge: boolean;
   ci: { state: "pass" | "fail" | "pending" | null; failing: string[] };
-  // when we first observed the *current* ci.state / reviewDecision — not from
-  // GitHub, so it undercounts a state that started before Forest was watching.
+  // GitHub's own check-run/review timestamps for the current ci.state /
+  // reviewDecision; falls back to when Forest first observed it if GitHub
+  // has no matching timestamp (e.g. a state with no reviews yet).
   ciSince: number | null;
   reviewSince: number | null;
   detailAt: number | null;
@@ -692,10 +694,6 @@ const ghFailed = new Set<string>(); // reported once per repo, not once per call
 const PR_PUSH_MS = 10_000;
 const GH_RETRY_MS = [600_000, 3_600_000];
 
-// "repo#number" -> when we first saw the PR in its current state. Pruned to
-// whatever gh pr list --limit 200 still returns, same as prDetail below.
-const prStateAt = new Map<string, { state: string; since: number }>();
-
 async function refreshPrs(repos: Repo[]) {
   const now = Date.now();
   // no origin remote, no PRs -- ever. The rest run on their own clock.
@@ -713,7 +711,7 @@ async function refreshPrs(repos: Repo[]) {
       "--limit",
       "200",
       "--json",
-      "number,url,headRefName,state",
+      "number,url,headRefName,state,createdAt,closedAt,mergedAt",
     ]).catch((e) => {
       stats.ghFailTotal++;
       const first = !ghFailed.has(r.path);
@@ -727,17 +725,24 @@ async function refreshPrs(repos: Repo[]) {
     if (out === null) return;
     ghFailed.delete(r.path);
     const byBranch = new Map<string, PrSlim>();
-    const seenPrs = new Set<string>();
     for (
-      const p of JSON.parse(
-        out,
-      ) as (Omit<PrSlim, "stateSince"> & { headRefName: string })[]
+      const p of JSON.parse(out) as {
+        number: number;
+        url: string;
+        headRefName: string;
+        state: "OPEN" | "MERGED" | "CLOSED";
+        createdAt: string;
+        closedAt: string | null;
+        mergedAt: string | null;
+      }[]
     ) {
-      const key = `${r.path}#${p.number}`;
-      seenPrs.add(key);
-      const prev = prStateAt.get(key);
-      const since = prev && prev.state === p.state ? prev.since : now;
-      prStateAt.set(key, { state: p.state, since });
+      const since = Date.parse(
+        p.state === "MERGED"
+          ? p.mergedAt!
+          : p.state === "CLOSED"
+          ? p.closedAt!
+          : p.createdAt,
+      );
       const cur = byBranch.get(p.headRefName);
       if (!cur || (cur.state !== "OPEN" && p.number > cur.number)) {
         byBranch.set(p.headRefName, {
@@ -747,9 +752,6 @@ async function refreshPrs(repos: Repo[]) {
           stateSince: since,
         });
       }
-    }
-    for (const k of prStateAt.keys()) {
-      if (k.startsWith(`${r.path}#`) && !seenPrs.has(k)) prStateAt.delete(k);
     }
     prsByRepo.set(r.path, byBranch);
     // read off this repo's own worktrees, not the PR list: a teammate's open PR
@@ -778,7 +780,7 @@ async function refreshPrs(repos: Repo[]) {
       "view",
       String(n),
       "--json",
-      "title,isDraft,baseRefName,reviewDecision,mergeable,autoMergeRequest,statusCheckRollup",
+      "title,isDraft,baseRefName,reviewDecision,mergeable,autoMergeRequest,statusCheckRollup,reviews",
     ]).catch((e) => {
       stats.ghFailTotal++;
       const first = !ghFailed.has(repo);
@@ -803,10 +805,12 @@ async function refreshPrs(repos: Repo[]) {
       mergeable: d.mergeable,
       autoMerge: !!d.autoMergeRequest,
       ci,
-      ciSince: prev && prev.ci.state === ci.state ? prev.ciSince : now,
-      reviewSince: prev && prev.reviewDecision === reviewDecision
-        ? prev.reviewSince
-        : now,
+      ciSince: ciSince(d.statusCheckRollup ?? [], ci.state) ??
+        (prev && prev.ci.state === ci.state ? prev.ciSince : now),
+      reviewSince: reviewSince(d.reviews ?? [], reviewDecision) ??
+        (prev && prev.reviewDecision === reviewDecision
+          ? prev.reviewSince
+          : now),
     };
     if (
       prev &&
@@ -830,17 +834,19 @@ async function refreshOnePr(repo: string, n: number): Promise<void> {
     "view",
     String(n),
     "--json",
-    "state,title,isDraft,baseRefName,reviewDecision,mergeable,autoMergeRequest,statusCheckRollup",
+    "state,title,isDraft,baseRefName,reviewDecision,mergeable,autoMergeRequest,statusCheckRollup,reviews,createdAt,closedAt,mergedAt",
   ]);
   const d = JSON.parse(out);
   const key = `${repo}#${n}`;
   const now = Date.now();
 
-  const prevState = prStateAt.get(key);
-  const since = prevState && prevState.state === d.state
-    ? prevState.since
-    : now;
-  prStateAt.set(key, { state: d.state, since });
+  const since = Date.parse(
+    d.state === "MERGED"
+      ? d.mergedAt
+      : d.state === "CLOSED"
+      ? d.closedAt
+      : d.createdAt,
+  );
   const byBranch = prsByRepo.get(repo);
   if (byBranch) {
     for (const [branch, slim] of byBranch) {
@@ -861,10 +867,10 @@ async function refreshOnePr(repo: string, n: number): Promise<void> {
     mergeable: d.mergeable,
     autoMerge: !!d.autoMergeRequest,
     ci,
-    ciSince: prev && prev.ci.state === ci.state ? prev.ciSince : now,
-    reviewSince: prev && prev.reviewDecision === reviewDecision
-      ? prev.reviewSince
-      : now,
+    ciSince: ciSince(d.statusCheckRollup ?? [], ci.state) ??
+      (prev && prev.ci.state === ci.state ? prev.ciSince : now),
+    reviewSince: reviewSince(d.reviews ?? [], reviewDecision) ??
+      (prev && prev.reviewDecision === reviewDecision ? prev.reviewSince : now),
     detailAt: now,
   });
   publish();

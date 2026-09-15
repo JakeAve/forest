@@ -2,6 +2,7 @@ import { assertEquals, assertThrows } from "@std/assert";
 import type { DiffWorktree } from "./parse.ts";
 import {
   backoffOver,
+  ciSince,
   ciSummary,
   clampMenu,
   classifyPath,
@@ -22,6 +23,7 @@ import {
   rateWindow,
   remoteWebUrl,
   removeSummary,
+  reviewSince,
   selectWt,
   statusCounts,
   trimSeps,
@@ -721,6 +723,69 @@ Deno.test("ciSummary: one queued is pending", () => {
     ]),
     { state: "pending", failing: [] },
   );
+});
+
+Deno.test("ciSince: takes the latest completedAt among the failing checks", () => {
+  assertEquals(
+    ciSince([
+      {
+        name: "build",
+        conclusion: "SUCCESS",
+        completedAt: "2026-01-01T00:00:00Z",
+      },
+      {
+        name: "lint",
+        conclusion: "FAILURE",
+        completedAt: "2026-01-02T00:00:00Z",
+      },
+    ], "fail"),
+    Date.parse("2026-01-02T00:00:00Z"),
+  );
+});
+
+Deno.test("ciSince: falls back to startedAt, then createdAt, then null", () => {
+  assertEquals(
+    ciSince([{
+      name: "deploy",
+      status: "QUEUED",
+      startedAt: "2026-01-01T00:00:00Z",
+    }], "pending"),
+    Date.parse("2026-01-01T00:00:00Z"),
+  );
+  assertEquals(
+    ciSince([{
+      context: "ci/legacy",
+      state: "PENDING",
+      createdAt: "2026-01-01T00:00:00Z",
+    }], "pending"),
+    Date.parse("2026-01-01T00:00:00Z"),
+  );
+  assertEquals(ciSince([{ name: "build" }], "pass"), null);
+  assertEquals(ciSince([], "pass"), null);
+});
+
+Deno.test("ciSince: an in-progress check's Go zero-time completedAt is not mistaken for a real time", () => {
+  assertEquals(
+    ciSince([{
+      name: "build",
+      status: "IN_PROGRESS",
+      completedAt: "0001-01-01T00:00:00Z",
+      startedAt: "2026-01-01T00:00:00Z",
+    }], "pending"),
+    Date.parse("2026-01-01T00:00:00Z"),
+  );
+});
+
+Deno.test("reviewSince: latest matching review, or null if none match", () => {
+  assertEquals(
+    reviewSince([
+      { state: "COMMENTED", submittedAt: "2026-01-01T00:00:00Z" },
+      { state: "APPROVED", submittedAt: "2026-01-02T00:00:00Z" },
+    ], "APPROVED"),
+    Date.parse("2026-01-02T00:00:00Z"),
+  );
+  assertEquals(reviewSince([{ state: "COMMENTED" }], "APPROVED"), null);
+  assertEquals(reviewSince([{ state: "APPROVED" }], ""), null);
 });
 
 Deno.test("parseLsofCommands and procsByCwd: c lines join to pid->command", () => {

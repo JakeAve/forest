@@ -578,6 +578,64 @@ export function ciSummary(
   return { state: pending ? "pending" : "pass", failing: [] };
 }
 
+// GitHub's GraphQL API reports an unfinished CheckRun's completedAt as this Go
+// zero-time sentinel rather than null — reject anything that old as bogus.
+const MIN_SANE_TIME = Date.parse("2000-01-01T00:00:00Z");
+const validTime = (t?: string): number | undefined => {
+  if (!t) return undefined;
+  const ms = new Date(t).getTime();
+  return ms > MIN_SANE_TIME ? ms : undefined;
+};
+
+/** When the current ci state actually started, per GitHub's own timestamps. */
+export function ciSince(
+  rollup: {
+    name?: string;
+    context?: string;
+    conclusion?: string;
+    state?: string;
+    status?: string;
+    startedAt?: string;
+    completedAt?: string;
+    createdAt?: string;
+  }[],
+  ciState: "pass" | "fail" | "pending" | null,
+): number | null {
+  if (!ciState) return null;
+  const relevant = ciState === "fail"
+    ? rollup.filter((e) =>
+      (e.conclusion && FAIL_CONCLUSION.has(e.conclusion)) ||
+      (e.state && FAIL_STATE.has(e.state))
+    )
+    : ciState === "pending"
+    ? rollup.filter((e) =>
+      (e.status && PENDING_STATUS.has(e.status)) ||
+      (e.state && PENDING_STATE.has(e.state))
+    )
+    : rollup;
+  const times = relevant
+    .map((e) =>
+      validTime(e.completedAt) ?? validTime(e.startedAt) ??
+        validTime(e.createdAt)
+    )
+    .filter((t) => t !== undefined);
+  return times.length ? Math.max(...times) : null;
+}
+
+/** When the current review decision was actually reached, per GitHub's reviews. */
+export function reviewSince(
+  reviews: { state?: string; submittedAt?: string }[],
+  decision: string,
+): number | null {
+  if (!decision) return null;
+  const times = reviews
+    .filter((r) => r.state === decision)
+    .map((r) => r.submittedAt)
+    .filter((t) => !!t)
+    .map((t) => new Date(t!).getTime());
+  return times.length ? Math.max(...times) : null;
+}
+
 /** Path-shaped input only: anything else is a fuzzy selector, left alone. */
 export const normPath = (p: string, home = "") =>
   p.replace(/^~(?=$|\/)/, home).replace(/\/+/g, "/").replace(/(.)\/$/, "$1");
