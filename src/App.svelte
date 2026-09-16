@@ -646,6 +646,13 @@ const toggleAutoMerge = (w, e) =>
     "am:" + w.path,
     e,
   );
+const prState = (w, action, e) =>
+  act(
+    "pr-state",
+    { wt: w.path, number: w.pr.number, action },
+    "ps:" + w.path,
+    e,
+  );
 
 async function removeWts(wts, force) {
   const live = wts.filter((w) => allWts.some((a) => a.path === w.path));
@@ -795,6 +802,14 @@ function wtItems(w) {
     !many && w.pr?.state === "OPEN" && {
       label: w.pr.autoMerge ? "Disable auto-merge" : "Enable auto-merge",
       fn: (e) => toggleAutoMerge(w, e),
+    },
+    !many && w.pr?.state === "OPEN" && {
+      label: w.pr.isDraft ? "Publish pull request" : "Convert to draft",
+      fn: (e) => prState(w, w.pr.isDraft ? "ready" : "draft", e),
+    },
+    !many && w.pr?.state === "OPEN" && {
+      label: `Close pull request #${w.pr.number}`,
+      fn: (e) => prState(w, "close", e),
     },
     !many && {
       label: w.isPrimary ? "Pull" : "Fetch + rebase",

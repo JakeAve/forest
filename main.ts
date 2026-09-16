@@ -2226,6 +2226,21 @@ const server = Deno.serve({
           await git(wt, "fetch", "origin").catch(() => {});
           break;
         }
+        case "/api/pr-state": {
+          const n = Number(b.number);
+          if (!Number.isInteger(n) || n <= 0) throw new Error("bad pr number");
+          const args = b.action === "close"
+            ? ["close", String(n)]
+            : b.action === "draft"
+            ? ["ready", String(n), "--undo"]
+            : b.action === "ready"
+            ? ["ready", String(n)]
+            : null;
+          if (!args) throw new Error("bad pr action");
+          await exec(wt, ["gh", "pr", ...args]);
+          await refreshOnePr(knownWorktrees.get(wt)!, n).catch(() => {});
+          break;
+        }
         case "/api/wt-remove": {
           const force = b.force ? ["--force"] : [];
           const failed: { path: string; error: string }[] = [];
