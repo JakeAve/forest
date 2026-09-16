@@ -39,6 +39,7 @@ function zoomKey(e) {
 let b1 = $state({ h: "32%", c: false });
 let b2 = $state({ h: "24%", c: false });
 let split = $state(50);
+let max = $state(null);
 let wrap = $state(false);
 let closed = $state({});
 let pinned = $state({});
@@ -492,6 +493,7 @@ function toggleRepo(name) {
 
 function drag(e, band, el) {
   e.preventDefault();
+  max = null;
   const y0 = e.clientY, h0 = el.offsetHeight;
   const mv = (m) => {
     band.h = Math.max(26, h0 + m.clientY - y0) + "px";
@@ -507,6 +509,7 @@ function drag(e, band, el) {
 }
 
 function collapse(band) {
+  max = null;
   band.c = !band.c;
   saveLayout();
 }
@@ -516,6 +519,7 @@ function gutterKey(e, band, el) {
   const d = { ArrowUp: -20, ArrowDown: 20 }[e.key];
   if (!d) return;
   e.preventDefault();
+  max = null;
   band.h = Math.max(26, el.offsetHeight + d) + "px";
   band.c = false;
   saveLayout();
@@ -1002,7 +1006,13 @@ function confirmDiscard() {
   {/if}
 
   {#if ready}
-  <div class="band" bind:this={b1El} style:height={b1.c ? "1.625rem" : b1.h}>
+  {#snippet maxBtn(n)}
+    <button class="btn max" class:on={max === n} title={max === n ? "restore panes" : "full screen"}
+            aria-label={max === n ? "restore panes" : "full screen"}
+            onclick={() => (max = max === n ? null : n)}>{max === n ? "⤡" : "⤢"}</button>
+  {/snippet}
+  <div class="band" class:grow={max === 1} bind:this={b1El}
+       style:height={max ? (max === 1 ? null : "1.625rem") : b1.c ? "1.625rem" : b1.h}>
     <div class="bhead">
       {#if selectable.length}
         <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
@@ -1035,6 +1045,7 @@ function confirmDiscard() {
         class:on={runningOnly}
         onclick={() => (runningOnly = !runningOnly)}>running only</button
       >
+      {@render maxBtn(1)}
     </div>
     {#if checkedWts.length || confirming}
       <div class="bhead selbar" class:confirm={confirming}>
@@ -1235,7 +1246,8 @@ function confirmDiscard() {
        onmousedown={(e) => drag(e, b1, b1El)} ondblclick={() => collapse(b1)}
        onkeydown={(e) => gutterKey(e, b1, b1El)}></div>
 
-  <div class="band" bind:this={b2El} style:height={b2.c ? "1.625rem" : b2.h}>
+  <div class="band" class:grow={max === 2} bind:this={b2El}
+       style:height={max ? (max === 2 ? null : "1.625rem") : b2.c ? "1.625rem" : b2.h}>
     <div class="bhead"><b>{explore ? "Files" : "Changed files"}</b>
       {#if editingPath}
         <input class="filter open" placeholder="open path…" bind:this={openEl}
@@ -1257,6 +1269,7 @@ function confirmDiscard() {
         <button class:on={!explore && base === "head"} onclick={() => setBase("head")}>uncommitted</button>
         <button class:on={explore} onclick={() => setBase("all")}>all files</button>
       </div>{/if}
+      {@render maxBtn(2)}
     </div>
     {#if discarding}
       <div class="bhead selbar confirm">
@@ -1361,7 +1374,8 @@ function confirmDiscard() {
        onmousedown={(e) => drag(e, b2, b2El)} ondblclick={() => collapse(b2)}
        onkeydown={(e) => gutterKey(e, b2, b2El)}></div>
 
-  <div class="band grow">
+  <div class="band" class:grow={max !== 1 && max !== 2}
+       style:height={max === 1 || max === 2 ? "1.625rem" : null}>
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div class="bhead" oncontextmenu={(e) => file && openMenu(e, fileItems({ path: file }))}>
       <b>{file ?? (explore ? "File" : "Diff")}</b><span class="sp"></span>
@@ -1382,6 +1396,7 @@ function confirmDiscard() {
         <span class="cbx" class:on={wrap}></span>wrap
       </label>
       {#if selFile}<span class="meta mono">+{selFile.added} −{selFile.removed}</span>{/if}
+      {@render maxBtn(3)}
     </div>
     <div class="body">
       {#if sel && file && settings}
@@ -1745,6 +1760,10 @@ dialog.settings::backdrop {
 .btn:hover {
   color: var(--fg);
   border-color: var(--dimmer);
+}
+.btn.max {
+  flex: none;
+  padding: 0 0.375rem;
 }
 .btn.on {
   color: var(--acc);
