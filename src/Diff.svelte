@@ -357,6 +357,11 @@ async function loadLang(p) {
 }
 
 $effect(() => {
+  void wt, void path;
+  lineUsed = false;
+});
+
+$effect(() => {
   void wt, void path, void base, void single;
   let stale = false;
   Promise.all([fetchData(), loadLang(path)]).then(([d, l]) => {
