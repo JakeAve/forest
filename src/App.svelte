@@ -1,6 +1,7 @@
 <script>
 import { tick, untrack } from "svelte";
 import Diff from "./Diff.svelte";
+import Palette from "./Palette.svelte";
 import { matchWt } from "./filter.js";
 import {
   ancestorDirs,
@@ -756,8 +757,10 @@ function runItem(item, e) {
   item.fn(e);
 }
 
-function wtItems(w) {
-  const t = checked[w.path] && checkedWts.length > 1 ? checkedWts : [w];
+function wtItems(w, solo = false) {
+  const t = !solo && checked[w.path] && checkedWts.length > 1
+    ? checkedWts
+    : [w];
   const many = t.length > 1;
   const pin = t.every((x) => pinned[x.path]);
   const branches = t.map((x) => x.branch).join("\n");
@@ -1022,6 +1025,117 @@ async function importVsTheme(e) {
   }
 }
 
+function toggleMax(n) {
+  max = max === n ? null : n;
+}
+
+let paletteOpen = $state(false);
+let palTree = $state({ of: null, files: [], dirs: [] });
+
+function paletteKey(e) {
+  if (!e.metaKey || e.altKey || e.shiftKey || !["k", "p"].includes(e.key)) {
+    return;
+  }
+  e.preventDefault();
+  paletteOpen = !paletteOpen;
+}
+
+$effect(() => {
+  const wt = sel;
+  if (!paletteOpen || !wt || treeOf === wt || loose) return;
+  fetch(`/api/tree?wt=${encodeURIComponent(wt)}`).then((r) => r.json())
+    .then((t) => {
+      if (sel === wt) palTree = { of: wt, files: t.files, dirs: t.dirs };
+    });
+});
+
+const asPalette = (items, detail) =>
+  items.filter((i) => i && i !== "-").map((i) => ({
+    ...i,
+    group: "action",
+    detail,
+  }));
+
+const paletteItems = $derived.by(() => {
+  if (!paletteOpen) return [];
+  const t = treeOf === sel || loose
+    ? { files: tree, dirs: treeDirs }
+    : palTree.of === sel
+    ? palTree
+    : { files: [], dirs: [] };
+  const pathItems = (kind, paths) =>
+    paths.map((p) => {
+      const [dir, name] = splitPath(p);
+      return {
+        group: kind === "dir" ? "folder" : "file",
+        label: name,
+        detail: dir || undefined,
+        fn: () => openAt({ wt: sel, loose, kind, rel: p, line: 0 }),
+      };
+    });
+  const cmd = (label, fn, kbd) => ({ group: "command", label, fn, kbd });
+  return [
+    ...[...allWts].sort((a, b) =>
+      !!pinned[b.path] - !!pinned[a.path] || b.lastActivity - a.lastActivity
+    ).map((w) => ({
+      group: "worktree",
+      label: w.branch,
+      detail: [
+        w.repo,
+        w.pr && `#${w.pr.number} ${w.pr.title}`,
+        w.ports?.map((p) => `:${p}`).join(" "),
+      ].filter(Boolean).join(" · "),
+      fn: () => {
+        selectWt(w.path);
+        scrollRow(w.path);
+      },
+      sub: () => asPalette(wtItems(w, true), w.branch),
+    })),
+    ...(selWt && !loose ? asPalette(wtItems(selWt, true), selWt.branch) : []),
+    cmd("Settings", () => dlg.showModal()),
+    ...["Worktrees", "Files", "Diff"].map((name, i) =>
+      cmd(
+        `${max === i + 1 ? "Restore" : "Maximize"} ${name}`,
+        () => toggleMax(i + 1),
+      )
+    ),
+    ...(loose ? [] : [
+      cmd("Since branch point", () => setBase("branch")),
+      cmd("Uncommitted", () => setBase("head")),
+      cmd("All files", () => setBase("all")),
+    ]),
+    cmd("Toggle wrap", () => {
+      wrap = !wrap;
+      saveLayout();
+    }),
+    cmd(`${allClosed ? "Expand" : "Collapse"} all worktrees`, toggleAll),
+    cmd("Dirty only", () => (dirtyOnly = !dirtyOnly)),
+    cmd("Running only", () => (runningOnly = !runningOnly)),
+    cmd("Open path…", editPath, "⌘O"),
+    {
+      ...cmd("Theme…", () => dlg.showModal()),
+      sub: () =>
+        ["default", ...themes].map((name) => cmd(name, () => applyTheme(name))),
+    },
+    ...repos.map((r) => ({
+      group: "repo",
+      label: r.name,
+      detail: r.path,
+      fn: async () => {
+        closed.__all = false;
+        closed[r.name] = false;
+        saveLayout();
+        await tick();
+        document.querySelector(`[data-repo="${CSS.escape(r.name)}"]`)
+          ?.scrollIntoView({ block: "nearest" });
+      },
+      sub: () => asPalette(repoItems(r, r.worktrees), r.name),
+    })),
+    ...pathItems("dir", [...new Set([...ancestorDirs(t.files), ...t.dirs])]),
+    ...pathItems("file", t.files),
+  ];
+});
+
 function discardArm(f, e) {
   e.stopPropagation();
   discarding = f;
@@ -1034,7 +1148,9 @@ function confirmDiscard() {
 }
 </script>
 
-<svelte:window onkeydown={(e) => (zoomKey(e), copyKey(e), openKey(e))} />
+<svelte:window
+  onkeydown={(e) => (zoomKey(e), copyKey(e), openKey(e), paletteKey(e))}
+/>
 
 <div class="app" class:desktop={settings?.desktop}>
   <div class="tbar">
@@ -1062,7 +1178,7 @@ function confirmDiscard() {
   {#snippet maxBtn(n)}
     <button class="btn max" class:on={max === n} title={max === n ? "restore panes" : "full screen"}
             aria-label={max === n ? "restore panes" : "full screen"}
-            onclick={() => (max = max === n ? null : n)}>{max === n ? "⤡" : "⤢"}</button>
+            onclick={() => toggleMax(n)}>{max === n ? "⤡" : "⤢"}</button>
   {/snippet}
   <div class="band" class:grow={max === 1} bind:this={b1El}
        style:height={max ? (max === 1 ? null : "1.625rem") : b1.c ? "1.625rem" : b1.h}>
@@ -1191,7 +1307,7 @@ function confirmDiscard() {
       {#each repos as r (r.name)}
         {@const wts = r.worktrees.filter((w) => match(r, w))}
         {#if wts.length || !filtering}
-          <div class="repo" role="button" tabindex="0"
+          <div class="repo" role="button" tabindex="0" data-repo={r.name}
                onclick={() => toggleRepo(r.name)}
                onkeydown={(e) => e.key === "Enter" ? toggleRepo(r.name) : menuKey(e, repoItems(r, wts))}
                oncontextmenu={(e) => openMenu(e, repoItems(r, wts))}>
@@ -1224,7 +1340,7 @@ function confirmDiscard() {
   {#snippet wtRow(w, showRepo)}
     {#key touched[w.path]}
       <div class="wt" class:sel={sel === w.path} class:touch={touched[w.path]}
-           role="button" tabindex="0" onclick={() => selectWt(w.path)}
+           role="button" tabindex="0" data-path={w.path} onclick={() => selectWt(w.path)}
            onkeydown={(e) => e.key === "Enter" ? selectWt(w.path) : menuKey(e, wtItems(w))}
            oncontextmenu={(e) => openMenu(e, wtItems(w))}>
         {#if w.isPrimary}
@@ -1484,6 +1600,8 @@ function confirmDiscard() {
     </div>
   {/if}
 </div>
+
+<Palette items={paletteItems} bind:open={paletteOpen} />
 
 <dialog class="settings" bind:this={dlg}>
   <div class="shead"><b>Settings</b><span class="sp"></span>

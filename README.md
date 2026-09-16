@@ -74,6 +74,14 @@ lists that folder (a file's parent, with the file selected), capped at 5000
 files. No git features there, but editing and ⌘S work. Temporary roots last
 until the server restarts.
 
+⌘K or ⌘P opens the command palette from anywhere, the editor included. It
+fuzzy-searches worktrees, repos, and the selected worktree's folders and files,
+plus commands (settings, pane maximize, file modes, wrap, filters, theme) and
+the selected worktree's context-menu actions. Start the query with `>` to see
+only commands and actions. Tab or → drills into an item's actions (a worktree's
+or repo's context menu, the theme list); ← or Backspace on an empty query goes
+back.
+
 ## Agents
 
 The daemon exposes the same data read-only to agents, over plain
