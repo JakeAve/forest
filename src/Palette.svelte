@@ -7,9 +7,10 @@ let q = $state("");
 let stack = $state([]);
 let idx = $state(0);
 
-const src = $derived(stack.at(-1)?.sub() ?? items);
+const top = $derived(stack.at(-1));
+const src = $derived(top?.sub() ?? items);
 const shown = $derived(
-  q.startsWith(">")
+  top?.onquery ? src : q.startsWith(">")
     ? rank(
       q.slice(1).trim(),
       src.filter((i) => i.group === "command" || i.group === "action"),
@@ -33,13 +34,14 @@ $effect(() => {
 });
 
 function run(it, e) {
+  if (!it.fn) return drill([...stack, it]);
   dlg.close();
   it.fn(e);
 }
 
 function drill(next) {
   stack = next;
-  q = "";
+  q = next.at(-1)?.query?.() ?? "";
   idx = 0;
 }
 
@@ -72,7 +74,7 @@ function key(e) {
   <input
     bind:this={input}
     bind:value={q}
-    oninput={() => (idx = 0)}
+    oninput={() => ((idx = 0), top?.onquery?.(q))}
     onkeydown={key}
     placeholder={stack.length ? "filter…" : "search, or > for commands"}
     spellcheck="false"

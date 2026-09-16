@@ -5,8 +5,14 @@ export function matchWt(
 ) {
   return (!dirtyOnly || w.dirty > 0) &&
     (!runningOnly || (w.ports?.length ?? 0) > 0) &&
-    (!q || w.branch.includes(q) || (repoName ?? "").includes(q));
+    fuzzy(q, wtText(w, repoName)) !== null;
 }
+
+export const wtText = (w, repoName = w.repo) => `${w.branch} ${repoName ?? ""}`;
+
+export const pathText = (p) => `${p.slice(p.lastIndexOf("/") + 1)} ${p}`;
+
+export const matchPath = (q, p) => fuzzy(q, pathText(p)) !== null;
 
 const WORD_START = /[/\-_.# ]/;
 
@@ -30,13 +36,14 @@ export function fuzzy(q, text) {
   return score;
 }
 
-export function rank(q, items, limit = 50) {
+export function rank(
+  q,
+  items,
+  limit = 50,
+  text = (item) => `${item.label} ${item.detail ?? ""}`,
+) {
   return items
-    .map((item, i) => ({
-      item,
-      i,
-      score: fuzzy(q, `${item.label} ${item.detail ?? ""}`),
-    }))
+    .map((item, i) => ({ item, i, score: fuzzy(q, text(item)) }))
     .filter(({ score }) => score !== null)
     .sort((a, b) => b.score - a.score || a.i - b.i)
     .slice(0, limit)

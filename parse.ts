@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { matchWt } from "./src/filter.js";
 
 export function parseWorktreeList(porcelain: string) {
   const wts: { path: string; head: string; branch: string }[] = [];
@@ -694,7 +693,9 @@ export function selectWt<
 >(sel: string, rows: T[], home = ""): { wt: T } | { candidates: T[] } {
   const owner = ownerWorktree(normPath(sel, home), rows.map((r) => r.path));
   if (owner) return { wt: rows.find((r) => r.path === owner)! };
-  const candidates = rows.filter((r) => matchWt({ q: sel }, r.repo, r));
+  const candidates = rows.filter((r) =>
+    r.branch.includes(sel) || r.repo.includes(sel)
+  );
   return candidates.length === 1 ? { wt: candidates[0] } : { candidates };
 }
 

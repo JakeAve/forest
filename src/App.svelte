@@ -2,7 +2,7 @@
 import { tick, untrack } from "svelte";
 import Diff from "./Diff.svelte";
 import Palette from "./Palette.svelte";
-import { matchWt } from "./filter.js";
+import { matchPath, matchWt, pathText, rank, wtText } from "./filter.js";
 import {
   ancestorDirs,
   clampMenu,
@@ -135,7 +135,7 @@ const selWt = $derived(
   repos.flatMap((r) => r.worktrees).find((w) => w.path === sel),
 );
 const selFile = $derived(files.find((f) => f.path === file));
-const shownFiles = $derived(files.filter((f) => !fq || f.path.includes(fq)));
+const shownFiles = $derived(files.filter((f) => matchPath(fq, f.path)));
 const stagedFiles = $derived(shownFiles.filter((f) => f.staged));
 const unstagedFiles = $derived(shownFiles.filter((f) => f.unstaged));
 const committedFiles = $derived(
@@ -147,7 +147,7 @@ const sectioned = $derived(
 const byPath = $derived(new Map(files.map((f) => [f.path, f])));
 const changedDirs = $derived(ancestorDirs(files.map((f) => f.path)));
 const treeMatches = $derived(
-  fq ? tree.filter((p) => p.toLowerCase().includes(fq.toLowerCase())) : [],
+  fq ? rank(fq, tree, Infinity, pathText) : [],
 );
 // ponytail: filter results capped at 500 rows; virtualize if that's ever too few
 const treeShown = $derived(
@@ -1075,23 +1075,24 @@ const paletteItems = $derived.by(() => {
       };
     });
   const cmd = (label, fn, kbd) => ({ group: "command", label, fn, kbd });
+  const wtItem = (w) => ({
+    group: "worktree",
+    label: w.branch,
+    detail: [
+      w.repo,
+      w.pr && `#${w.pr.number} ${w.pr.title}`,
+      w.ports?.map((p) => `:${p}`).join(" "),
+    ].filter(Boolean).join(" · "),
+    fn: () => {
+      selectWt(w.path);
+      scrollRow(w.path);
+    },
+    sub: () => asPalette(wtItems(w, true), w.branch),
+  });
   return [
     ...[...allWts].sort((a, b) =>
       !!pinned[b.path] - !!pinned[a.path] || b.lastActivity - a.lastActivity
-    ).map((w) => ({
-      group: "worktree",
-      label: w.branch,
-      detail: [
-        w.repo,
-        w.pr && `#${w.pr.number} ${w.pr.title}`,
-        w.ports?.map((p) => `:${p}`).join(" "),
-      ].filter(Boolean).join(" · "),
-      fn: () => {
-        selectWt(w.path);
-        scrollRow(w.path);
-      },
-      sub: () => asPalette(wtItems(w, true), w.branch),
-    })),
+    ).map(wtItem),
     ...(selWt && !loose ? asPalette(wtItems(selWt, true), selWt.branch) : []),
     cmd("Settings", () => dlg.showModal()),
     ...["Worktrees", "Files", "Diff"].map((name, i) =>
@@ -1110,6 +1111,27 @@ const paletteItems = $derived.by(() => {
       saveLayout();
     }),
     cmd(`${allClosed ? "Expand" : "Collapse"} all worktrees`, toggleAll),
+    {
+      ...cmd("Filter branches…"),
+      query: () => q,
+      onquery: (v) => (q = v),
+      sub: () => rank(q, shownWts, 50, wtText).map(wtItem),
+    },
+    ...(sel
+      ? [{
+        ...cmd("Filter files…"),
+        query: () => fq,
+        onquery: (v) => (fq = v),
+        sub: () =>
+          rank(fq, explore ? tree : files.map((f) => f.path), 50, pathText)
+            .map((p) => ({
+              group: "file",
+              label: splitPath(p)[1],
+              detail: splitPath(p)[0] || undefined,
+              fn: () => (pick({ path: p }), scrollRow(p)),
+            })),
+      }]
+      : []),
     cmd("Dirty only", () => (dirtyOnly = !dirtyOnly)),
     cmd("Running only", () => (runningOnly = !runningOnly)),
     cmd("Open path…", editPath, "⌘O"),

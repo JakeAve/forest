@@ -10,7 +10,7 @@ import {
 } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { basename, dirname, join, relative, resolve } from "@std/path";
-import { matchWt } from "./src/filter.js";
+import { matchPath, matchWt } from "./src/filter.js";
 import { mergeInclude, parseThemeText, resolveTheme } from "./src/theme.js";
 import {
   backoffOver,
@@ -972,7 +972,7 @@ async function listFiles(
     files.push({ path: p, status: "U", added: lines, removed: 0, ...flags(p) });
   }
   files.sort((a, b) => a.path.localeCompare(b.path));
-  return { base, files: q ? files.filter((f) => f.path.includes(q)) : files };
+  return { base, files: q ? files.filter((f) => matchPath(q, f.path)) : files };
 }
 
 async function fileContents(wt: string, path: string, mode: string) {

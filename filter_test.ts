@@ -1,5 +1,5 @@
 import { assertEquals } from "@std/assert";
-import { fuzzy, matchWt, rank } from "./src/filter.js";
+import { fuzzy, matchPath, matchWt, pathText, rank } from "./src/filter.js";
 
 const wt = (o = {}) => ({ branch: "jake/rom-1", dirty: 0, ports: [], ...o });
 
@@ -70,4 +70,21 @@ Deno.test('rank: "#12" finds a PR number in detail', () => {
   const ranked = rank("#12", items);
   assertEquals(ranked.length, 1);
   assertEquals(ranked[0].label, "Add filter ranking");
+});
+
+Deno.test("matchWt: fuzzy across branch and repo", () => {
+  assertEquals(matchWt({ q: "jr1" }, "edward", wt()), true);
+  assertEquals(matchWt({ q: "rom1 edw" }, "edward", wt()), true);
+});
+
+Deno.test("matchPath: abbreviations and typed paths both match", () => {
+  assertEquals(matchPath("appsv", "src/App.svelte"), true);
+  assertEquals(matchPath("src/app", "src/App.svelte"), true);
+  assertEquals(matchPath("", "anything"), true);
+  assertEquals(matchPath("xyz", "src/App.svelte"), false);
+});
+
+Deno.test("rank with pathText: basename hit beats a deep directory hit", () => {
+  const paths = ["filters/deep/x.ts", "src/filter.js"];
+  assertEquals(rank("filter", paths, 50, pathText)[0], "src/filter.js");
 });

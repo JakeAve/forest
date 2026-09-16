@@ -39,9 +39,9 @@ where activity means the newest of the HEAD commit and the mtime of any changed
 or untracked file, so a worktree you're editing sorts to the top before you
 commit anything.
 
-Filter by branch name, or narrow to dirty-only / running-only. Right-click a
-repo or worktree for open, copy path, copy remote branch, open remote branch,
-and new worktree.
+Fuzzy-filter by branch or repo name (`rm2750` finds `rom-2750-…`), or narrow to
+dirty-only / running-only. Right-click a repo or worktree for open, copy path,
+copy remote branch, open remote branch, and new worktree.
 
 Selecting a worktree lists its changed files, either since the branch point
 (merge-base with `origin/HEAD`) or just uncommitted. Selecting a file opens a
@@ -77,10 +77,11 @@ until the server restarts.
 ⌘K or ⌘P opens the command palette from anywhere, the editor included. It
 fuzzy-searches worktrees, repos, and the selected worktree's folders and files,
 plus commands (settings, pane maximize, file modes, wrap, filters, theme) and
-the selected worktree's context-menu actions. Start the query with `>` to see
-only commands and actions. Tab or → drills into an item's actions (a worktree's
-or repo's context menu, the theme list); ← or Backspace on an empty query goes
-back.
+the selected worktree's context-menu actions. "Filter branches…" and "Filter
+files…" drive the pane filters live from the palette, listing the best matches
+first. Start the query with `>` to see only commands and actions. Tab or →
+drills into an item's actions (a worktree's or repo's context menu, the theme
+list); ← or Backspace on an empty query goes back.
 
 ## Agents
 
