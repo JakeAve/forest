@@ -988,16 +988,35 @@ async function fileContents(wt: string, path: string, mode: string) {
   return { base: await tryGit(wt, "show", `${base}:${path}`), work };
 }
 
-async function listTree(wt: string): Promise<string[]> {
-  const out = await tryGit(
-    wt,
-    "ls-files",
-    "-z",
-    "--cached",
-    "--others",
-    "--exclude-standard",
-  );
-  return [...new Set((out ?? "").split("\0").filter(Boolean))];
+type Tree = { files: string[]; dirs: string[]; ignored: string[] };
+
+async function listTree(wt: string): Promise<Tree> {
+  const ls = (...args: string[]) =>
+    tryGit(wt, "ls-files", "-z", ...args).then((o) =>
+      (o ?? "").split("\0").filter(Boolean)
+    );
+  const [listed, ignored] = await Promise.all([
+    ls("--cached", "--others", "--exclude-standard"),
+    ls("--others", "--ignored", "--exclude-standard", "--directory"),
+  ]);
+  const all = [...new Set([...listed, ...ignored])];
+  const strip = (p: string) => p.replace(/\/$/, "");
+  return {
+    files: all.filter((p) => !p.endsWith("/")),
+    dirs: all.filter((p) => p.endsWith("/")).map(strip),
+    ignored: ignored.map(strip),
+  };
+}
+
+async function listDir(root: string, dir: string): Promise<Tree> {
+  const files: string[] = [];
+  const dirs: string[] = [];
+  for await (const e of Deno.readDir(join(root, dir))) {
+    const p = `${dir}/${e.name}`;
+    if (e.isDirectory && e.name !== ".git") dirs.push(p);
+    else if (e.isFile) files.push(p);
+  }
+  return { files, dirs, ignored: [] };
 }
 
 async function walkTree(root: string): Promise<string[]> {
@@ -2078,16 +2097,6 @@ const server = Deno.serve({
         owner = ownerWorktree(p, wts);
         if (owner) target = p;
       }
-      if (owner && stat.isDirectory && target !== owner) {
-        const ignored = await git(
-          owner,
-          "check-ignore",
-          "-q",
-          "--",
-          relative(owner, target),
-        ).then(() => true, () => false);
-        if (ignored) owner = undefined;
-      }
       if (!owner) {
         target = real;
         owner = ownerWorktree(real, [...looseRoots]);
@@ -2106,7 +2115,10 @@ const server = Deno.serve({
     }
     if (url.pathname === "/api/tree") {
       const wt = guardRoot(url.searchParams.get("wt"), req, info);
-      return json(await (isLoose(wt) ? walkTree(wt) : listTree(wt)));
+      const dir = url.searchParams.get("dir");
+      if (dir) return json(await listDir(wt, guardPath(dir)));
+      if (!isLoose(wt)) return json(await listTree(wt));
+      return json({ files: await walkTree(wt), dirs: [], ignored: [] });
     }
     if (url.pathname === "/api/hunks") {
       const wt = guardRoot(url.searchParams.get("wt"), req, info);

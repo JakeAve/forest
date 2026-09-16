@@ -10,6 +10,7 @@ import {
   diffSnapshots,
   discardPrompt,
   hotBackoff,
+  isIgnoredPath,
   isLocalRequest,
   ownerWorktree,
   parseDiffHunks,
@@ -929,6 +930,28 @@ Deno.test("treeRows: folders first, only open folders expand", () => {
     "0:b.txt",
   ]);
   assertEquals(treeRows(paths, { src: true })[1].path, "src/lib");
+});
+
+Deno.test("treeRows: unloaded dirs render as folders, sorted with folders", () => {
+  const rows = treeRows(["a.md", "docs/x.md"], { docs: true }, [
+    "dist",
+    "docs",
+  ]);
+  assertEquals(rows.map((r) => `${r.depth}:${r.name}${r.dir ? "/" : ""}`), [
+    "0:dist/",
+    "0:docs/",
+    "1:x.md",
+    "0:a.md",
+  ]);
+});
+
+Deno.test("isIgnoredPath: exact entries and anything under an ignored folder", () => {
+  const ignored = ["docs", ".DS_Store"];
+  assertEquals(isIgnoredPath("docs", ignored), true);
+  assertEquals(isIgnoredPath("docs/plans/a.md", ignored), true);
+  assertEquals(isIgnoredPath(".DS_Store", ignored), true);
+  assertEquals(isIgnoredPath("docsite/a.md", ignored), false);
+  assertEquals(isIgnoredPath("src/.DS_Store", ignored), false);
 });
 
 Deno.test("ancestorDirs: every parent folder, none for root files", () => {

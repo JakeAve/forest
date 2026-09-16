@@ -49,8 +49,9 @@ CodeMirror diff you can stage or discard by hunk, edit in place, and save —
 saves are guarded by a compare-and-swap against what was on disk, so a
 concurrent write returns 409 instead of clobbering.
 
-Switch the files band to **all files** to browse every tracked and untracked
-file (gitignored ones are hidden) as a tree; changed files keep their status
+Switch the files band to **all files** to browse every file as a tree;
+gitignored files and folders are dimmed, and an ignored folder lists its
+contents one level at a time as you expand it. Changed files keep their status
 letter. Files open in a single editable pane, with a view/diff toggle when they
 have changes. Binary files and anything over 1 MB show a stub instead.
 Right-click any file for its relative or absolute path, or press ⌥⇧⌘C / ⌥⌘C for

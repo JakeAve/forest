@@ -724,13 +724,15 @@ export type TreeRow = {
 };
 type TreeNode = Map<string, TreeNode>;
 
-/** Visible rows of a path tree: folders first, children only under `open` folders. */
+/** Visible rows of a path tree: folders first, children only under `open` folders; `dirs` are folders even before their contents load. */
 export function treeRows(
   paths: string[],
   open: Record<string, boolean>,
+  dirs: string[] = [],
 ): TreeRow[] {
   const root: TreeNode = new Map();
-  for (const p of paths) {
+  const dirSet = new Set(dirs);
+  for (const p of [...dirs, ...paths]) {
     let n = root;
     for (const s of p.split("/")) {
       if (!n.has(s)) n.set(s, new Map());
@@ -739,18 +741,25 @@ export function treeRows(
   }
   const rows: TreeRow[] = [];
   const walk = (n: TreeNode, pre: string, depth: number) => {
+    const isDir = (name: string, k: TreeNode) =>
+      k.size > 0 || dirSet.has(pre + name);
     const kids = [...n].sort(([a, x], [b, y]) =>
-      Number(y.size > 0) - Number(x.size > 0) || a.localeCompare(b)
+      Number(isDir(b, y)) - Number(isDir(a, x)) || a.localeCompare(b)
     );
     for (const [name, k] of kids) {
       const path = pre + name;
-      rows.push({ path, name, depth, dir: k.size > 0 });
+      const dir = k.size > 0 || dirSet.has(path);
+      rows.push({ path, name, depth, dir });
       if (k.size && open[path]) walk(k, path + "/", depth + 1);
     }
   };
   walk(root, "", 0);
   return rows;
 }
+
+/** Whether a tree path is git-ignored, given ignored files and folders. */
+export const isIgnoredPath = (path: string, ignored: string[]) =>
+  ignored.some((i) => path === i || path.startsWith(i + "/"));
 
 /** Every ancestor folder of the given paths, for marking folders that hold changes. */
 export function ancestorDirs(paths: string[]): Set<string> {

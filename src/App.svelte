@@ -6,6 +6,7 @@ import {
   ancestorDirs,
   clampMenu,
   discardPrompt,
+  isIgnoredPath,
   removeSummary,
   TREE_CAP,
   treeRows,
@@ -85,6 +86,9 @@ let base = $state("branch");
 let explore = $state(false);
 let loose = $state(false);
 let tree = $state([]);
+let treeDirs = $state([]);
+let treeIgnored = $state([]);
+let loadedDirs = $state({});
 let treeOf = $state(null);
 let openEl;
 let openDirs = $state({});
@@ -146,7 +150,7 @@ const treeMatches = $derived(
 const treeShown = $derived(
   fq
     ? treeMatches.slice(0, 500).map((p) => ({ path: p, depth: 0, dir: false }))
-    : treeRows(tree, openDirs),
+    : treeRows(tree, openDirs, treeDirs),
 );
 const totalWts = $derived(repos.reduce((n, r) => n + r.worktrees.length, 0));
 const filtering = $derived(q !== "" || dirtyOnly || runningOnly);
@@ -309,10 +313,31 @@ async function loadTree() {
   const wt = sel;
   const t = await (await fetch(`/api/tree?wt=${encodeURIComponent(wt)}`))
     .json();
-  if (sel === wt) {
-    tree = t;
-    treeOf = wt;
+  if (sel !== wt) return;
+  tree = t.files;
+  treeDirs = t.dirs;
+  treeIgnored = t.ignored;
+  loadedDirs = {};
+  treeOf = wt;
+  await loadOpenDirs();
+}
+
+async function loadOpenDirs() {
+  for (;;) {
+    const todo = treeDirs.filter((d) => openDirs[d] && !loadedDirs[d]);
+    if (!todo.length) return;
+    await Promise.all(todo.map(loadDir));
   }
+}
+
+async function loadDir(dir) {
+  const wt = sel;
+  loadedDirs[dir] = true;
+  const q = `wt=${encodeURIComponent(wt)}&dir=${encodeURIComponent(dir)}`;
+  const t = await (await fetch(`/api/tree?${q}`)).json().catch(() => ({}));
+  if (sel !== wt || !t.files) return;
+  tree = [...new Set([...tree, ...t.files])];
+  treeDirs = [...new Set([...treeDirs, ...t.dirs])];
 }
 
 function reveal(path) {
@@ -350,6 +375,9 @@ async function openAt(r) {
   explore = true;
   if (!same) {
     tree = [];
+    treeDirs = [];
+    treeIgnored = [];
+    loadedDirs = {};
     treeOf = null;
     openDirs = {};
   }
@@ -385,6 +413,9 @@ function selectWt(path) {
   sel = path;
   file = null;
   tree = [];
+  treeDirs = [];
+  treeIgnored = [];
+  loadedDirs = {};
   openDirs = {};
   loadFiles();
   if (explore) loadTree();
@@ -397,8 +428,9 @@ function pick(f) {
 }
 
 function toggleDir(path) {
-  if (openDirs[path]) delete openDirs[path];
-  else openDirs[path] = true;
+  if (openDirs[path]) return delete openDirs[path];
+  openDirs[path] = true;
+  if (treeDirs.includes(path) && !loadedDirs[path]) loadOpenDirs();
 }
 
 function setBase(b) {
@@ -1246,7 +1278,7 @@ function confirmDiscard() {
       {#snippet treeRow(r)}
         {@const [dir, name] = fq ? splitPath(r.path) : ["", r.path.split("/").pop()]}
         {@const f = byPath.get(r.path)}
-        <div class="f tr" class:sel={file === r.path} role="button" tabindex="0" data-path={r.path}
+        <div class="f tr" class:sel={file === r.path} class:ign={isIgnoredPath(r.path, treeIgnored)} role="button" tabindex="0" data-path={r.path}
              style:padding-left="{0.625 + r.depth * 0.875}rem"
              onclick={() => r.dir ? toggleDir(r.path) : pick(r)}
              onkeydown={(e) => e.key === "Enter" ? (r.dir ? toggleDir(r.path) : pick(r)) : menuKey(e, fileItems(r))}
@@ -1990,6 +2022,10 @@ select.theme {
 }
 .f .p .dir {
   color: var(--dim);
+}
+.f.tr.ign:not(.sel) .p,
+.f.tr.ign:not(.sel) .p .dir {
+  color: var(--dimmer);
 }
 .f.sel .p {
   color: var(--hlfg);
