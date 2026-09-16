@@ -107,11 +107,11 @@ class HunkBar extends WidgetType {
     sp.className = "sp";
     const stage = document.createElement("button");
     stage.className = "hb";
-    stage.textContent = "stage hunk";
+    stage.textContent = "Stage hunk";
     stage.onclick = () => hunkAct("stage-hunk", this.hunk);
     const disc = document.createElement("button");
     disc.className = "hb d";
-    disc.textContent = "discard hunk";
+    disc.textContent = "Discard hunk";
     disc.onclick = () => hunkAct("discard-hunk", this.hunk);
     bar.append(h, sp, stage, disc);
     return bar;

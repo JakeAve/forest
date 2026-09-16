@@ -498,7 +498,8 @@ function drag(e, band, el) {
   max = null;
   const y0 = e.clientY, h0 = el.offsetHeight;
   const mv = (m) => {
-    band.h = Math.max(26, h0 + m.clientY - y0) + "px";
+    band.h = Math.max(el.firstElementChild.offsetHeight, h0 + m.clientY - y0) +
+      "px";
     band.c = false;
   };
   const up = () => {
@@ -522,7 +523,8 @@ function gutterKey(e, band, el) {
   if (!d) return;
   e.preventDefault();
   max = null;
-  band.h = Math.max(26, el.offsetHeight + d) + "px";
+  band.h = Math.max(el.firstElementChild.offsetHeight, el.offsetHeight + d) +
+    "px";
   band.c = false;
   saveLayout();
 }
@@ -603,7 +605,7 @@ function errBanner(text) {
   banner = {
     kind: "err",
     text,
-    actions: [{ label: "dismiss", fn: () => (banner = null) }],
+    actions: [{ label: "Dismiss", fn: () => (banner = null) }],
   };
 }
 
@@ -612,7 +614,7 @@ function conflictBanner() {
     kind: "warn",
     text:
       `${file} changed on disk while you had unsaved edits — not saved. Use discard to reload it.`,
-    actions: [{ label: "dismiss", fn: () => (banner = null) }],
+    actions: [{ label: "Dismiss", fn: () => (banner = null) }],
   };
 }
 
@@ -685,11 +687,11 @@ async function removeWts(wts, force) {
     text: removeSummary(live.length, stuck.map((w) => w.branch)),
     actions: [
       {
-        label: "force remove",
+        label: "Force remove",
         primary: true,
         fn: () => removeWts(stuck, true),
       },
-      { label: "dismiss", fn: () => (banner = null) },
+      { label: "Dismiss", fn: () => (banner = null) },
     ],
   };
 }
@@ -1215,8 +1217,12 @@ function confirmDiscard() {
     </svg>
     <span class="path">{settings?.root ?? ""}</span>
     <span class="sp"></span>
-    <button class="gear" title="settings" aria-label="settings"
-            onclick={() => dlg.showModal()}>⚙</button>
+    <button class="omni" onclick={() => (paletteOpen = true)}>
+      <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/></svg>
+      Search worktrees, files, commands<kbd>⌘K</kbd></button>
+    <span class="sp"></span>
+    <button class="circ" title="Settings" aria-label="Settings" onclick={() => dlg.showModal()}>
+      <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/></svg></button>
   </div>
 
   {#if banner}
@@ -1235,7 +1241,7 @@ function confirmDiscard() {
             onclick={() => toggleMax(n)}>{max === n ? "⤡" : "⤢"}</button>
   {/snippet}
   <div class="band" class:grow={max === 1} bind:this={b1El}
-       style:height={max ? (max === 1 ? null : "1.625rem") : b1.c ? "1.625rem" : b1.h}>
+       style:height={max ? (max === 1 ? null : "var(--head)") : b1.c ? "var(--head)" : b1.h}>
     <div class="bhead">
       {#if selectable.length}
         <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
@@ -1257,23 +1263,23 @@ function confirmDiscard() {
           : `${totalWts} across ${repos.length} repos`}</span><span
         class="sp"
       ></span>
-      <input class="filter" placeholder="filter branches" bind:value={q} />
+      <input class="filter" placeholder="Filter branches" bind:value={q} />
       <button
         class="btn"
         class:on={dirtyOnly}
-        onclick={() => (dirtyOnly = !dirtyOnly)}>dirty only</button
+        onclick={() => (dirtyOnly = !dirtyOnly)}>Dirty only</button
       >
       <button
         class="btn"
         class:on={runningOnly}
-        onclick={() => (runningOnly = !runningOnly)}>running only</button
+        onclick={() => (runningOnly = !runningOnly)}>Running only</button
       >
       {@render maxBtn(1)}
     </div>
     {#if checkedWts.length || confirming}
       <div class="bhead selbar" class:confirm={confirming}>
         {#if confirming}
-          <b>remove {confirming.length} worktree{confirming.length === 1
+          <b>Remove {confirming.length} worktree{confirming.length === 1
               ? ""
               : "s"}?</b>
           <span class="meta names">{confirming.map((w) => w.branch).join(", ")}
@@ -1283,9 +1289,9 @@ function confirmDiscard() {
             class="btn dg"
             disabled={removing}
             onclick={() => removeWts(confirming, false)}
-            >{removing ? "removing…" : "remove"}</button
+            >{removing ? "Removing…" : "Remove"}</button
           >
-          <button class="btn" onclick={() => (confirming = null)}>cancel</button
+          <button class="btn" onclick={() => (confirming = null)}>Cancel</button
           >
         {:else}
           <b>{checkedWts.length} selected</b>
@@ -1302,7 +1308,7 @@ function confirmDiscard() {
                 checkedWts.map((w) => w.branch).join("\n"),
                 "sel:br",
                 `${checkedWts.length} branch names`,
-              )}>copy branches</button
+              )}>Copy branches</button
           >
           <button
             class="btn"
@@ -1312,17 +1318,17 @@ function confirmDiscard() {
                 checkedWts.map((w) => w.path).join("\n"),
                 "sel:pa",
                 `${checkedWts.length} paths`,
-              )}>copy paths</button
+              )}>Copy paths</button
           >
           <button class="btn dg" onclick={() => (confirming = checkedWts)}
-            >remove</button
+            >Remove</button
           >
           <button
             class="btn"
             onclick={() => {
               checked = {};
               confirming = null;
-            }}>clear</button
+            }}>Clear</button
           >
         {/if}
       </div>
@@ -1370,15 +1376,15 @@ function confirmDiscard() {
             <span class="ct">{r.worktrees.length} worktree{r.worktrees.length > 1 ? "s" : ""}</span>
             <span class="sp"></span>
             <button class="cbtn plus" title="new worktree"
-                    onclick={(e) => { e.stopPropagation(); creating = creating === r.name ? null : r.name; slug = ""; }}>+ new</button>
+                    onclick={(e) => { e.stopPropagation(); creating = creating === r.name ? null : r.name; slug = ""; }}>New</button>
           </div>
           {#if creating === r.name}
             <div class="newwt">
               <!-- svelte-ignore a11y_autofocus -->
-              <input class="filter" autofocus placeholder="branch / slug" bind:value={slug}
+              <input class="filter" autofocus placeholder="Branch or slug" bind:value={slug}
                      onkeydown={(e) => { if (e.key === "Enter") createWt(r); if (e.key === "Escape") creating = null; }}>
               <button class="btn" disabled={busy["new:" + r.name]} onclick={() => createWt(r)}>
-                {busy["new:" + r.name] ? "creating…" : "create"}</button>
+                {busy["new:" + r.name] ? "Creating…" : "Create"}</button>
             </div>
           {/if}
           {#if !closed[r.name]}
@@ -1470,10 +1476,10 @@ function confirmDiscard() {
        onkeydown={(e) => gutterKey(e, b1, b1El)}></div>
 
   <div class="band" class:grow={max === 2} bind:this={b2El}
-       style:height={max ? (max === 2 ? null : "1.625rem") : b2.c ? "1.625rem" : b2.h}>
+       style:height={max ? (max === 2 ? null : "var(--head)") : b2.c ? "var(--head)" : b2.h}>
     <div class="bhead"><b>{explore ? "Files" : "Changed files"}</b>
       {#if editingPath}
-        <input class="filter open" placeholder="open path…" bind:this={openEl}
+        <input class="filter open" placeholder="Open path…" bind:this={openEl}
                onkeydown={openBoxKey} onblur={() => (editingPath = false)}>
       {:else}
         <button class="meta pth" title="open a path… ⌘O" onclick={editPath}
@@ -1483,14 +1489,14 @@ function confirmDiscard() {
                     fn: (e) => copy(e, selWt ? relWt(repoOf(selWt), selWt) : sel, "ctx"),
                   },
                   { label: "Copy path (absolute)", fn: (e) => copy(e, sel, "ctx") },
-                ])}>{loose ? sel : selWt ? `${selWt.repo} · ${selWt.branch}` : "open path… ⌘O"}</button>
+                ])}>{loose ? sel : selWt ? `${selWt.repo} · ${selWt.branch}` : "Open path… ⌘O"}</button>
         <span class="sp"></span>
       {/if}
-      <input class="filter" placeholder="filter files" bind:value={fq}>
+      <input class="filter" placeholder="Filter files" bind:value={fq}>
       {#if !loose}<div class="seg">
-        <button class:on={!explore && base === "branch"} onclick={() => setBase("branch")}>since branch point</button>
-        <button class:on={!explore && base === "head"} onclick={() => setBase("head")}>uncommitted</button>
-        <button class:on={explore} onclick={() => setBase("all")}>all files</button>
+        <button class:on={!explore && base === "branch"} onclick={() => setBase("branch")}>Since branch point</button>
+        <button class:on={!explore && base === "head"} onclick={() => setBase("head")}>Uncommitted</button>
+        <button class:on={explore} onclick={() => setBase("all")}>All files</button>
       </div>{/if}
       {@render maxBtn(2)}
     </div>
@@ -1499,8 +1505,8 @@ function confirmDiscard() {
         <b>{discardPrompt(discarding.path, discarding.status === "U")}</b>
         <span class="sp"></span>
         <button class="btn dg" onclick={confirmDiscard}>
-          {discarding.status === "U" ? "delete" : "discard"}</button>
-        <button class="btn" onclick={() => (discarding = null)}>cancel</button>
+          {discarding.status === "U" ? "Delete" : "Discard"}</button>
+        <button class="btn" onclick={() => (discarding = null)}>Cancel</button>
       </div>
     {/if}
     <div class="body">
@@ -1523,9 +1529,9 @@ function confirmDiscard() {
           <span class="p"><span class="dir">{dir}</span>{name}</span>
           <span class="acts">
             {#if mode === "staged"}
-              <button onclick={(e) => op("unstage", { path: f.path }, e)}>unstage</button>
+              <button onclick={(e) => op("unstage", { path: f.path }, e)}>Unstage</button>
             {:else if mode === "unstaged"}
-              <button onclick={(e) => op("stage", { path: f.path }, e)}>stage</button>
+              <button onclick={(e) => op("stage", { path: f.path }, e)}>Stage</button>
               <button class="dg" title="discard changes"
                       onclick={(e) => discardArm(f, e)}>↺</button>
             {/if}
@@ -1553,38 +1559,38 @@ function confirmDiscard() {
         </div>
       {/snippet}
       {#if !sel}
-        <div class="empty">select a worktree</div>
+        <div class="empty">Select a worktree</div>
       {:else if explore}
         {#if loose && !tree.length && treeOf === sel}
-          <div class="empty">empty folder</div>
+          <div class="empty">Empty folder</div>
         {:else if fq && !treeMatches.length}
-          <div class="empty">no matches</div>
+          <div class="empty">No matches</div>
         {:else}
           {#each treeShown as r (r.path)}{@render treeRow(r)}{/each}
           {#if treeMatches.length > treeShown.length}
-            <div class="empty">{treeMatches.length - treeShown.length} more — narrow the filter</div>
+            <div class="empty">{treeMatches.length - treeShown.length} more, narrow the filter</div>
           {/if}
           {#if loose && tree.length >= TREE_CAP}
-            <div class="empty">showing first {TREE_CAP} files — narrow the path</div>
+            <div class="empty">Showing the first {TREE_CAP} files, narrow the path</div>
           {/if}
         {/if}
       {:else if !files.length}
-        <div class="empty">no changes</div>
+        <div class="empty">No changes</div>
       {:else if !shownFiles.length}
-        <div class="empty">no matches</div>
+        <div class="empty">No matches</div>
       {:else if sectioned}
         {#if stagedFiles.length}
-          <div class="sechd">staged · {stagedFiles.length}<span class="sp"></span>
-            <button onclick={(e) => op("unstage", { path: "." }, e)}>unstage all</button></div>
+          <div class="sechd"><b>Staged</b>{stagedFiles.length}<span class="sp"></span>
+            <button onclick={(e) => op("unstage", { path: "." }, e)}>Unstage all</button></div>
           {#each stagedFiles as f (f.path)}{@render fileRow(f, "staged")}{/each}
         {/if}
         {#if unstagedFiles.length}
-          <div class="sechd">unstaged · {unstagedFiles.length}<span class="sp"></span>
-            <button onclick={(e) => op("stage", { path: "." }, e)}>stage all</button></div>
+          <div class="sechd"><b>Unstaged</b>{unstagedFiles.length}<span class="sp"></span>
+            <button onclick={(e) => op("stage", { path: "." }, e)}>Stage all</button></div>
           {#each unstagedFiles as f (f.path)}{@render fileRow(f, "unstaged")}{/each}
         {/if}
         {#if committedFiles.length}
-          <div class="sechd">committed · {committedFiles.length}</div>
+          <div class="sechd"><b>Committed</b>{committedFiles.length}</div>
           {#each committedFiles as f (f.path)}{@render fileRow(f, "committed")}{/each}
         {/if}
       {:else}
@@ -1597,26 +1603,26 @@ function confirmDiscard() {
        onmousedown={(e) => drag(e, b2, b2El)} ondblclick={() => collapse(b2)}
        onkeydown={(e) => gutterKey(e, b2, b2El)}></div>
 
-  <div class="band" class:grow={max !== 1 && max !== 2}
-       style:height={max === 1 || max === 2 ? "1.625rem" : null}>
+  <div class="band diffband" class:grow={max !== 1 && max !== 2}
+       style:height={max === 1 || max === 2 ? "var(--head)" : null}>
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div class="bhead" oncontextmenu={(e) => file && openMenu(e, fileItems({ path: file }))}>
       <b>{file ?? (explore ? "File" : "Diff")}</b><span class="sp"></span>
       {#if explore && selFile}
         <div class="seg">
-          <button class:on={!showDiff} onclick={() => (showDiff = false)}>view</button>
-          <button class:on={showDiff} onclick={() => (showDiff = true)}>diff</button>
+          <button class:on={!showDiff} onclick={() => (showDiff = false)}>View</button>
+          <button class:on={showDiff} onclick={() => (showDiff = true)}>Diff</button>
         </div>
       {/if}
       {#if diffDirty}
-        <span class="unsaved">● unsaved — ⌘S</span>
-        <button class="btn p" onclick={() => diffRef?.save()}>save</button>
+        <span class="unsaved">● Unsaved ⌘S</span>
+        <button class="btn p" onclick={() => diffRef?.save()}>Save</button>
         <button class="btn" title="discard editor changes, reload from disk"
-                onclick={() => { banner = null; diffRef?.reloadTheirs(); }}>discard</button>
+                onclick={() => { banner = null; diffRef?.reloadTheirs(); }}>Discard</button>
       {/if}
       <label class="meta wraplbl">
         <input type="checkbox" class="cbxin" bind:checked={wrap} onchange={saveLayout}>
-        <span class="cbx" class:on={wrap}></span>wrap
+        <span class="cbx" class:on={wrap}></span>Wrap
       </label>
       {#if selFile}<span class="meta mono">+{selFile.added} −{selFile.removed}</span>{/if}
       {@render maxBtn(3)}
@@ -1633,7 +1639,7 @@ function confirmDiscard() {
               oncopy={showToast}
               onsaved={loadFiles} />
       {:else}
-        <div class="empty">select a file</div>
+        <div class="empty">Select a file</div>
       {/if}
     </div>
   </div>
@@ -1659,9 +1665,9 @@ function confirmDiscard() {
 
 <dialog class="settings" bind:this={dlg}>
   <div class="shead"><b>Settings</b><span class="sp"></span>
-    <button class="btn" onclick={() => dlg.close()}>close</button></div>
+    <button class="btn" onclick={() => dlg.close()}>Close</button></div>
 
-  <div class="sec">theme</div>
+  <div class="sec">Theme</div>
   <div class="row">
     <label for="theme-sel">theme</label>
     <select id="theme-sel" class="theme" value={theme} disabled={busy.theme}
@@ -1670,21 +1676,21 @@ function confirmDiscard() {
       {#each themes as t (t)}<option value={t}>{t}</option>{/each}
     </select>
     <button class="btn" disabled={busy.theme} onclick={() => fileEl.click()}>
-      {busy.theme ? "applying…" : "import…"}</button>
+      {busy.theme ? "Applying…" : "Import…"}</button>
     <input type="file" accept=".json,.jsonc" hidden bind:this={fileEl} onchange={importTheme}>
   </div>
   {#if vsThemes.length}
     <div class="row">
       <label for="vs-sel">installed</label>
       <select id="vs-sel" class="theme" value="" disabled={busy.theme} onchange={importVsTheme}>
-        <option value="">pick a VS Code theme…</option>
+        <option value="">Pick a VS Code theme…</option>
         {#each vsThemes as t (t.path)}<option value={t.path}>{t.name}</option>{/each}
       </select>
     </div>
   {/if}
-  <div class="hint">import any VS Code color theme JSON, or one VS Code already has</div>
+  <div class="hint">Import any VS Code color theme JSON, or one VS Code already has</div>
 
-  <div class="sec">preferences</div>
+  <div class="sec">Preferences</div>
   {#each Object.entries(settings ?? {}) as [k, v] (k)}
     {#if typeof v === "number" || typeof v === "string"}
       <div class="row">
@@ -1699,7 +1705,7 @@ function confirmDiscard() {
     {/if}
   {/each}
 
-  <div class="sec">launchers</div>
+  <div class="sec">Launchers</div>
   {#each Object.entries(settings?.launchers ?? {}) as [repo] (repo)}
     <div class="row">
       <label for="l-{repo}">{repo}</label>
@@ -1708,15 +1714,15 @@ function confirmDiscard() {
     </div>
   {/each}
   <div class="row">
-    <input class="lname" list="repo-names" placeholder="repo name, or *"
+    <input class="lname" list="repo-names" placeholder="Repo name, or *"
            bind:value={newRepo} onkeydown={(e) => e.key === "Enter" && addLauncher()}>
     <datalist id="repo-names">
       {#each repos as r (r.name)}<option value={r.name}></option>{/each}
     </datalist>
-    <button class="btn" disabled={!newRepo.trim()} onclick={addLauncher}>add</button>
+    <button class="btn" disabled={!newRepo.trim()} onclick={addLauncher}>Add</button>
   </div>
   <div class="hint">
-    shell command run in the repo to make a worktree, instead of plain
+    Shell command run in the repo to make a worktree, instead of plain
     <span class="mono">git worktree add</span>. <span class="mono">*</span> covers
     any repo without its own entry; empty removes it.
   </div>
@@ -1724,22 +1730,63 @@ function confirmDiscard() {
 </dialog>
 
 <style>
-.gear {
-  background: none;
-  border: none;
+.ico {
+  width: 1rem;
+  height: 1rem;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.omni {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  height: 2rem;
+  width: min(24rem, 40vw);
+  padding: 0 0.375rem 0 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--input);
+  color: var(--dimmer);
+  font: 0.8125rem var(--sans);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.omni:hover {
+  border-color: var(--dimmer);
+}
+.omni kbd {
+  margin-left: auto;
+  padding: 0 0.3125rem;
+  border: 1px solid var(--line);
+  border-radius: 0.375rem;
+  background: var(--bg3);
   color: var(--dim);
-  font-size: 0.875rem;
-  line-height: 1;
-  padding: 0.125rem;
+  font: 0.6875rem var(--mono);
+}
+.circ {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 2rem;
+  height: 2rem;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--bg2);
+  color: var(--dim);
   cursor: pointer;
 }
-.gear:hover {
+.circ:hover {
   color: var(--acc);
 }
 dialog.settings {
   margin: auto;
   border: 1px solid var(--line);
-  border-radius: 0.5rem;
+  border-radius: 0.875rem;
   background: var(--bg2);
   color: var(--fg);
   padding: 0 0 0.875rem;
@@ -1753,23 +1800,22 @@ dialog.settings::backdrop {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  height: 2.125rem;
-  padding: 0 0.75rem;
+  height: var(--head);
+  padding: 0 0.75rem 0 1rem;
   border-bottom: 1px solid var(--line);
   margin-bottom: 0.25rem;
+  font-size: 0.875rem;
 }
 .sec {
-  padding: 0.75rem 0.75rem 0.25rem;
-  font-size: 0.65625rem;
-  text-transform: uppercase;
-  letter-spacing: .09em;
-  color: var(--dim);
+  padding: 0.875rem 1rem 0.25rem;
+  font-weight: 600;
+  color: var(--fg);
 }
 .row {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  padding: 0.1875rem 0.75rem;
+  padding: 0.1875rem 1rem;
 }
 .row label {
   width: 8.125rem;
@@ -1779,10 +1825,10 @@ dialog.settings::backdrop {
 .row input {
   background: var(--input);
   border: 1px solid var(--line);
-  border-radius: 0.25rem;
+  border-radius: 0.375rem;
   color: var(--fg);
   font: 0.6875rem var(--mono);
-  padding: 0.125rem 0.375rem;
+  padding: 0.1875rem 0.5rem;
   width: 5.75rem;
   outline: none;
 }
@@ -1805,7 +1851,7 @@ dialog.settings::backdrop {
   cursor: default;
 }
 .hint {
-  padding: 0.125rem 0.75rem;
+  padding: 0.125rem 1rem;
   color: var(--dimmer);
   font-size: 0.6875rem;
 }
@@ -1820,7 +1866,7 @@ dialog.settings::backdrop {
   max-width: 60vw;
   padding: 0.4375rem 0.6875rem;
   border: 1px solid var(--line);
-  border-radius: 0.375rem;
+  border-radius: 0.75rem;
   background: var(--bg2);
   color: var(--fg);
   font-size: 0.75rem;
@@ -1833,19 +1879,18 @@ dialog.settings::backdrop {
   display: flex;
   flex-direction: column;
   height: 100vh;
+  padding: 0 0.5rem 0.5rem;
 }
 .tbar {
   display: flex;
   align-items: center;
   gap: 0.75rem;
-  height: 2.125rem;
-  padding: 0 0.75rem;
-  background: var(--bg2);
-  border-bottom: 1px solid var(--line);
+  height: 3rem;
+  padding: 0 0.25rem;
   flex: none;
 }
 .app.desktop .tbar {
-  padding-left: 82px;
+  padding-left: calc(82px - 0.5rem);
   min-height: 34px;
 }
 .tbar .mark {
@@ -1862,9 +1907,12 @@ dialog.settings::backdrop {
 .band {
   display: flex;
   flex-direction: column;
-  min-height: 1.625rem;
+  min-height: var(--head);
   overflow: hidden;
   flex: 0 1 auto;
+  background: var(--bg2);
+  border: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
+  border-radius: 0.875rem;
 }
 .band.grow {
   flex: 1;
@@ -1873,26 +1921,24 @@ dialog.settings::backdrop {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  height: 1.625rem;
-  padding: 0 0.625rem;
+  height: var(--head);
+  padding: 0 0.625rem 0 1rem;
   flex: none;
-  background: var(--bg2);
-  border-bottom: 1px solid var(--line);
-  font-size: 0.65625rem;
-  text-transform: uppercase;
-  letter-spacing: .09em;
+  font-size: 0.75rem;
   color: var(--dim);
   user-select: none;
   white-space: nowrap;
   overflow: hidden;
 }
 .bhead.selbar {
+  height: 2.25rem;
+  margin: 0 0.375rem 0.25rem;
+  padding-left: 0.75rem;
+  border-radius: 0.625rem;
   background: color-mix(in srgb, var(--acc) 12%, var(--bg2));
-  border-bottom-color: color-mix(in srgb, var(--acc) 30%, var(--line));
 }
 .bhead.selbar.confirm {
   background: color-mix(in srgb, var(--danger) 14%, var(--bg2));
-  border-bottom-color: color-mix(in srgb, var(--danger) 35%, var(--line));
 }
 .bhead .names {
   font-family: var(--mono);
@@ -1902,16 +1948,16 @@ dialog.settings::backdrop {
 }
 .bhead b {
   color: var(--fg);
+  font-size: 0.875rem;
   font-weight: 600;
-  letter-spacing: .09em;
   overflow: hidden;
   text-overflow: ellipsis;
-  text-transform: none;
+}
+.bhead.selbar b {
+  font-size: 0.75rem;
 }
 .bhead .meta {
   color: var(--dimmer);
-  text-transform: none;
-  letter-spacing: 0;
 }
 .bhead .mono {
   font: 0.6875rem var(--mono);
@@ -1937,61 +1983,87 @@ dialog.settings::backdrop {
   flex: 1;
   overflow: auto;
   min-height: 0;
+  padding: 0 0.375rem 0.375rem;
+}
+.diffband .body {
+  margin: 0 0.5rem 0.5rem;
+  padding: 0;
+  background: var(--bg);
+  border: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
+  border-radius: 0.625rem;
 }
 .gutter {
-  height: 0.3125rem;
+  display: grid;
+  place-items: center;
+  height: 0.625rem;
   flex: none;
-  background: var(--line);
   cursor: row-resize;
+  outline: none;
 }
-.gutter:hover {
+.gutter::after {
+  content: "";
+  width: 2.25rem;
+  height: 0.25rem;
+  border-radius: 999px;
+  background: var(--line);
+}
+.gutter:hover::after,
+.gutter:focus-visible::after {
   background: var(--acc);
 }
 
 .seg {
   display: flex;
+  gap: 0.125rem;
+  padding: 0.1875rem;
   border: 1px solid var(--line);
-  border-radius: 0.25rem;
-  overflow: hidden;
+  border-radius: 999px;
+  background: var(--bg);
 }
 .seg button {
-  background: var(--bg3);
+  background: none;
   color: var(--dim);
   border: 0;
-  font: 0.625rem var(--sans);
-  letter-spacing: .05em;
-  padding: 0.125rem 0.5rem;
+  border-radius: 999px;
+  font: 0.75rem var(--sans);
+  padding: 0.0625rem 0.625rem;
   cursor: pointer;
-  text-transform: uppercase;
+  white-space: nowrap;
 }
-.seg button + button {
-  border-left: 1px solid var(--line);
+.seg button:hover {
+  color: var(--fg);
 }
 .seg button.on {
   background: var(--hl);
-  color: var(--acc);
+  color: var(--hlfg);
 }
 .btn {
   background: var(--bg3);
   border: 1px solid var(--line);
   color: var(--dim);
-  border-radius: 0.25rem;
-  font: 0.625rem var(--sans);
-  letter-spacing: .05em;
-  padding: 0.125rem 0.5rem;
+  border-radius: 999px;
+  font: 0.75rem var(--sans);
+  padding: 0.1875rem 0.6875rem;
   cursor: pointer;
-  text-transform: uppercase;
+  white-space: nowrap;
 }
 .btn:hover {
   color: var(--fg);
   border-color: var(--dimmer);
 }
 .btn.max {
+  display: grid;
+  place-items: center;
   flex: none;
-  padding: 0 0.375rem;
+  width: 1.75rem;
+  height: 1.75rem;
+  padding: 0;
+  font-size: 0.875rem;
 }
 .btn.on {
   color: var(--acc);
+  background: color-mix(in srgb, var(--acc) 12%, var(--bg3));
+  border-color: color-mix(in srgb, var(--acc) 45%, var(--line));
 }
 .btn.dg {
   color: var(--danger);
@@ -2004,12 +2076,15 @@ dialog.settings::backdrop {
 input.filter {
   background: var(--input);
   border: 1px solid var(--line);
-  border-radius: 0.25rem;
+  border-radius: 999px;
   color: var(--fg);
-  font: 0.6875rem var(--sans);
-  padding: 0.125rem 0.5rem;
-  width: 9.375rem;
+  font: 0.75rem var(--sans);
+  padding: 0.25rem 0.75rem;
+  width: 10.5rem;
   outline: none;
+}
+input.filter::placeholder {
+  color: var(--dimmer);
 }
 input.filter.open {
   flex: 1;
@@ -2018,9 +2093,9 @@ input.filter.open {
 .bhead .pth {
   background: none;
   border: 1px solid transparent;
-  border-radius: 0.25rem;
-  font: inherit;
-  padding: 0.125rem 0.375rem;
+  border-radius: 999px;
+  font: 0.75rem var(--mono);
+  padding: 0.1875rem 0.5rem;
   cursor: text;
 }
 .bhead .pth:hover {
@@ -2032,10 +2107,10 @@ input.filter:focus {
 select.theme {
   background: var(--input);
   border: 1px solid var(--line);
-  border-radius: 0.25rem;
+  border-radius: 0.375rem;
   color: var(--fg);
   font: 0.6875rem var(--sans);
-  padding: 0.0625rem 0.25rem;
+  padding: 0.1875rem 0.375rem;
   outline: none;
   max-width: 10rem;
 }
@@ -2044,14 +2119,15 @@ select.theme {
   display: flex;
   align-items: center;
   gap: 0.375rem;
-  padding: 0.1875rem 0.625rem;
+  padding: 0.3125rem 0.625rem;
+  border-radius: 0.5rem;
   cursor: pointer;
   color: var(--dim);
   font-size: 0.75rem;
   user-select: none;
 }
 .repo:hover {
-  background: var(--bg2);
+  background: var(--hov);
 }
 .repo .car {
   width: 0.5625rem;
@@ -2072,24 +2148,17 @@ select.theme {
     0.75rem 1fr 5rem minmax(5.25rem, auto) 4.625rem 3.875rem 2.875rem;
   align-items: center;
   gap: 0.5rem;
-  padding: 0.1875rem 0.625rem 0.1875rem 0.5rem;
+  padding: 0.3125rem 0.625rem;
+  border-radius: 0.5rem;
   cursor: pointer;
   font-size: 0.75rem;
-  border-left: 2px solid transparent;
-  border-bottom: 1px solid color-mix(in srgb, var(--line) 40%, transparent);
-}
-.wt:last-child {
-  border-bottom: none;
-}
-.wt:nth-child(even) {
-  background: color-mix(in srgb, var(--bg3) 45%, var(--bg));
 }
 .wt:hover {
-  background: var(--bg2);
+  background: var(--hov);
 }
 .wt.sel {
   background: var(--hl);
-  border-left-color: var(--acc);
+  box-shadow: inset 3px 0 0 var(--acc);
 }
 .wt .br {
   font-family: var(--mono);
@@ -2103,7 +2172,7 @@ select.theme {
 }
 .repo.st {
   cursor: default;
-  padding-left: 1.1875rem;
+  padding: 0.625rem 0.625rem 0.25rem 1.1875rem;
 }
 .repo.st:hover {
   background: none;
@@ -2139,9 +2208,10 @@ select.theme {
 .port {
   font: 0.625rem var(--mono);
   color: var(--acc);
-  border: 1px solid var(--dimmer);
-  border-radius: 0.1875rem;
-  padding: 0 0.25rem;
+  background: color-mix(in srgb, var(--acc) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--acc) 35%, transparent);
+  border-radius: 999px;
+  padding: 0 0.375rem;
   text-decoration: none;
 }
 .port:hover {
@@ -2248,24 +2318,17 @@ select.theme {
   grid-template-columns: 0.875rem 1rem 1fr auto 5.75rem;
   align-items: center;
   gap: 0.5rem;
-  padding: 0.25rem 0.625rem;
+  padding: 0.3125rem 0.625rem;
+  border-radius: 0.5rem;
   cursor: pointer;
   font: 0.75rem var(--mono);
-  border-left: 2px solid transparent;
-  border-bottom: 1px solid color-mix(in srgb, var(--line) 40%, transparent);
-}
-.f:last-child {
-  border-bottom: none;
-}
-.f:nth-child(even) {
-  background: color-mix(in srgb, var(--bg3) 45%, var(--bg));
 }
 .f:hover {
-  background: var(--bg2);
+  background: var(--hov);
 }
 .f.sel {
   background: var(--hl);
-  border-left-color: var(--acc);
+  box-shadow: inset 3px 0 0 var(--acc);
 }
 .f.tr {
   grid-template-columns: 0.875rem 1fr 1rem;
@@ -2361,34 +2424,34 @@ select.theme {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  padding: 0.1875rem 0.625rem;
-  font: 0.625rem var(--sans);
-  text-transform: uppercase;
-  letter-spacing: .09em;
-  color: var(--dim);
-  background: var(--bg3);
-  border-block: 1px solid var(--line);
+  padding: 0.625rem 0.625rem 0.25rem;
+  font: 0.75rem var(--sans);
+  color: var(--dimmer);
+}
+.sechd b {
+  color: var(--fg);
+  font-weight: 600;
 }
 .sechd .sp {
   flex: 1;
 }
 .sechd button {
-  background: none;
-  border: 0;
+  background: var(--bg3);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0 0.5rem;
   color: var(--dim);
-  font: 0.625rem var(--sans);
-  text-transform: uppercase;
-  letter-spacing: .05em;
+  font: 0.6875rem var(--sans);
   cursor: pointer;
 }
 .sechd button:hover {
   color: var(--fg);
 }
 .cbx {
-  width: 0.6875rem;
-  height: 0.6875rem;
-  border: 1px solid var(--dimmer);
-  border-radius: 0.125rem;
+  width: 0.875rem;
+  height: 0.875rem;
+  border: 1.5px solid var(--dimmer);
+  border-radius: 0.25rem;
   cursor: pointer;
   position: relative;
   justify-self: center;
@@ -2403,7 +2466,7 @@ select.theme {
 .cbx.some::after {
   content: "";
   position: absolute;
-  inset: 0.1875rem 0.0625rem;
+  inset: 0.25rem 0.125rem;
   border-top: 0.125rem solid var(--acc);
 }
 .bhead .cbx {
@@ -2412,8 +2475,8 @@ select.theme {
 .cbx.on::after {
   content: "";
   position: absolute;
-  left: 0.1875rem;
-  top: 0;
+  left: 0.25rem;
+  top: 0.0625rem;
   width: 0.1875rem;
   height: 0.4375rem;
   border: solid var(--bg);
@@ -2429,9 +2492,9 @@ select.theme {
   font: 0.625rem var(--sans);
   color: var(--dim);
   cursor: pointer;
-  padding: 0 0.25rem;
+  padding: 0 0.5rem;
   border: 1px solid var(--line);
-  border-radius: 0.1875rem;
+  border-radius: 999px;
   background: var(--bg3);
 }
 .acts button:hover {
@@ -2445,10 +2508,12 @@ select.theme {
   display: flex;
   align-items: center;
   gap: 0.625rem;
-  padding: 0.4375rem 0.75rem;
+  padding: 0.5rem 0.625rem 0.5rem 1rem;
+  margin-bottom: 0.5rem;
   font-size: 0.75rem;
   flex: none;
-  border-bottom: 1px solid var(--line);
+  border: 1px solid var(--line);
+  border-radius: 0.875rem;
 }
 .banner .sp {
   flex: 1;
@@ -2456,12 +2521,12 @@ select.theme {
 .banner.err {
   background: color-mix(in srgb, var(--danger) 14%, var(--bg));
   color: color-mix(in srgb, var(--danger) 65%, var(--fg));
-  border-bottom-color: color-mix(in srgb, var(--danger) 35%, var(--bg));
+  border-color: color-mix(in srgb, var(--danger) 35%, var(--bg));
 }
 .banner.warn {
   background: color-mix(in srgb, var(--warn) 14%, var(--bg));
   color: color-mix(in srgb, var(--warn) 65%, var(--fg));
-  border-bottom-color: color-mix(in srgb, var(--warn) 35%, var(--bg));
+  border-color: color-mix(in srgb, var(--warn) 35%, var(--bg));
 }
 .btn.p {
   color: var(--acc);
@@ -2469,8 +2534,6 @@ select.theme {
 }
 .unsaved {
   color: var(--warn);
-  text-transform: none;
-  letter-spacing: 0;
   font: 0.6875rem var(--mono);
 }
 .repo .plus {
@@ -2484,11 +2547,11 @@ select.theme {
   position: fixed;
   margin: 0;
   inset: auto;
-  padding: 0.1875rem;
+  padding: 0.25rem;
   min-width: 11rem;
   background: var(--bg2);
   border: 1px solid var(--line);
-  border-radius: 0.3125rem;
+  border-radius: 0.625rem;
   box-shadow: 0 0.5rem 1.5rem color-mix(in srgb, var(--bg) 70%, transparent);
 }
 .ctx button {
@@ -2499,8 +2562,8 @@ select.theme {
   border: none;
   color: var(--fg);
   font: 0.75rem var(--sans);
-  padding: 0.25rem 0.625rem;
-  border-radius: 0.1875rem;
+  padding: 0.3125rem 0.625rem;
+  border-radius: 0.375rem;
   cursor: pointer;
   white-space: nowrap;
 }

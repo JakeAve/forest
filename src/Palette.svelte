@@ -77,7 +77,7 @@ function key(e) {
     bind:value={q}
     oninput={() => ((idx = 0), top?.onquery?.(q))}
     onkeydown={key}
-    placeholder={stack.length ? "filter…" : "search, or > for commands"}
+    placeholder={stack.length ? "Filter…" : "Search, or > for commands"}
     spellcheck="false"
     autocomplete="off"
   >
@@ -107,7 +107,7 @@ dialog {
   margin: 12vh auto auto;
   width: min(40rem, 92vw);
   border: 1px solid var(--line);
-  border-radius: 0.5rem;
+  border-radius: 0.875rem;
   background: var(--bg2);
   color: var(--fg);
   font: 0.75rem var(--sans);
@@ -137,7 +137,7 @@ input::placeholder {
 .list {
   max-height: min(24rem, 60vh);
   overflow-y: auto;
-  padding: 0.1875rem;
+  padding: 0.25rem;
 }
 button {
   display: flex;
@@ -149,8 +149,8 @@ button {
   border: 0;
   color: var(--fg);
   font: inherit;
-  padding: 0.25rem 0.625rem;
-  border-radius: 0.1875rem;
+  padding: 0.3125rem 0.625rem;
+  border-radius: 0.375rem;
   cursor: pointer;
   white-space: nowrap;
 }
@@ -167,9 +167,7 @@ button {
 .g {
   margin-left: auto;
   color: var(--dimmer);
-  font-size: 0.625rem;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
+  font-size: 0.6875rem;
 }
 kbd {
   color: var(--dimmer);
