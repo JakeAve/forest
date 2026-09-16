@@ -7,6 +7,7 @@ import {
   clampMenu,
   discardPrompt,
   removeSummary,
+  TREE_CAP,
   treeRows,
   trimSeps,
 } from "../parse.ts";
@@ -84,6 +85,8 @@ let base = $state("branch");
 let explore = $state(false);
 let loose = $state(false);
 let tree = $state([]);
+let treeOf = $state(null);
+let openEl;
 let openDirs = $state({});
 let showDiff = $state(false);
 let q = $state("");
@@ -306,7 +309,10 @@ async function loadTree() {
   const wt = sel;
   const t = await (await fetch(`/api/tree?wt=${encodeURIComponent(wt)}`))
     .json();
-  if (sel === wt) tree = t;
+  if (sel === wt) {
+    tree = t;
+    treeOf = wt;
+  }
 }
 
 function reveal(path) {
@@ -316,8 +322,25 @@ function reveal(path) {
 async function openPath(text) {
   const from = sel ? `&from=${encodeURIComponent(sel)}` : "";
   const res = await fetch(`/api/open?path=${encodeURIComponent(text)}${from}`);
-  if (!res.ok) return errBanner(await res.text());
+  if (!res.ok) {
+    errBanner(await res.text());
+    return false;
+  }
   await openAt(await res.json());
+  return true;
+}
+
+function openKey(e) {
+  if (!e.metaKey || e.key !== "o") return;
+  e.preventDefault();
+  openEl.focus();
+  openEl.select();
+}
+
+async function openBoxKey(e) {
+  if (e.key === "Escape") return openEl.blur();
+  if (e.key !== "Enter" || !openEl.value.trim()) return;
+  if (await openPath(openEl.value.trim())) openEl.value = "";
 }
 
 async function openAt(r) {
@@ -326,6 +349,7 @@ async function openAt(r) {
   explore = true;
   if (!same) {
     tree = [];
+    treeOf = null;
     openDirs = {};
   }
   sel = r.wt;
@@ -907,7 +931,7 @@ function confirmDiscard() {
 }
 </script>
 
-<svelte:window onkeydown={(e) => (zoomKey(e), copyKey(e))} />
+<svelte:window onkeydown={(e) => (zoomKey(e), copyKey(e), openKey(e))} />
 
 <div class="app" class:desktop={settings?.desktop}>
   <div class="tbar">
@@ -918,6 +942,8 @@ function confirmDiscard() {
     </svg>
     <span class="path">{settings?.root ?? ""}</span>
     <span class="sp"></span>
+    <input class="filter open" placeholder="open path… ⌘O" bind:this={openEl}
+           onkeydown={openBoxKey}>
     <button class="gear" title="settings" aria-label="settings"
             onclick={() => dlg.showModal()}>⚙</button>
   </div>
@@ -1167,14 +1193,15 @@ function confirmDiscard() {
 
   <div class="band" bind:this={b2El} style:height={b2.c ? "1.625rem" : b2.h}>
     <div class="bhead"><b>{explore ? "Files" : "Changed files"}</b>
-      {#if selWt}<span class="meta">{selWt.repo} · {selWt.branch}</span>{/if}
+      {#if loose}<span class="meta">{sel}</span>
+      {:else if selWt}<span class="meta">{selWt.repo} · {selWt.branch}</span>{/if}
       <span class="sp"></span>
       <input class="filter" placeholder="filter files" bind:value={fq}>
-      <div class="seg">
+      {#if !loose}<div class="seg">
         <button class:on={!explore && base === "branch"} onclick={() => setBase("branch")}>since branch point</button>
         <button class:on={!explore && base === "head"} onclick={() => setBase("head")}>uncommitted</button>
         <button class:on={explore} onclick={() => setBase("all")}>all files</button>
-      </div>
+      </div>{/if}
     </div>
     {#if discarding}
       <div class="bhead selbar confirm">
@@ -1237,12 +1264,17 @@ function confirmDiscard() {
       {#if !sel}
         <div class="empty">select a worktree</div>
       {:else if explore}
-        {#if fq && !treeMatches.length}
+        {#if loose && !tree.length && treeOf === sel}
+          <div class="empty">empty folder</div>
+        {:else if fq && !treeMatches.length}
           <div class="empty">no matches</div>
         {:else}
           {#each treeShown as r (r.path)}{@render treeRow(r)}{/each}
           {#if treeMatches.length > treeShown.length}
             <div class="empty">{treeMatches.length - treeShown.length} more — narrow the filter</div>
+          {/if}
+          {#if loose && tree.length >= TREE_CAP}
+            <div class="empty">showing first {TREE_CAP} files — narrow the path</div>
           {/if}
         {/if}
       {:else if !files.length}
@@ -1679,6 +1711,10 @@ input.filter {
   padding: 0.125rem 0.5rem;
   width: 9.375rem;
   outline: none;
+}
+input.filter.open {
+  width: 16rem;
+  font-family: var(--mono);
 }
 input.filter:focus {
   border-color: var(--acc);
