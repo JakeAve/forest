@@ -2,7 +2,14 @@
 import { tick } from "svelte";
 import Diff from "./Diff.svelte";
 import { matchWt } from "./filter.js";
-import { clampMenu, discardPrompt, removeSummary, trimSeps } from "../parse.ts";
+import {
+  ancestorDirs,
+  clampMenu,
+  discardPrompt,
+  removeSummary,
+  treeRows,
+  trimSeps,
+} from "../parse.ts";
 import { parseThemeText, resolveTheme } from "./theme.js";
 
 let settings = $state(null);
@@ -74,6 +81,10 @@ let sel = $state(null);
 let files = $state([]);
 let file = $state(null);
 let base = $state("branch");
+let explore = $state(false);
+let tree = $state([]);
+let openDirs = $state({});
+let showDiff = $state(false);
 let q = $state("");
 let fq = $state("");
 let dirtyOnly = $state(false);
@@ -118,6 +129,17 @@ const committedFiles = $derived(
 );
 const sectioned = $derived(
   stagedFiles.length > 0 || committedFiles.length > 0,
+);
+const byPath = $derived(new Map(files.map((f) => [f.path, f])));
+const changedDirs = $derived(ancestorDirs(files.map((f) => f.path)));
+const treeMatches = $derived(
+  fq ? tree.filter((p) => p.toLowerCase().includes(fq.toLowerCase())) : [],
+);
+// ponytail: filter results capped at 500 rows; virtualize if that's ever too few
+const treeShown = $derived(
+  fq
+    ? treeMatches.slice(0, 500).map((p) => ({ path: p, depth: 0, dir: false }))
+    : treeRows(tree, openDirs),
 );
 const totalWts = $derived(repos.reduce((n, r) => n + r.worktrees.length, 0));
 const filtering = $derived(q !== "" || dirtyOnly || runningOnly);
@@ -184,6 +206,7 @@ $effect(() => {
       files = [];
     } else if (sel && touched[sel] && prev.get(sel) !== undefined) {
       loadFiles();
+      if (explore) loadTree();
       diffTick++;
     }
   };
@@ -202,8 +225,13 @@ function restoreUrl() {
     return;
   }
   base = initialParams.get("base") === "head" ? "head" : "branch";
+  explore = initialParams.get("tree") === "1";
   sel = wt;
   file = initialParams.get("file") || null;
+  if (explore) {
+    reveal(file);
+    loadTree();
+  }
   pendingLine = Math.max(0, Math.floor(Number(initialParams.get("line")) || 0));
   loadFiles();
 }
@@ -214,6 +242,7 @@ $effect(() => {
     q.set("wt", sel);
     if (file) q.set("file", file);
     q.set("base", base);
+    if (explore) q.set("tree", "1");
     if (pendingLine) q.set("line", pendingLine);
   }
   history.replaceState(
@@ -229,26 +258,61 @@ async function loadFiles() {
   );
   const data = await res.json();
   files = data.files;
-  if (!files.some((f) => f.path === file)) file = files[0]?.path ?? null;
+  if (!explore && !files.some((f) => f.path === file)) {
+    file = files[0]?.path ?? null;
+  }
+}
+
+async function loadTree() {
+  const wt = sel;
+  const t = await (await fetch(`/api/tree?wt=${encodeURIComponent(wt)}`))
+    .json();
+  if (sel === wt) tree = t;
+}
+
+function reveal(path) {
+  for (const d of ancestorDirs(path ? [path] : [])) openDirs[d] = true;
 }
 
 function selectWt(path) {
   pendingLine = 0;
   sel = path;
   file = null;
+  tree = [];
+  openDirs = {};
   loadFiles();
+  if (explore) loadTree();
 }
 
 function pick(f) {
   pendingLine = 0;
   file = f.path;
+  if (explore) reveal(f.path);
+}
+
+function toggleDir(path) {
+  if (openDirs[path]) delete openDirs[path];
+  else openDirs[path] = true;
 }
 
 function setBase(b) {
-  if (base === b) return;
+  if (b === "all") {
+    if (explore) return;
+    explore = true;
+    if (sel) loadTree();
+    return;
+  }
+  if (base === b && !explore) return;
+  explore = false;
   pendingLine = 0;
   base = b;
   if (sel) loadFiles();
+}
+
+function copyKey(e) {
+  if (!e.metaKey || !e.altKey || e.code !== "KeyC" || !sel || !file) return;
+  e.preventDefault();
+  copy(e, e.shiftKey ? file : `${sel}/${file}`, "kbd");
 }
 
 function toggleAllShown() {
@@ -644,10 +708,12 @@ function fileItems(f, mode) {
   return [
     {
       label: "Copy path (relative)",
+      kbd: file === f.path && "⌥⇧⌘C",
       fn: (e) => copy(e, f.path, f.path + ":r"),
     },
     {
       label: "Copy path (absolute)",
+      kbd: file === f.path && "⌥⌘C",
       fn: (e) => copy(e, sel + "/" + f.path, f.path + ":a"),
     },
     "-",
@@ -760,7 +826,7 @@ function confirmDiscard() {
 }
 </script>
 
-<svelte:window onkeydown={zoomKey} />
+<svelte:window onkeydown={(e) => (zoomKey(e), copyKey(e))} />
 
 <div class="app" class:desktop={settings?.desktop}>
   <div class="tbar">
@@ -1019,13 +1085,14 @@ function confirmDiscard() {
        onkeydown={(e) => gutterKey(e, b1, b1El)}></div>
 
   <div class="band" bind:this={b2El} style:height={b2.c ? "1.625rem" : b2.h}>
-    <div class="bhead"><b>Changed files</b>
+    <div class="bhead"><b>{explore ? "Files" : "Changed files"}</b>
       {#if selWt}<span class="meta">{selWt.repo} · {selWt.branch}</span>{/if}
       <span class="sp"></span>
       <input class="filter" placeholder="filter files" bind:value={fq}>
       <div class="seg">
-        <button class:on={base === "branch"} onclick={() => setBase("branch")}>since branch point</button>
-        <button class:on={base === "head"} onclick={() => setBase("head")}>uncommitted</button>
+        <button class:on={!explore && base === "branch"} onclick={() => setBase("branch")}>since branch point</button>
+        <button class:on={!explore && base === "head"} onclick={() => setBase("head")}>uncommitted</button>
+        <button class:on={explore} onclick={() => setBase("all")}>all files</button>
       </div>
     </div>
     {#if discarding}
@@ -1067,8 +1134,36 @@ function confirmDiscard() {
           <span class="n"><span class="pl">+{f.added}</span><span class="mi">−{f.removed}</span></span>
         </div>
       {/snippet}
+      {#snippet treeRow(r)}
+        {@const [dir, name] = fq ? splitPath(r.path) : ["", r.path.split("/").pop()]}
+        {@const f = byPath.get(r.path)}
+        <div class="f tr" class:sel={file === r.path} role="button" tabindex="0"
+             style:padding-left="{0.625 + r.depth * 0.875}rem"
+             onclick={() => r.dir ? toggleDir(r.path) : pick(r)}
+             onkeydown={(e) => e.key === "Enter" ? (r.dir ? toggleDir(r.path) : pick(r)) : menuKey(e, fileItems(r))}
+             oncontextmenu={(e) => openMenu(e, fileItems(r))}>
+          <span class="car">{r.dir ? (openDirs[r.path] ? "▼" : "▶") : ""}</span>
+          <span class="p" title={r.path}><span class="dir">{dir}</span>{name}{r.dir ? "/" : ""}</span>
+          {#if f}
+            <span class="st {f.status}">{f.status === "U" ? "?" : f.status}</span>
+          {:else if r.dir && changedDirs.has(r.path)}
+            <span class="st M">●</span>
+          {:else}
+            <span></span>
+          {/if}
+        </div>
+      {/snippet}
       {#if !sel}
         <div class="empty">select a worktree</div>
+      {:else if explore}
+        {#if fq && !treeMatches.length}
+          <div class="empty">no matches</div>
+        {:else}
+          {#each treeShown as r (r.path)}{@render treeRow(r)}{/each}
+          {#if treeMatches.length > treeShown.length}
+            <div class="empty">{treeMatches.length - treeShown.length} more — narrow the filter</div>
+          {/if}
+        {/if}
       {:else if !files.length}
         <div class="empty">no changes</div>
       {:else if !shownFiles.length}
@@ -1099,7 +1194,15 @@ function confirmDiscard() {
        onkeydown={(e) => gutterKey(e, b2, b2El)}></div>
 
   <div class="band grow">
-    <div class="bhead"><b>{file ?? "Diff"}</b><span class="sp"></span>
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="bhead" oncontextmenu={(e) => file && openMenu(e, fileItems({ path: file }))}>
+      <b>{file ?? (explore ? "File" : "Diff")}</b><span class="sp"></span>
+      {#if explore && selFile}
+        <div class="seg">
+          <button class:on={!showDiff} onclick={() => (showDiff = false)}>view</button>
+          <button class:on={showDiff} onclick={() => (showDiff = true)}>diff</button>
+        </div>
+      {/if}
       {#if diffDirty}
         <span class="unsaved">● unsaved — ⌘S</span>
         <button class="btn p" onclick={() => diffRef?.save()}>save</button>
@@ -1116,6 +1219,7 @@ function confirmDiscard() {
       {#if sel && file && settings}
         <Diff bind:this={diffRef} wt={sel} path={file} {base} tick={diffTick} line={pendingLine}
               collapse={{ margin: settings.collapseMargin, minSize: settings.collapseMinSize }}
+              single={explore && !(selFile && showDiff)}
               {split} onsplit={(s) => { split = s; saveLayout(); }} {wrap}
               onstate={(d) => (diffDirty = d)}
               onconflict={conflictBanner}
@@ -1134,7 +1238,7 @@ function confirmDiscard() {
       {#if it === "-"}
         <hr>
       {:else}
-        <button class:dg={it.danger} onclick={(e) => runItem(it, e)}>{it.label}</button>
+        <button class:dg={it.danger} onclick={(e) => runItem(it, e)}>{it.label}{#if it.kbd}<kbd>{it.kbd}</kbd>{/if}</button>
       {/if}
     {/each}
   </div>
@@ -1736,6 +1840,13 @@ select.theme {
   background: var(--hl);
   border-left-color: var(--acc);
 }
+.f.tr {
+  grid-template-columns: 0.875rem 1fr 1rem;
+}
+.f.tr .car {
+  color: var(--dimmer);
+  font-size: 0.5625rem;
+}
 .f .st {
   font-weight: 700;
   font-size: 0.6875rem;
@@ -1961,6 +2072,12 @@ select.theme {
   border-radius: 0.1875rem;
   cursor: pointer;
   white-space: nowrap;
+}
+.ctx kbd {
+  float: right;
+  margin-left: 1.5rem;
+  color: var(--dimmer);
+  font: 0.6875rem var(--mono);
 }
 .ctx button:hover {
   background: var(--hl);

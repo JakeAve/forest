@@ -24,6 +24,7 @@ import {
   fillCommand,
   hotBackoff,
   type HotState,
+  MAX_PREVIEW,
   normPath,
   ownerWorktree,
   parseDiffHunks,
@@ -33,6 +34,7 @@ import {
   parseUpstreamTrack,
   parseWorktreeList,
   pool,
+  previewSkip,
   procsByCwd,
   qbool,
   qnum,
@@ -952,12 +954,30 @@ async function listFiles(
 }
 
 async function fileContents(wt: string, path: string, mode: string) {
+  const p = join(wt, path);
+  const size = (await Deno.stat(p).catch(() => null))?.size ?? 0;
+  const bytes = size > MAX_PREVIEW
+    ? new Uint8Array()
+    : await Deno.readFile(p).catch(() => null);
+  const skip = bytes && previewSkip(size, bytes);
+  if (skip) return { base: null, work: null, skip };
   const base = await resolveBase(wt, mode);
-  const [baseText, workText] = await Promise.all([
-    tryGit(wt, "show", `${base}:${path}`),
-    Deno.readTextFile(join(wt, path)).catch(() => null),
-  ]);
-  return { base: baseText, work: workText };
+  return {
+    base: await tryGit(wt, "show", `${base}:${path}`),
+    work: bytes && new TextDecoder().decode(bytes),
+  };
+}
+
+async function listTree(wt: string): Promise<string[]> {
+  const out = await tryGit(
+    wt,
+    "ls-files",
+    "-z",
+    "--cached",
+    "--others",
+    "--exclude-standard",
+  );
+  return [...new Set((out ?? "").split("\0").filter(Boolean))];
 }
 
 // ---- SSE ----
@@ -1984,6 +2004,9 @@ const server = Deno.serve({
           mode,
         ),
       );
+    }
+    if (url.pathname === "/api/tree") {
+      return json(await listTree(guardWt(url.searchParams.get("wt"))));
     }
     if (url.pathname === "/api/hunks") {
       const wt = guardWt(url.searchParams.get("wt"));

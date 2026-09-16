@@ -661,3 +661,68 @@ export const qnum = z.union([
   z.number(),
   z.string().regex(/^\d+$/).transform(Number),
 ]).pipe(z.number().int().min(0));
+
+// ---- file explorer ----
+
+export type TreeRow = {
+  path: string;
+  name: string;
+  depth: number;
+  dir: boolean;
+};
+type TreeNode = Map<string, TreeNode>;
+
+/** Visible rows of a path tree: folders first, children only under `open` folders. */
+export function treeRows(
+  paths: string[],
+  open: Record<string, boolean>,
+): TreeRow[] {
+  const root: TreeNode = new Map();
+  for (const p of paths) {
+    let n = root;
+    for (const s of p.split("/")) {
+      if (!n.has(s)) n.set(s, new Map());
+      n = n.get(s)!;
+    }
+  }
+  const rows: TreeRow[] = [];
+  const walk = (n: TreeNode, pre: string, depth: number) => {
+    const kids = [...n].sort(([a, x], [b, y]) =>
+      Number(y.size > 0) - Number(x.size > 0) || a.localeCompare(b)
+    );
+    for (const [name, k] of kids) {
+      const path = pre + name;
+      rows.push({ path, name, depth, dir: k.size > 0 });
+      if (k.size && open[path]) walk(k, path + "/", depth + 1);
+    }
+  };
+  walk(root, "", 0);
+  return rows;
+}
+
+/** Every ancestor folder of the given paths, for marking folders that hold changes. */
+export function ancestorDirs(paths: string[]): Set<string> {
+  const dirs = new Set<string>();
+  for (const p of paths) {
+    for (let i = p.indexOf("/"); i > 0; i = p.indexOf("/", i + 1)) {
+      dirs.add(p.slice(0, i));
+    }
+  }
+  return dirs;
+}
+
+export const MAX_PREVIEW = 1 << 20;
+
+export const fmtSize = (n: number) =>
+  n < 1024
+    ? `${n} B`
+    : n < 1 << 20
+    ? `${(n / 1024).toFixed(1)} KB`
+    : `${(n / (1 << 20)).toFixed(1)} MB`;
+
+/** Why a file can't be shown as text, or null if it can. */
+export function previewSkip(size: number, head: Uint8Array): string | null {
+  if (size > MAX_PREVIEW) return `too large to show · ${fmtSize(size)}`;
+  if (head.subarray(0, 8000).includes(0)) return `binary · ${fmtSize(size)}`;
+  return null;
+}

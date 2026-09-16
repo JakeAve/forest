@@ -33,6 +33,7 @@ let {
   split = 50,
   onsplit,
   wrap = false,
+  single = false,
   onstate,
   onconflict,
   onerror,
@@ -67,6 +68,7 @@ let view = null;
 let lang = [];
 let disk = null;
 let dirty = $state(false);
+let skip = $state(null);
 let lineUsed = false;
 
 const mkDecoField = (effect) =>
@@ -211,8 +213,11 @@ async function fetchData() {
 
 function build({ file, hunks }) {
   view?.destroy();
+  view = null;
   disk = file.work;
   setDirty(false);
+  skip = file.skip ?? null;
+  if (skip) return;
   const theme = EditorView.theme({}, { dark: true });
   const ro = [
     wrapC.of(wrapExt(wrap)),
@@ -245,14 +250,25 @@ function build({ file, hunks }) {
       }),
     ]
     : ro;
-  view = new MergeView({
-    a: { doc: file.base ?? "", extensions: ro },
-    b: { doc: file.work ?? "", extensions: bExt },
-    parent: el,
-    collapseUnchanged: collapse,
-  });
-  addSplitter();
-  applySplit(split);
+  if (single) {
+    const box = el.appendChild(document.createElement("div"));
+    box.className = "cm-mergeView";
+    const b = new EditorView({
+      doc: file.work ?? file.base ?? "",
+      extensions: bExt,
+      parent: box,
+    });
+    view = { a: null, b, dom: box, destroy: () => (b.destroy(), box.remove()) };
+  } else {
+    view = new MergeView({
+      a: { doc: file.base ?? "", extensions: ro },
+      b: { doc: file.work ?? "", extensions: bExt },
+      parent: el,
+      collapseUnchanged: collapse,
+    });
+    addSplitter();
+    applySplit(split);
+  }
   if (editable) {
     view.b.dispatch({
       effects: setHunks.of(decosFor(view.b.state.doc, hunks)),
@@ -273,7 +289,7 @@ function build({ file, hunks }) {
         });
         flash(b, line);
         // the a side misses the programmatic scroll of the shared container
-        requestAnimationFrame(() => view?.a.requestMeasure());
+        requestAnimationFrame(() => view?.a?.requestMeasure());
       });
     }
   }
@@ -341,7 +357,7 @@ async function loadLang(p) {
 }
 
 $effect(() => {
-  void wt, void path, void base;
+  void wt, void path, void base, void single;
   let stale = false;
   Promise.all([fetchData(), loadLang(path)]).then(([d, l]) => {
     if (stale) return;
@@ -363,17 +379,23 @@ $effect(() => {
 
 $effect(() => {
   const effects = wrapC.reconfigure(wrapExt(wrap));
-  if (view) { for (const v of [view.a, view.b]) v.dispatch({ effects }); }
+  if (view) { for (const v of [view.a, view.b]) v?.dispatch({ effects }); }
 });
 
 $effect(() => () => view?.destroy());
 </script>
 
-<div class="wrap" class:dirtyhide={dirty} bind:this={el}></div>
+{#if skip}<div class="skip">{skip}</div>{/if}
+<div class="wrap" class:dirtyhide={dirty} hidden={!!skip} bind:this={el}></div>
 
 <style>
 .wrap {
   min-height: 100%;
+}
+.skip {
+  padding: 1rem;
+  color: var(--dimmer);
+  font: 0.75rem var(--mono);
 }
 .wrap.dirtyhide :global(.hunkbar) {
   display: none;

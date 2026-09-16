@@ -49,6 +49,13 @@ CodeMirror diff you can stage or discard by hunk, edit in place, and save —
 saves are guarded by a compare-and-swap against what was on disk, so a
 concurrent write returns 409 instead of clobbering.
 
+Switch the files band to **all files** to browse every tracked and untracked
+file (gitignored ones are hidden) as a tree; changed files keep their status
+letter. Files open in a single editable pane, with a view/diff toggle when they
+have changes. Binary files and anything over 1 MB show a stub instead.
+Right-click any file for its relative or absolute path, or press ⌥⇧⌘C / ⌥⌘C for
+the open one.
+
 Port detection reads `lsof` and maps listening PIDs to their cwd, then to the
 owning worktree. PRs come from `gh pr list`, so PR badges need the `gh` CLI
 authenticated; everything else works without it.
@@ -69,8 +76,9 @@ one comes back as a 400 listing the candidates.
 | `link`     | `wt`, `file`, `line`, `base`            | `{ url }`                  |
 
 That URL is the deep-link contract, and it works typed by hand too:
-`/?wt=<path>&file=<path>&line=<n>&base=branch|head` opens the worktree, selects
-the file, and scrolls to the line.
+`/?wt=<path>&file=<path>&line=<n>&base=branch|head&tree=1` opens the worktree,
+selects the file, and scrolls to the line; `tree=1` opens it in the all-files
+view.
 
 ```sh
 curl -s 'forest-server.localhost:38471/api/t/wts?q=1234&recent=3'

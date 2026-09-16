@@ -1,6 +1,7 @@
 import { assertEquals, assertThrows } from "@std/assert";
 import type { DiffWorktree } from "./parse.ts";
 import {
+  ancestorDirs,
   backoffOver,
   ciSince,
   ciSummary,
@@ -17,6 +18,7 @@ import {
   parseUpstreamTrack,
   parseWorktreeList,
   pool,
+  previewSkip,
   procsByCwd,
   qbool,
   qnum,
@@ -26,6 +28,7 @@ import {
   reviewSince,
   selectWt,
   statusCounts,
+  treeRows,
   trimSeps,
 } from "./parse.ts";
 
@@ -871,4 +874,31 @@ Deno.test("qnum: coerces to a non-negative int", () => {
   assertEquals(qnum.parse("3"), 3);
   assertEquals(qnum.parse(3), 3);
   assertThrows(() => qnum.parse(""));
+});
+
+Deno.test("treeRows: folders first, only open folders expand", () => {
+  const paths = ["b.txt", "src/z.ts", "src/lib/a.ts", "a.md"];
+  const names = (open: Record<string, boolean>) =>
+    treeRows(paths, open).map((r) => `${r.depth}:${r.name}${r.dir ? "/" : ""}`);
+  assertEquals(names({}), ["0:src/", "0:a.md", "0:b.txt"]);
+  assertEquals(names({ src: true, "src/lib": true }), [
+    "0:src/",
+    "1:lib/",
+    "2:a.ts",
+    "1:z.ts",
+    "0:a.md",
+    "0:b.txt",
+  ]);
+  assertEquals(treeRows(paths, { src: true })[1].path, "src/lib");
+});
+
+Deno.test("ancestorDirs: every parent folder, none for root files", () => {
+  assertEquals([...ancestorDirs(["a/b/c.ts", "x.ts"])], ["a", "a/b"]);
+});
+
+Deno.test("previewSkip: text passes, NUL bytes and big files don't", () => {
+  const text = new TextEncoder().encode("hello");
+  assertEquals(previewSkip(5, text), null);
+  assertEquals(previewSkip(3, new Uint8Array([1, 0, 2])), "binary · 3 B");
+  assertEquals(previewSkip(3 << 20, text), "too large to show · 3.0 MB");
 });
