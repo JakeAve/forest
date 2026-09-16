@@ -646,6 +646,13 @@ const toggleAutoMerge = (w, e) =>
     "am:" + w.path,
     e,
   );
+const push = (w, e) =>
+  act(
+    "push",
+    { wt: w.path, remote: w.remote, branch: w.branch },
+    "push:" + w.path,
+    e,
+  );
 const prState = (w, action, e) =>
   act(
     "pr-state",
@@ -781,8 +788,39 @@ function wtItems(w) {
       fn: () => open(branchUrl(w), "_blank", "noreferrer"),
     },
     !many && w.pr && {
-      label: `Open pull request #${w.pr.number}`,
+      label: `View pull request #${w.pr.number}`,
       fn: () => open(w.pr.url, "_blank", "noreferrer"),
+    },
+    !many && repoOf(w)?.webUrl && (!w.remote || w.ahead > 0) && {
+      label: w.remote ? `Push (↑${w.ahead})` : "Push branch to remote",
+      fn: (e) => push(w, e),
+    },
+    !many && repoOf(w)?.webUrl && !w.isPrimary && !w.pr && {
+      label: "Compare & open pull request",
+      fn: async (e) => {
+        if (
+          !w.remote && !(await push(w, e))
+        ) {
+          return;
+        }
+        open(
+          `${repoOf(w).webUrl}/compare/${
+            (w.remote ?? w.branch).split("/").map(encodeURIComponent).join("/")
+          }?expand=1`,
+          "_blank",
+          "noreferrer",
+        );
+      },
+    },
+    !many && repoOf(w)?.webUrl && !w.isPrimary && !w.pr && {
+      label: "Open pull request",
+      fn: (e) =>
+        act(
+          "pr-create",
+          { wt: w.path, remote: w.remote, branch: w.branch },
+          "pc:" + w.path,
+          e,
+        ),
     },
     !many && w.pr?.state === "OPEN" && w.behindMain > 0 && {
       label: `Update branch (↓${w.behindMain} from ${w.pr.baseRefName})`,
