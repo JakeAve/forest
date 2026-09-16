@@ -69,7 +69,9 @@ let lang = [];
 let disk = null;
 let dirty = $state(false);
 let skip = $state(null);
-let lineUsed = false;
+let usedLine = 0;
+let builtWt = null;
+let builtPath = null;
 
 const mkDecoField = (effect) =>
   StateField.define({
@@ -132,6 +134,21 @@ function decosFor(doc, hunks) {
     }),
     true,
   );
+}
+
+function scrollToLine(ln) {
+  usedLine = ln;
+  const b = view.b;
+  const l = ln >= 1 && ln <= b.state.doc.lines ? b.state.doc.line(ln) : null;
+  if (!l) return;
+  // post-layout: an immediate dispatch is lost to the initial measure pass
+  requestAnimationFrame(() => {
+    if (view?.b !== b) return;
+    b.dispatch({ effects: EditorView.scrollIntoView(l.from, { y: "center" }) });
+    flash(b, ln);
+    // the a side misses the programmatic scroll of the shared container
+    requestAnimationFrame(() => view?.a?.requestMeasure());
+  });
 }
 
 function flash(v, ln) {
@@ -274,25 +291,9 @@ function build({ file, hunks }) {
       effects: setHunks.of(decosFor(view.b.state.doc, hunks)),
     });
   }
-  if (line && !lineUsed) {
-    lineUsed = true;
-    const b = view.b;
-    const l = line >= 1 && line <= b.state.doc.lines
-      ? b.state.doc.line(line)
-      : null;
-    if (l) {
-      // post-layout: an immediate dispatch is lost to the initial measure pass
-      requestAnimationFrame(() => {
-        if (view?.b !== b) return;
-        b.dispatch({
-          effects: EditorView.scrollIntoView(l.from, { y: "center" }),
-        });
-        flash(b, line);
-        // the a side misses the programmatic scroll of the shared container
-        requestAnimationFrame(() => view?.a?.requestMeasure());
-      });
-    }
-  }
+  builtWt = wt;
+  builtPath = path;
+  if (line && line !== usedLine) scrollToLine(line);
 }
 
 async function hunkAct(kind, hunk) {
@@ -358,7 +359,14 @@ async function loadLang(p) {
 
 $effect(() => {
   void wt, void path;
-  lineUsed = false;
+  usedLine = 0;
+});
+
+$effect(() => {
+  const ln = line;
+  if (ln && ln !== usedLine && view && builtWt === wt && builtPath === path) {
+    scrollToLine(ln);
+  }
 });
 
 $effect(() => {

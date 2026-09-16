@@ -326,6 +326,7 @@ async function openPath(text) {
     errBanner(await res.text());
     return false;
   }
+  if (banner?.kind === "err") banner = null;
   await openAt(await res.json());
   return true;
 }

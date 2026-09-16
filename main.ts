@@ -2060,6 +2060,7 @@ const server = Deno.serve({
         if (!from) return new Response("not found", { status: 404 });
         p = resolve(from, p);
       }
+      p = resolve(p);
       let real: string, stat: Deno.FileInfo;
       try {
         real = await Deno.realPath(p);
