@@ -250,7 +250,7 @@ export async function pool<T, R>(
   return out;
 }
 
-// ---- fs-watch classifier (see docs/fs-watch.md) ----
+// ---- fs-watch classifier ----
 
 // gitignored everywhere here, so they can never change a value Forest shows.
 // This list is the primary flood defense; it is a string scan, no syscall.
@@ -337,7 +337,7 @@ export function classifyPath(
   return { bucket: "worktree", repo, wt: owner };
 }
 
-// ---- divergence: did the watcher miss a change? (docs/fs-watch.md) ----
+// ---- divergence: did the watcher miss a change? ----
 
 export type DiffWorktree = {
   path: string;
@@ -429,7 +429,7 @@ export function diffSnapshots(
   return out;
 }
 
-// ---- backoff + storm: the safety valve (step 6, docs/fs-watch.md) ----
+// ---- backoff + storm: the safety valve ----
 
 /**
  * Rolling count over the trailing `windowMs`, in `buckets` time slots.

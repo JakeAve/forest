@@ -1,4 +1,4 @@
-// VS Code theme colors -> our CSS vars. Chains per docs/SPEC.md: first key
+// VS Code theme colors -> our CSS vars. In each chain the first key
 // that parses as a color wins; "--" entries reference already-resolved vars.
 // Vars left unresolved fall through to the default theme in app.css.
 const CHAINS = {

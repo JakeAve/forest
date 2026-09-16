@@ -127,7 +127,7 @@ async function loadVsCodeTheme(path: string): Promise<unknown> {
 }
 const dec = new TextDecoder();
 
-// ---- baseline metrics (experiment; see docs/fs-watch.md) ----
+// ---- baseline metrics ----
 // Cumulative since start. Diff two log lines to get a rate.
 // *Total fields are cumulative since startedAt — diff two lines for a rate.
 // Everything else is a gauge, true only at the instant the line was written.
@@ -174,7 +174,7 @@ const stats = {
   drainMsMax: 0,
   lagMsMax: 0,
   subprocessPeak: 0, // high-water concurrent children
-  // ---- watcher (step 4) ----
+  // ---- watcher ----
   watchEventsTotal: 0, // one per event *path*, not per FsEvent
   watchIgnoredTotal: 0,
   watchRefsTotal: 0,
@@ -192,12 +192,12 @@ const stats = {
   recomputeMsTotal: 0,
   drainsTotal: 0,
   drainMsTotal: 0,
-  // ---- backoff + storm: the safety valve (step 6) ----
+  // ---- backoff + storm: the safety valve ----
   watchBackoffEntriesTotal: 0, // repos that went hot
   watchBackoffExitsTotal: 0, // ...and later went quiet again
   watchStormEntriesTotal: 0,
   watchStormMsTotal: 0, // time spent degraded to plain polling
-  // ---- safety net + divergence (step 5) ----
+  // ---- safety net + divergence ----
   // sweepsTotal counts every full sweep, whatever fired it (timer, mutating
   // POST, root rescan). This counts only the timed safety-net ones, so
   // divergences-per-sweep has a denominator that means something.
@@ -1118,7 +1118,7 @@ function setStatus(o: Partial<typeof bootStatus>) {
 }
 
 // ---- snapshot assembly ----
-// The snapshot has three sources on three cadences (docs/fs-watch.md): git data
+// The snapshot has three sources on three cadences: git data
 // per repo (event-driven), ports globally (timed), PRs per repo (timed). This
 // map is the source of truth; the snapshot is derived from it, so a partial
 // recompute only has to replace one entry.
@@ -1168,7 +1168,7 @@ function publish() {
   stats.worktrees = knownWorktrees.size;
 }
 
-// ---- divergence: the actual experiment (docs/fs-watch.md) ----
+// ---- divergence: the actual experiment ----
 // When the safety-net sweep asked for a check. A timestamp, not a flag,
 // because the tick can land while a sweep is already in flight: that sweep
 // read its repos before the request existed, so it must not answer it. Only a
@@ -1293,8 +1293,7 @@ function sweepAll(): Promise<void> {
 }
 
 // everything, the old way. The timed loop when watch is off, and the startup
-// sweep either way. sweepMs spans the whole cycle — same meaning it had in
-// step 3, so the poll-vs-watch baseline stays comparable.
+// sweep either way. pollMs spans the whole cycle, git sweep through PRs.
 async function poll() {
   const t0 = performance.now();
   await sweepAll();
@@ -1318,7 +1317,7 @@ async function poll() {
   bumpMax("pollMsMax", stats.pollMs);
 }
 
-// ---- watcher: invalidate, never compute (docs/fs-watch.md) ----
+// ---- watcher: invalidate, never compute ----
 
 // storm mode is exactly "stop being a watcher": events are dropped and the
 // timed loop polls everything on pollMs, which is what Forest did before this
@@ -1327,7 +1326,7 @@ const mode = () => SETTINGS.watch && watcherUp && !storm ? "watch" : "poll";
 let watcherUp = false;
 const dirty = new Set<string>(); // repo paths
 
-// ---- storm mode: defence of last resort (docs/fs-watch.md) ----
+// ---- storm mode: defence of last resort ----
 // A flood the ignore list did not anticipate. Above watchStormRate we stop
 // acting on events, force one full sweep so no repo is left behind, and let
 // the timed loop poll everything until the flood is over. Events are still
@@ -1376,7 +1375,7 @@ let debounceTimer: ReturnType<typeof setTimeout> | undefined;
 let firstMarkAt = 0; // when the current dirty batch was first marked
 let pending = false; // a drain timer is armed and has not fired yet
 
-// ---- per-repo backoff (docs/fs-watch.md) ----
+// ---- per-repo backoff ----
 // One entry per repo that has recomputed recently; `st` is set only while the
 // repo is in backoff. Dropped again as soon as both are empty, so the map is
 // the hot set, not a registry of every repo.
@@ -1406,7 +1405,7 @@ function sweepHot() {
 
 // ponytail: one global debounce timer, not one per repo — a repo that never
 // goes quiet delays every other dirty repo with it. Per-repo timers if that
-// shows up; step 6's backoff is the real answer.
+// shows up; the per-repo backoff is the real answer.
 function schedule() {
   if (!firstMarkAt) firstMarkAt = Date.now();
   // max wait: past the ceiling, stop deferring and let the armed timer fire.
