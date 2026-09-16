@@ -12,6 +12,7 @@ import {
   hotBackoff,
   isIgnoredPath,
   isLocalRequest,
+  normPath,
   ownerWorktree,
   parseDiffHunks,
   parseIgnored,
@@ -982,4 +983,11 @@ Deno.test("previewSkip: text passes, NUL bytes and big files don't", () => {
   assertEquals(previewSkip(5, text), null);
   assertEquals(previewSkip(3, new Uint8Array([1, 0, 2])), "binary · 3 B");
   assertEquals(previewSkip(3 << 20, text), "too large to show · 3.0 MB");
+});
+
+Deno.test("normPath expands ~, ~/ and a missing slash", () => {
+  assertEquals(normPath("~", "/h"), "/h");
+  assertEquals(normPath("~/Documents/", "/h"), "/h/Documents");
+  assertEquals(normPath("~Documents", "/h"), "/h/Documents");
+  assertEquals(normPath("src//a.ts", "/h"), "src/a.ts");
 });

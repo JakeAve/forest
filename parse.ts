@@ -638,7 +638,7 @@ export function reviewSince(
 
 /** Path-shaped input only: anything else is a fuzzy selector, left alone. */
 export const normPath = (p: string, home = "") =>
-  p.replace(/^~(?=$|\/)/, home).replace(/\/+/g, "/").replace(/(.)\/$/, "$1");
+  p.replace(/^~\/?/, home + "/").replace(/\/+/g, "/").replace(/(.)\/$/, "$1");
 
 /** Pasted path text (quoted, a stack frame, a file:// URL, trailing :line:col) into a bare path + line. */
 export function parseOpenInput(s: string): { path: string; line: number } {
