@@ -430,6 +430,7 @@ function selectWt(path) {
   tree = [];
   treeDirs = [];
   treeIgnored = [];
+  treeOf = null;
   loadedDirs = {};
   openDirs = {};
   loadFiles();
