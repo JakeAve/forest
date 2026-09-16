@@ -79,16 +79,19 @@ fuzzy-searches worktrees, repos, and the selected worktree's folders and files,
 plus commands (settings, pane maximize, file modes, wrap, filters, theme) and
 the selected worktree's context-menu actions. "Filter branches…" and "Filter
 files…" drive the pane filters live from the palette, listing the best matches
-first. Start the query with `>` to see only commands and actions. Tab or →
-drills into an item's actions (a worktree's or repo's context menu, the theme
-list); ← or Backspace on an empty query goes back.
+first. "Grep…" searches file contents (case-insensitive, gitignored files
+skipped) and opens a hit at its line. Start the query with `>` to see only
+commands and actions. Tab or → drills into an item's actions (a worktree's or
+repo's context menu, the theme list); ← or Backspace on an empty query goes
+back.
 
 ## Agents
 
 The daemon exposes the same data read-only to agents, over plain
 `GET /api/t/<name>?k=v` and over MCP at `/mcp`. Nothing here writes; a `wt` is
 any unique substring of a branch or repo name (or a full path), and an ambiguous
-one comes back as a 400 listing the candidates.
+one comes back as a 400 listing the candidates. `q` is looser: it fuzzy-matches
+like the UI filters (branch and repo name for `wts`, file path for `files`).
 
 | tool       | params                                  | returns                    |
 | ---------- | --------------------------------------- | -------------------------- |

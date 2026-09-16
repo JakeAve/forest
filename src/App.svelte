@@ -1031,6 +1031,19 @@ function toggleMax(n) {
 }
 
 let paletteOpen = $state(false);
+let grepQ = $state("");
+let grepHits = $state([]);
+
+async function grep(v) {
+  grepQ = v;
+  const wt = sel;
+  const hits = v
+    ? await fetch(
+      `/api/grep?wt=${encodeURIComponent(wt)}&q=${encodeURIComponent(v)}`,
+    ).then((r) => r.json())
+    : [];
+  if (grepQ === v && sel === wt) grepHits = hits;
+}
 let palTree = $state({ of: null, files: [], dirs: [] });
 
 function paletteKey(e) {
@@ -1130,6 +1143,24 @@ const paletteItems = $derived.by(() => {
               detail: splitPath(p)[0] || undefined,
               fn: () => (pick({ path: p }), scrollRow(p)),
             })),
+      }, {
+        ...cmd("Grep…"),
+        query: () => grepQ,
+        onquery: grep,
+        sub: () =>
+          grepHits.map((h) => ({
+            group: "match",
+            label: h.text,
+            detail: `${h.path}:${h.line}`,
+            fn: () =>
+              openAt({
+                wt: sel,
+                loose,
+                kind: "file",
+                rel: h.path,
+                line: h.line,
+              }),
+          })),
       }]
       : []),
     cmd("Dirty only", () => (dirtyOnly = !dirtyOnly)),

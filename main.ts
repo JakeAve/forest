@@ -29,6 +29,7 @@ import {
   normPath,
   ownerWorktree,
   parseDiffHunks,
+  parseGrep,
   parseIgnored,
   parseLsofCommands,
   parseLsofPidPorts,
@@ -1883,7 +1884,8 @@ const tools: Record<string, Tool> = {
       [...repoByPath.values()].sort((a, b) => a.name.localeCompare(b.name)),
   },
   wts: {
-    desc: "Worktrees, newest activity first, filtered.",
+    desc:
+      "Worktrees, newest activity first; q fuzzy-matches branch and repo name.",
     input: {
       q: z.string().optional(),
       dirty: qbool.optional(),
@@ -1924,7 +1926,8 @@ const tools: Record<string, Tool> = {
     },
   },
   files: {
-    desc: "Changed files in a worktree, since the branch point or uncommitted.",
+    desc:
+      "Changed files in a worktree, since the branch point or uncommitted; q fuzzy-matches the path.",
     input: {
       wt: z.string(),
       q: z.string().optional(),
@@ -2158,6 +2161,29 @@ const server = Deno.serve({
       if (dir) return json(await listDir(wt, guardPath(dir)));
       if (!isLoose(wt)) return json(await listTree(wt));
       return json(await walkTree(wt));
+    }
+    if (url.pathname === "/api/grep") {
+      const wt = guardRoot(url.searchParams.get("wt"), req, info);
+      const q = url.searchParams.get("q");
+      if (!q) return json([]);
+      // ponytail: no file cap on loose roots, so grepping a huge folder is slow
+      const out = await tryGit(
+        wt,
+        "grep",
+        ...(isLoose(wt)
+          ? ["--no-index", "--exclude-standard"]
+          : ["--untracked"]),
+        "-z",
+        "-n",
+        "-I",
+        "-i",
+        "-F",
+        "--max-count",
+        "5",
+        "-e",
+        q,
+      );
+      return json(parseGrep(out ?? ""));
     }
     if (url.pathname === "/api/hunks") {
       const wt = guardRoot(url.searchParams.get("wt"), req, info);

@@ -15,6 +15,7 @@ import {
   normPath,
   ownerWorktree,
   parseDiffHunks,
+  parseGrep,
   parseIgnored,
   parseLsofCommands,
   parseLsofPidPorts,
@@ -990,4 +991,14 @@ Deno.test("normPath expands ~, ~/ and a missing slash", () => {
   assertEquals(normPath("~/Documents/", "/h"), "/h/Documents");
   assertEquals(normPath("~Documents", "/h"), "/h/Documents");
   assertEquals(normPath("src//a.ts", "/h"), "src/a.ts");
+});
+
+Deno.test("parseGrep: NUL-separated fields survive colons, capped by limit", () => {
+  const out = "a:b.txt\x0012\x00  key: value \nsrc/x.ts\x003\x00key\n";
+  assertEquals(parseGrep(out), [
+    { path: "a:b.txt", line: 12, text: "key: value" },
+    { path: "src/x.ts", line: 3, text: "key" },
+  ]);
+  assertEquals(parseGrep(out, 1).length, 1);
+  assertEquals(parseGrep(""), []);
 });

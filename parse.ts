@@ -801,3 +801,15 @@ export function previewSkip(size: number, head: Uint8Array): string | null {
   if (head.subarray(0, 8000).includes(0)) return `binary · ${fmtSize(size)}`;
   return null;
 }
+
+/** `git grep -z -n` output as hits, at most `limit`, each line trimmed and cut to 200 chars. */
+export function parseGrep(out: string, limit = 200) {
+  return out.split("\n").filter(Boolean).slice(0, limit).map((l) => {
+    const [path, line, ...text] = l.split("\0");
+    return {
+      path,
+      line: Number(line),
+      text: text.join("\0").trim().slice(0, 200),
+    };
+  });
+}

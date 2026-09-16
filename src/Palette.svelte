@@ -42,6 +42,7 @@ function run(it, e) {
 function drill(next) {
   stack = next;
   q = next.at(-1)?.query?.() ?? "";
+  next.at(-1)?.onquery?.(q);
   idx = 0;
 }
 

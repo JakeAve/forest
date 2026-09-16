@@ -21,6 +21,8 @@ deno task setup                # git hooks run check + test on commit/push
   same version; no `@std/*` or `jsr:` imports there.
 - Put logic with edge cases in `parse.ts`, `src/theme.js` or `src/filter.js` so
   it's testable without spawning git; `main.ts` stays glue.
+- Filters (UI, palette, agent `q`) match through `fuzzy`/`rank` in
+  `src/filter.js`. `selectWt` stays substring so a `wt` selector is precise.
 - Colors and CSS vars: follow the `theming` skill in `.claude/skills/`.
 - Ports: server `38471`, vite `38472`. `/mcp` only accepts `Host` of localhost
   or `forest-server.localhost`; keep that allowlist when touching the route.
