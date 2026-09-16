@@ -640,6 +640,55 @@ export function reviewSince(
 export const normPath = (p: string, home = "") =>
   p.replace(/^~(?=$|\/)/, home).replace(/\/+/g, "/").replace(/(.)\/$/, "$1");
 
+/** Pasted path text (quoted, a stack frame, a file:// URL, trailing :line:col) into a bare path + line. */
+export function parseOpenInput(s: string): { path: string; line: number } {
+  let t = s.trim();
+  const quoted = t.match(/^(['"`])([\s\S]*)\1$/);
+  if (quoted) t = quoted[2].trim();
+  const frame = t.match(/^at\s+.+?\s+\(([^)]+)\)$/) ?? t.match(/^\(([^)]+)\)$/);
+  if (frame) t = frame[1].trim();
+  if (t.startsWith("file://")) {
+    const rest = t.slice("file://".length);
+    try {
+      t = decodeURIComponent(rest);
+    } catch {
+      t = rest;
+    }
+  }
+  let line = 0;
+  const loc = t.match(/^(.*?):(\d+)(?::\d+)?$/);
+  if (loc) {
+    t = loc[1];
+    line = Number(loc[2]);
+  }
+  return { path: t, line };
+}
+
+const LOCAL_HOSTNAMES = new Set([
+  "localhost",
+  "127.0.0.1",
+  "[::1]",
+  "forest-app.localhost",
+]);
+
+/** Loopback remote address AND a Host header naming this server, not a proxied/foreign one. */
+export function isLocalRequest(
+  remoteHost: string,
+  hostHeader: string | null,
+): boolean {
+  const loopback = remoteHost === "::1" ||
+    /^127\./.test(remoteHost) ||
+    /^::ffff:127\./.test(remoteHost);
+  if (!loopback || !hostHeader) return false;
+  let hostname: string;
+  try {
+    hostname = new URL("http://" + hostHeader).hostname;
+  } catch {
+    return false;
+  }
+  return LOCAL_HOSTNAMES.has(hostname);
+}
+
 export function selectWt<
   T extends { path: string; branch: string; repo: string },
 >(sel: string, rows: T[], home = ""): { wt: T } | { candidates: T[] } {
@@ -663,6 +712,9 @@ export const qnum = z.union([
 ]).pipe(z.number().int().min(0));
 
 // ---- file explorer ----
+
+/** Max entries a directory walk collects before giving up. */
+export const TREE_CAP = 5000;
 
 export type TreeRow = {
   path: string;

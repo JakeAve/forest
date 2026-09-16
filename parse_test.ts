@@ -10,10 +10,12 @@ import {
   diffSnapshots,
   discardPrompt,
   hotBackoff,
+  isLocalRequest,
   ownerWorktree,
   parseDiffHunks,
   parseLsofCommands,
   parseLsofPidPorts,
+  parseOpenInput,
   parseStatus,
   parseUpstreamTrack,
   parseWorktreeList,
@@ -28,6 +30,7 @@ import {
   reviewSince,
   selectWt,
   statusCounts,
+  TREE_CAP,
   treeRows,
   trimSeps,
 } from "./parse.ts";
@@ -837,6 +840,38 @@ const WT_ROWS = [
   { path: "/r/c", branch: "main", repo: "appC" },
 ];
 
+Deno.test("parseOpenInput handles line, col, file url, quotes, stack frame", () => {
+  assertEquals(parseOpenInput("/a/b.ts"), { path: "/a/b.ts", line: 0 });
+  assertEquals(parseOpenInput("/a/b.ts:42"), { path: "/a/b.ts", line: 42 });
+  assertEquals(parseOpenInput("/a/b.ts:42:7"), { path: "/a/b.ts", line: 42 });
+  assertEquals(parseOpenInput('"/a/b.ts:42"'), { path: "/a/b.ts", line: 42 });
+  assertEquals(parseOpenInput("'/a/b.ts'"), { path: "/a/b.ts", line: 0 });
+  assertEquals(parseOpenInput("`/a/b.ts`"), { path: "/a/b.ts", line: 0 });
+  assertEquals(
+    parseOpenInput("at Object.<anonymous> (/a/b.ts:42:7)"),
+    { path: "/a/b.ts", line: 42 },
+  );
+  assertEquals(parseOpenInput("(/a/b.ts:42:7)"), { path: "/a/b.ts", line: 42 });
+  assertEquals(
+    parseOpenInput("file:///a/b%20c.ts:42"),
+    { path: "/a/b c.ts", line: 42 },
+  );
+  assertEquals(parseOpenInput("~/repo/b.ts"), { path: "~/repo/b.ts", line: 0 });
+  assertEquals(parseOpenInput("  /a/b.ts  "), { path: "/a/b.ts", line: 0 });
+});
+
+Deno.test("isLocalRequest rejects LAN address and foreign Host", () => {
+  assertEquals(isLocalRequest("127.0.0.1", "localhost:38471"), true);
+  assertEquals(isLocalRequest("127.0.0.1", "forest-app.localhost"), true);
+  assertEquals(isLocalRequest("::1", "127.0.0.1:38471"), true);
+  assertEquals(isLocalRequest("::ffff:127.0.0.1", "[::1]:38471"), true);
+  assertEquals(isLocalRequest("192.168.1.5", "localhost"), false);
+  assertEquals(isLocalRequest("127.0.0.1", "evil.example.com"), false);
+  assertEquals(isLocalRequest("127.0.0.1", null), false);
+  assertEquals(isLocalRequest("127.0.0.1", ""), false);
+  assertEquals(isLocalRequest("127.0.0.1", "not a host!!"), false);
+});
+
 Deno.test("selectWt: exact path wins over any text match", () => {
   assertEquals(selectWt("/r/c", WT_ROWS), { wt: WT_ROWS[2] });
 });
@@ -874,6 +909,10 @@ Deno.test("qnum: coerces to a non-negative int", () => {
   assertEquals(qnum.parse("3"), 3);
   assertEquals(qnum.parse(3), 3);
   assertThrows(() => qnum.parse(""));
+});
+
+Deno.test("TREE_CAP: a sane walk cap", () => {
+  assertEquals(TREE_CAP, 5000);
 });
 
 Deno.test("treeRows: folders first, only open folders expand", () => {
