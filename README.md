@@ -63,15 +63,16 @@ Port detection reads `lsof` and maps listening PIDs to their cwd, then to the
 owning worktree. PRs come from `gh pr list`, so PR badges need the `gh` CLI
 authenticated; everything else works without it.
 
-⌘O focuses a path box in the title bar for opening anything: absolute paths,
-`~/…`, a trailing `/`, `path:line` / `path:line:col`, `file://` URLs, quoted
-paths, and relative paths (resolved against the selected worktree or folder). A
-path inside a scanned worktree selects that worktree in all-files mode with the
-file opened and scrolled to the line, or the folder expanded. Anything else — a
-file or folder outside every scanned repo, e.g. in `~/Downloads` — opens as a
-temporary root: the files pane lists that folder (a file's parent, with the file
-selected), capped at 5000 files. No git features there, but editing and ⌘S work.
-Temporary roots last until the server restarts.
+⌘O (or clicking the path in the Files header) turns it into a path box for
+opening anything: absolute paths, `~/…`, a trailing `/`, `path:line` /
+`path:line:col`, `file://` URLs, quoted paths, and relative paths (resolved
+against the selected worktree or folder). A path inside a scanned worktree
+selects that worktree in all-files mode with the file opened and scrolled to the
+line, or the folder expanded. Anything else — a file or folder outside every
+scanned repo, e.g. in `~/Downloads` — opens as a temporary root: the files pane
+lists that folder (a file's parent, with the file selected), capped at 5000
+files. No git features there, but editing and ⌘S work. Temporary roots last
+until the server restarts.
 
 ## Agents
 

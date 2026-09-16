@@ -90,7 +90,8 @@ let treeDirs = $state([]);
 let treeIgnored = $state([]);
 let loadedDirs = $state({});
 let treeOf = $state(null);
-let openEl;
+let openEl = $state();
+let editingPath = $state(false);
 let openDirs = $state({});
 let showDiff = $state(false);
 let q = $state("");
@@ -359,6 +360,13 @@ async function openPath(text) {
 function openKey(e) {
   if (!e.metaKey || e.key !== "o") return;
   e.preventDefault();
+  editPath();
+}
+
+async function editPath() {
+  editingPath = true;
+  await tick();
+  openEl.value = sel ?? "";
   openEl.focus();
   openEl.select();
 }
@@ -366,7 +374,7 @@ function openKey(e) {
 async function openBoxKey(e) {
   if (e.key === "Escape") return openEl.blur();
   if (e.key !== "Enter" || !openEl.value.trim()) return;
-  if (await openPath(openEl.value.trim())) openEl.value = "";
+  if (await openPath(openEl.value.trim())) editingPath = false;
 }
 
 async function openAt(r) {
@@ -980,8 +988,6 @@ function confirmDiscard() {
     </svg>
     <span class="path">{settings?.root ?? ""}</span>
     <span class="sp"></span>
-    <input class="filter open" placeholder="open path… ⌘O" bind:this={openEl}
-           onkeydown={openBoxKey}>
     <button class="gear" title="settings" aria-label="settings"
             onclick={() => dlg.showModal()}>⚙</button>
   </div>
@@ -1231,9 +1237,20 @@ function confirmDiscard() {
 
   <div class="band" bind:this={b2El} style:height={b2.c ? "1.625rem" : b2.h}>
     <div class="bhead"><b>{explore ? "Files" : "Changed files"}</b>
-      {#if loose}<span class="meta">{sel}</span>
-      {:else if selWt}<span class="meta">{selWt.repo} · {selWt.branch}</span>{/if}
-      <span class="sp"></span>
+      {#if editingPath}
+        <input class="filter open" placeholder="open path…" bind:this={openEl}
+               onkeydown={openBoxKey} onblur={() => (editingPath = false)}>
+      {:else}
+        <button class="meta pth" title="open a path… ⌘O" onclick={editPath}
+                oncontextmenu={(e) => sel && openMenu(e, [
+                  {
+                    label: "Copy path (relative)",
+                    fn: (e) => copy(e, selWt ? relWt(repoOf(selWt), selWt) : sel, "ctx"),
+                  },
+                  { label: "Copy path (absolute)", fn: (e) => copy(e, sel, "ctx") },
+                ])}>{loose ? sel : selWt ? `${selWt.repo} · ${selWt.branch}` : "open path… ⌘O"}</button>
+        <span class="sp"></span>
+      {/if}
       <input class="filter" placeholder="filter files" bind:value={fq}>
       {#if !loose}<div class="seg">
         <button class:on={!explore && base === "branch"} onclick={() => setBase("branch")}>since branch point</button>
@@ -1751,8 +1768,19 @@ input.filter {
   outline: none;
 }
 input.filter.open {
-  width: 16rem;
+  flex: 1;
   font-family: var(--mono);
+}
+.bhead .pth {
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 0.25rem;
+  font: inherit;
+  padding: 0.125rem 0.375rem;
+  cursor: text;
+}
+.bhead .pth:hover {
+  border-color: var(--line);
 }
 input.filter:focus {
   border-color: var(--acc);
