@@ -1,5 +1,5 @@
 import { assertEquals } from "@std/assert";
-import { matchWt } from "./src/filter.js";
+import { fuzzy, matchWt, rank } from "./src/filter.js";
 
 const wt = (o = {}) => ({ branch: "jake/rom-1", dirty: 0, ports: [], ...o });
 
@@ -32,4 +32,42 @@ Deno.test("query matches branch or repo name, and stacks with runningOnly", () =
   assertEquals(matchWt({ q: "edw" }, "edward", wt()), true);
   assertEquals(matchWt({ q: "nope" }, "edward", wt()), false);
   assertEquals(matchWt({ q: "edw", runningOnly: true }, "edward", wt()), false);
+});
+
+Deno.test("fuzzy: subsequence required", () => {
+  assertEquals(fuzzy("xyz", "abc"), null);
+  assertEquals(fuzzy("", "anything"), 0);
+  assertEquals(fuzzy("ac", "abc") !== null, true);
+});
+
+Deno.test("fuzzy: contiguous beats scattered", () => {
+  const contiguous = fuzzy("abc", "abcxyz")!;
+  const scattered = fuzzy("abc", "axbxcx")!;
+  assertEquals(contiguous > scattered, true);
+});
+
+Deno.test("fuzzy: word start beats mid-word", () => {
+  const wordStart = fuzzy("fb", "foo_bar")!;
+  const midWord = fuzzy("fb", "foobar")!;
+  assertEquals(wordStart > midWord, true);
+});
+
+Deno.test("rank: ties keep input order", () => {
+  const items = [{ label: "aaa" }, { label: "aaa" }, { label: "aaa" }];
+  assertEquals(rank("a", items), items);
+});
+
+Deno.test("rank: respects limit", () => {
+  const items = Array.from({ length: 10 }, (_, i) => ({ label: `item${i}` }));
+  assertEquals(rank("item", items, 3).length, 3);
+});
+
+Deno.test('rank: "#12" finds a PR number in detail', () => {
+  const items = [
+    { label: "Add filter ranking", detail: "#12" },
+    { label: "Unrelated", detail: "#99" },
+  ];
+  const ranked = rank("#12", items);
+  assertEquals(ranked.length, 1);
+  assertEquals(ranked[0].label, "Add filter ranking");
 });
