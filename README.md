@@ -108,9 +108,10 @@ are written.
 | `launchers`       | `{}`        | per-repo worktree-creation commands            |
 
 `host` defaults to loopback for a reason: setting it to `0.0.0.0` serves your
-repository metadata — paths, branches, diffs — unauthenticated to everything on
-the LAN. `/mcp` only answers requests whose `Host` header is localhost or
-`forest-server.localhost`, so it stays local either way.
+repositories unauthenticated to everything on the LAN, including file contents
+and the write routes (save, discard, remove worktree). `/mcp` checks that the
+`Host` header is localhost or `forest-server.localhost`, which stops DNS
+rebinding from a browser but not a LAN client that sends that header itself.
 
 ### Launchers
 
