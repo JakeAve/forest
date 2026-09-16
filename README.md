@@ -116,19 +116,27 @@ claude mcp add --transport http forest http://forest-server.localhost:38471/mcp
 Stored at `~/.forest/settings.json` — only values that differ from the defaults
 are written.
 
-| key               | default     |                                                |
-| ----------------- | ----------- | ---------------------------------------------- |
-| `port`            | `38471`     | server port (restart)                          |
-| `host`            | `127.0.0.1` | address the server binds (restart)             |
-| `root`            | `~/Repos`   | directory scanned for repos (restart)          |
-| `pollMs`          | `5000`      | worktree rescan interval                       |
-| `prPollMs`        | `60000`     | `gh pr list` interval                          |
-| `recentCount`     | `10`        | rows in the Recent group                       |
-| `agoRefreshMs`    | `30000`     | how often relative times re-render             |
-| `toastMs`         | `7000`      | toast lifetime                                 |
-| `collapseMargin`  | `3`         | context lines kept around a hunk               |
-| `collapseMinSize` | `5`         | shortest run of unchanged lines that collapses |
-| `launchers`       | `{}`        | per-repo worktree-creation commands            |
+| key                 | default     |                                                                  |
+| ------------------- | ----------- | ---------------------------------------------------------------- |
+| `port`              | `38471`     | server port (restart)                                            |
+| `host`              | `127.0.0.1` | address the server binds (restart)                               |
+| `root`              | `~/Repos`   | directory scanned for repos (restart)                            |
+| `pollMs`            | `5000`      | rescan tick; with `watch` on, ports and PRs only                 |
+| `prPollMs`          | `60000`     | PR refresh for a repo with an open PR                            |
+| `prIdleMs`          | `300000`    | PR refresh for a repo without one                                |
+| `watch`             | `true`      | recompute on file events instead of polling (restart to turn on) |
+| `watchDebounceMs`   | `300`       | quiet time after an event before recomputing                     |
+| `watchMaxWaitMs`    | `2000`      | longest a steady event stream defers a recompute                 |
+| `watchSweepMs`      | `300000`    | full rescan anyway, in case events were dropped                  |
+| `watchHotThreshold` | `10`        | recomputes per minute before a repo backs off                    |
+| `watchBackoffMaxMs` | `30000`     | longest backoff for a hot repo                                   |
+| `watchStormRate`    | `2000`      | events/sec past which forest falls back to polling               |
+| `recentCount`       | `10`        | rows in the Recent group                                         |
+| `agoRefreshMs`      | `30000`     | how often relative times re-render                               |
+| `toastMs`           | `7000`      | toast lifetime                                                   |
+| `collapseMargin`    | `3`         | context lines kept around a hunk                                 |
+| `collapseMinSize`   | `5`         | shortest run of unchanged lines that collapses                   |
+| `launchers`         | `{}`        | per-repo worktree-creation commands                              |
 
 `host` defaults to loopback for a reason: setting it to `0.0.0.0` serves your
 repositories unauthenticated to everything on the LAN, including file contents

@@ -6,8 +6,8 @@ description: Rules for any change that touches color, CSS vars, or VS Code theme
 # Theming
 
 All color is a CSS var on `:root` in `src/app.css`. Imported VS Code themes overwrite those
-vars through `resolveTheme` in `src/theme.js`. The mapping is documented in
-`docs/SPEC.md` § Theming — keep code, spec, and test in sync.
+vars through `resolveTheme` in `src/theme.js`; the mapping lives in its `CHAINS` and
+`LIGHT`, and `theme_test.ts` pins it — keep the two in sync.
 
 ## Rules
 
@@ -15,11 +15,10 @@ vars through `resolveTheme` in `src/theme.js`. The mapping is documented in
   `color-mix(in srgb, var(--x) N%, var(--y))` for a tint.
 - Never use `opacity` to make text secondary. Use `--dim` / `--dimmer`; opacity breaks
   contrast on themes where the surfaces are already at the extremes.
-- Surfaces are `--bg --bg2 --bg3 --input --hl --hov --add --del`. Everything else is drawn
-  on a surface and must read against all of them.
-- Adding a var means all four: default in `app.css`, a chain in `CHAINS`, a light value in
-  `LIGHT` if it is a foreground, a row in the SPEC table. Then extend `TEXT`/`SURFACE` in
-  `theme_test.ts`.
+- Surfaces are `SURFACES` in `src/theme.js`: `--bg --bg2 --bg3 --input --hl --hov`.
+  Everything else is drawn on a surface and must read against all of them.
+- Adding a var means all three: default in `app.css`, a chain in `CHAINS`, a light value
+  in `LIGHT` if it is a foreground. Then extend `TEXT`/`SURFACE` in `theme_test.ts`.
 - Chain order: identity color first, generic border/focus keys last. A candidate that does
   not reach 1.5:1 against `--bg` is skipped automatically; do not special-case a theme.
 - Missing keys are repaired, not defaulted: derive from a sibling var (`shift`, `mix`,
