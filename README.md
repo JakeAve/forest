@@ -60,6 +60,16 @@ Port detection reads `lsof` and maps listening PIDs to their cwd, then to the
 owning worktree. PRs come from `gh pr list`, so PR badges need the `gh` CLI
 authenticated; everything else works without it.
 
+⌘O focuses a path box in the title bar for opening anything: absolute paths,
+`~/…`, a trailing `/`, `path:line` / `path:line:col`, `file://` URLs, quoted
+paths, and relative paths (resolved against the selected worktree or folder). A
+path inside a scanned worktree selects that worktree in all-files mode with the
+file opened and scrolled to the line, or the folder expanded. Anything else — a
+file or folder outside every scanned repo, e.g. in `~/Downloads` — opens as a
+temporary root: the files pane lists that folder (a file's parent, with the file
+selected), capped at 5000 files. No git features there, but editing and ⌘S work.
+Temporary roots last until the server restarts.
+
 ## Agents
 
 The daemon exposes the same data read-only to agents, over plain
@@ -78,7 +88,8 @@ one comes back as a 400 listing the candidates.
 That URL is the deep-link contract, and it works typed by hand too:
 `/?wt=<path>&file=<path>&line=<n>&base=branch|head&tree=1` opens the worktree,
 selects the file, and scrolls to the line; `tree=1` opens it in the all-files
-view.
+view. A temporary root (see ⌘O above) uses `?path=<folder>&file=<rel>&line=<n>`
+instead of `wt`.
 
 ```sh
 curl -s 'forest-server.localhost:38471/api/t/wts?q=1234&recent=3'
@@ -112,6 +123,9 @@ repositories unauthenticated to everything on the LAN, including file contents
 and the write routes (save, discard, remove worktree). `/mcp` checks that the
 `Host` header is localhost or `forest-server.localhost`, which stops DNS
 rebinding from a browser but not a LAN client that sends that header itself.
+Opening a path outside every scanned repo (⌘O, above) only answers requests from
+this machine — a loopback address and a localhost `Host` — even when `host` is
+`0.0.0.0`.
 
 ### Launchers
 
