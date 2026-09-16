@@ -24,6 +24,7 @@ import {
   fillCommand,
   hotBackoff,
   type HotState,
+  isLocalRequest,
   MAX_PREVIEW,
   normPath,
   ownerWorktree,
@@ -44,6 +45,7 @@ import {
   selectWt,
   settingsOverrides,
   statusCounts,
+  TREE_CAP,
 } from "./parse.ts";
 
 const HOME = Deno.env.get("HOME")!;
@@ -890,6 +892,24 @@ function guardWt(wt: string | null): string {
   return wt;
 }
 
+const looseRoots = new Set<string>();
+const isLoose = (wt: string) => !knownWorktrees.has(wt) && looseRoots.has(wt);
+
+function guardRoot(
+  wt: string | null,
+  req: Request,
+  info: Deno.ServeHandlerInfo,
+): string {
+  if (wt && isLoose(wt)) {
+    const host = (info.remoteAddr as Deno.NetAddr).hostname;
+    if (!isLocalRequest(host, req.headers.get("host"))) {
+      throw new Error("Forest only opens paths for this machine");
+    }
+    return wt;
+  }
+  return guardWt(wt);
+}
+
 function guardThemeName(n: unknown): string {
   const s = String(n ?? "");
   if (!/^[\w .()+-]+$/.test(s) || s.includes("..")) {
@@ -961,11 +981,10 @@ async function fileContents(wt: string, path: string, mode: string) {
     : await Deno.readFile(p).catch(() => null);
   const skip = bytes && previewSkip(size, bytes);
   if (skip) return { base: null, work: null, skip };
+  const work = bytes && new TextDecoder().decode(bytes);
+  if (isLoose(wt)) return { base: null, work };
   const base = await resolveBase(wt, mode);
-  return {
-    base: await tryGit(wt, "show", `${base}:${path}`),
-    work: bytes && new TextDecoder().decode(bytes),
-  };
+  return { base: await tryGit(wt, "show", `${base}:${path}`), work };
 }
 
 async function listTree(wt: string): Promise<string[]> {
@@ -978,6 +997,24 @@ async function listTree(wt: string): Promise<string[]> {
     "--exclude-standard",
   );
   return [...new Set((out ?? "").split("\0").filter(Boolean))];
+}
+
+async function walkTree(root: string): Promise<string[]> {
+  const files: string[] = [];
+  const queue = [""];
+  for (let i = 0; i < queue.length && files.length < TREE_CAP; i++) {
+    try {
+      for await (const e of Deno.readDir(join(root, queue[i]))) {
+        const rel = queue[i] ? `${queue[i]}/${e.name}` : e.name;
+        if (e.isDirectory && e.name !== ".git") queue.push(rel);
+        else if (e.isFile) files.push(rel);
+        if (files.length >= TREE_CAP) break;
+      }
+    } catch {
+      continue;
+    }
+  }
+  return files;
 }
 
 // ---- SSE ----
@@ -1903,7 +1940,7 @@ const mcpHandler = createMcpHandler(buildMcp);
 const server = Deno.serve({
   hostname: SETTINGS.host,
   port: SETTINGS.port,
-}, async (req) => {
+}, async (req, info) => {
   const url = new URL(req.url);
   try {
     if (url.pathname === "/api/events") {
@@ -1999,17 +2036,19 @@ const server = Deno.serve({
     if (url.pathname === "/api/file") {
       return json(
         await fileContents(
-          guardWt(url.searchParams.get("wt")),
+          guardRoot(url.searchParams.get("wt"), req, info),
           guardPath(url.searchParams.get("path")),
           mode,
         ),
       );
     }
     if (url.pathname === "/api/tree") {
-      return json(await listTree(guardWt(url.searchParams.get("wt"))));
+      const wt = guardRoot(url.searchParams.get("wt"), req, info);
+      return json(await (isLoose(wt) ? walkTree(wt) : listTree(wt)));
     }
     if (url.pathname === "/api/hunks") {
-      const wt = guardWt(url.searchParams.get("wt"));
+      const wt = guardRoot(url.searchParams.get("wt"), req, info);
+      if (isLoose(wt)) return json([]);
       const d = await tryGit(
         wt,
         "diff",
@@ -2025,7 +2064,11 @@ const server = Deno.serve({
         url.pathname === "/api/theme-import" ||
         url.pathname === "/api/wt-remove" ||
         url.pathname === "/api/kill-pid";
-      const wt = noWt ? "" : guardWt(b.wt ?? null);
+      const wt = noWt
+        ? ""
+        : url.pathname === "/api/save"
+        ? guardRoot(b.wt ?? null, req, info)
+        : guardWt(b.wt ?? null);
       switch (url.pathname) {
         case "/api/rebase":
           await git(wt, "fetch", "origin");
