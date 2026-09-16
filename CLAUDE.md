@@ -24,6 +24,12 @@ deno task setup                # git hooks run check + test on commit/push
 - Filters (UI, palette, agent `q`) match through `fuzzy`/`rank` in
   `src/filter.js`. `selectWt` stays substring so a `wt` selector is precise.
 - Colors and CSS vars: follow the `theming` skill in `.claude/skills/`.
+- Panes are one flat grid in `App.svelte`; each layout in `AXES`/`LAYOUTS` is a
+  `grid-template` on `.panes`. A new pane or layout needs areas in every
+  template. Adapt pane contents to width with `@container` on `.band`, never by
+  checking `preset`.
+- UI text is sentence case; no `text-transform: uppercase`. Header height is
+  `--head`, which collapsed panes and drag minimums depend on.
 - Ports: server `38471`, vite `38472`. `/mcp` only accepts `Host` of localhost
   or `forest-server.localhost`; keep that allowlist when touching the route.
 - Nothing under `/api/t/` or `/mcp` writes; agent tools stay read-only.

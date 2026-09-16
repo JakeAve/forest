@@ -37,8 +37,18 @@ function zoomKey(e) {
   saveLayout();
 }
 
-let b1 = $state({ h: "32%", c: false });
-let b2 = $state({ h: "24%", c: false });
+const AXES = { stack: "yy", sidebar: "xy", columns: "xx" };
+const LAYOUTS = [
+  ["stack", "Stack", "M4 4h16v5H4zM4 11h16v3H4zM4 16h16v4H4z"],
+  ["sidebar", "Sidebar", "M4 4h6v16H4zM12 4h8v6h-8zM12 12h8v8h-8z"],
+  ["columns", "Columns", "M3 4h5v16H3zM10 4h4v16h-4zM16 4h5v16h-5z"],
+];
+let preset = $state("stack");
+let panes = $state({
+  stack: { b1: { h: "32%", c: false }, b2: { h: "24%", c: false } },
+  sidebar: { b1: { h: "30%", c: false }, b2: { h: "40%", c: false } },
+  columns: { b1: { h: "25%", c: false }, b2: { h: "30%", c: false } },
+});
 let split = $state(50);
 let max = $state(null);
 let wrap = $state(false);
@@ -50,8 +60,9 @@ let ready = $state(false);
 // during the first sweep, so this says what is still coming.
 let boot = $state({ phase: "repos", done: 0, total: 0 });
 fetch("/api/layout").then((r) => r.json()).then((l) => {
-  if (l.b1) b1 = l.b1;
-  if (l.b2) b2 = l.b2;
+  if (l.panes) panes = { ...panes, ...l.panes };
+  else if (l.b1) panes.stack = { b1: l.b1, b2: l.b2 ?? panes.stack.b2 };
+  if (l.preset in AXES) preset = l.preset;
   if (l.split) split = l.split;
   if (l.wrap) wrap = true;
   if (l.closed) closed = l.closed;
@@ -68,8 +79,8 @@ function saveLayout() {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        b1,
-        b2,
+        preset,
+        panes,
         split,
         wrap,
         closed,
@@ -493,15 +504,35 @@ function toggleRepo(name) {
   saveLayout();
 }
 
-function drag(e, band, el) {
+const isX = (n) => AXES[preset][n - 1] === "x";
+
+function resize(n, el, size) {
+  const band = panes[preset][`b${n}`];
+  const min = isX(n)
+    ? 14 * parseFloat(getComputedStyle(document.documentElement).fontSize)
+    : el.firstElementChild.offsetHeight;
+  band.h = Math.max(min, size) + "px";
+  band.c = false;
+}
+
+const paneSize = (n) =>
+  panes[preset][`b${n}`].c && !isX(n)
+    ? "var(--head)"
+    : panes[preset][`b${n}`].h;
+
+function setPreset(p) {
+  preset = p;
+  max = null;
+  saveLayout();
+}
+
+function drag(e, n, el) {
   e.preventDefault();
   max = null;
-  const y0 = e.clientY, h0 = el.offsetHeight;
-  const mv = (m) => {
-    band.h = Math.max(el.firstElementChild.offsetHeight, h0 + m.clientY - y0) +
-      "px";
-    band.c = false;
-  };
+  const x = isX(n);
+  const p0 = x ? e.clientX : e.clientY;
+  const s0 = x ? el.offsetWidth : el.offsetHeight;
+  const mv = (m) => resize(n, el, s0 + (x ? m.clientX : m.clientY) - p0);
   const up = () => {
     removeEventListener("mousemove", mv);
     removeEventListener("mouseup", up);
@@ -511,21 +542,23 @@ function drag(e, band, el) {
   addEventListener("mouseup", up);
 }
 
-function collapse(band) {
+function collapse(n) {
+  if (isX(n)) return;
   max = null;
-  band.c = !band.c;
+  panes[preset][`b${n}`].c = !panes[preset][`b${n}`].c;
   saveLayout();
 }
 
-function gutterKey(e, band, el) {
-  if (e.key === "Enter") return collapse(band);
-  const d = { ArrowUp: -20, ArrowDown: 20 }[e.key];
+function gutterKey(e, n, el) {
+  if (e.key === "Enter") return collapse(n);
+  const d =
+    (isX(n)
+      ? { ArrowLeft: -20, ArrowRight: 20 }
+      : { ArrowUp: -20, ArrowDown: 20 })[e.key];
   if (!d) return;
   e.preventDefault();
   max = null;
-  band.h = Math.max(el.firstElementChild.offsetHeight, el.offsetHeight + d) +
-    "px";
-  band.c = false;
+  resize(n, el, (isX(n) ? el.offsetWidth : el.offsetHeight) + d);
   saveLayout();
 }
 
@@ -1110,6 +1143,7 @@ const paletteItems = $derived.by(() => {
     ).map(wtItem),
     ...(selWt && !loose ? asPalette(wtItems(selWt, true), selWt.branch) : []),
     cmd("Settings", () => dlg.showModal()),
+    ...LAYOUTS.map(([p, name]) => cmd(`${name} layout`, () => setPreset(p))),
     ...["Worktrees", "Files", "Diff"].map((name, i) =>
       cmd(
         `${max === i + 1 ? "Restore" : "Maximize"} ${name}`,
@@ -1221,6 +1255,13 @@ function confirmDiscard() {
       <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/></svg>
       Search worktrees, files, commands<kbd>⌘K</kbd></button>
     <span class="sp"></span>
+    <div class="seg layouts" role="group" aria-label="Layout">
+      {#each LAYOUTS as [p, name, d] (p)}
+        <button class:on={preset === p} title="{name} layout" aria-label="{name} layout"
+                aria-pressed={preset === p} onclick={() => setPreset(p)}>
+          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d={d}/></svg></button>
+      {/each}
+    </div>
     <button class="circ" title="Settings" aria-label="Settings" onclick={() => dlg.showModal()}>
       <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/></svg></button>
   </div>
@@ -1236,12 +1277,12 @@ function confirmDiscard() {
 
   {#if ready}
   {#snippet maxBtn(n)}
-    <button class="btn max" class:on={max === n} title={max === n ? "restore panes" : "full screen"}
-            aria-label={max === n ? "restore panes" : "full screen"}
+    <button class="btn max" class:on={max === n} title={max === n ? "Restore panes" : "Full screen"}
+            aria-label={max === n ? "Restore panes" : "Full screen"}
             onclick={() => toggleMax(n)}>{max === n ? "⤡" : "⤢"}</button>
   {/snippet}
-  <div class="band" class:grow={max === 1} bind:this={b1El}
-       style:height={max ? (max === 1 ? null : "var(--head)") : b1.c ? "var(--head)" : b1.h}>
+  <div class="panes {preset}" class:max style:--b1={paneSize(1)} style:--b2={paneSize(2)}>
+  <div class="band wts" class:maxed={max === 1} bind:this={b1El}>
     <div class="bhead">
       {#if selectable.length}
         <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
@@ -1471,12 +1512,12 @@ function confirmDiscard() {
   {/snippet}
 
   <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
-  <div class="gutter" role="separator" aria-orientation="horizontal" tabindex="0"
-       onmousedown={(e) => drag(e, b1, b1El)} ondblclick={() => collapse(b1)}
-       onkeydown={(e) => gutterKey(e, b1, b1El)}></div>
+  <div class="gutter g1" class:x={isX(1)} role="separator" tabindex="0"
+       aria-orientation={isX(1) ? "vertical" : "horizontal"}
+       onmousedown={(e) => drag(e, 1, b1El)} ondblclick={() => collapse(1)}
+       onkeydown={(e) => gutterKey(e, 1, b1El)}></div>
 
-  <div class="band" class:grow={max === 2} bind:this={b2El}
-       style:height={max ? (max === 2 ? null : "var(--head)") : b2.c ? "var(--head)" : b2.h}>
+  <div class="band files" class:maxed={max === 2} bind:this={b2El}>
     <div class="bhead"><b>{explore ? "Files" : "Changed files"}</b>
       {#if editingPath}
         <input class="filter open" placeholder="Open path…" bind:this={openEl}
@@ -1599,12 +1640,12 @@ function confirmDiscard() {
     </div>
   </div>
   <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
-  <div class="gutter" role="separator" aria-orientation="horizontal" tabindex="0"
-       onmousedown={(e) => drag(e, b2, b2El)} ondblclick={() => collapse(b2)}
-       onkeydown={(e) => gutterKey(e, b2, b2El)}></div>
+  <div class="gutter g2" class:x={isX(2)} role="separator" tabindex="0"
+       aria-orientation={isX(2) ? "vertical" : "horizontal"}
+       onmousedown={(e) => drag(e, 2, b2El)} ondblclick={() => collapse(2)}
+       onkeydown={(e) => gutterKey(e, 2, b2El)}></div>
 
-  <div class="band diffband" class:grow={max !== 1 && max !== 2}
-       style:height={max === 1 || max === 2 ? "var(--head)" : null}>
+  <div class="band diffband" class:maxed={max === 3}>
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div class="bhead" oncontextmenu={(e) => file && openMenu(e, fileItems({ path: file }))}>
       <b>{file ?? (explore ? "File" : "Diff")}</b><span class="sp"></span>
@@ -1642,6 +1683,7 @@ function confirmDiscard() {
         <div class="empty">Select a file</div>
       {/if}
     </div>
+  </div>
   </div>
   {/if}
   <div class="ctx" popover="manual" bind:this={menuEl}
@@ -1904,18 +1946,66 @@ dialog.settings::backdrop {
   flex: 1;
 }
 
+.panes {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+}
+.panes.stack {
+  grid-template:
+    "w" minmax(var(--head), var(--b1))
+    "g1" 0.625rem
+    "f" minmax(var(--head), var(--b2))
+    "g2" 0.625rem
+    "d" minmax(var(--head), 1fr) / minmax(0, 1fr);
+}
+.panes.sidebar {
+  grid-template:
+    "w g1 f" minmax(var(--head), var(--b2))
+    "w g1 g2" 0.625rem
+    "w g1 d" minmax(var(--head), 1fr) /
+    minmax(14rem, var(--b1)) 0.625rem minmax(14rem, 1fr);
+}
+.panes.columns {
+  grid-template:
+    "w g1 f g2 d" minmax(0, 1fr) /
+    minmax(14rem, var(--b1)) 0.625rem minmax(14rem, var(--b2)) 0.625rem
+    minmax(14rem, 1fr);
+}
+.panes.max {
+  grid-template: "m" minmax(0, 1fr) / minmax(0, 1fr);
+}
+.panes.max > :not(.maxed) {
+  display: none;
+}
+.panes.max > .maxed {
+  grid-area: m;
+}
+.wts {
+  grid-area: w;
+}
+.files {
+  grid-area: f;
+}
+.diffband {
+  grid-area: d;
+}
+.g1 {
+  grid-area: g1;
+}
+.g2 {
+  grid-area: g2;
+}
 .band {
   display: flex;
   flex-direction: column;
-  min-height: var(--head);
+  min-width: 0;
+  min-height: 0;
   overflow: hidden;
-  flex: 0 1 auto;
+  container-type: inline-size;
   background: var(--bg2);
   border: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
   border-radius: 0.875rem;
-}
-.band.grow {
-  flex: 1;
 }
 .bhead {
   display: flex;
@@ -1995,10 +2085,11 @@ dialog.settings::backdrop {
 .gutter {
   display: grid;
   place-items: center;
-  height: 0.625rem;
-  flex: none;
   cursor: row-resize;
   outline: none;
+}
+.gutter.x {
+  cursor: col-resize;
 }
 .gutter::after {
   content: "";
@@ -2006,6 +2097,10 @@ dialog.settings::backdrop {
   height: 0.25rem;
   border-radius: 999px;
   background: var(--line);
+}
+.gutter.x::after {
+  width: 0.25rem;
+  height: 2.25rem;
 }
 .gutter:hover::after,
 .gutter:focus-visible::after {
@@ -2050,6 +2145,14 @@ dialog.settings::backdrop {
 .btn:hover {
   color: var(--fg);
   border-color: var(--dimmer);
+}
+.seg.layouts {
+  flex: none;
+}
+.seg.layouts button {
+  display: grid;
+  place-items: center;
+  padding: 0.25rem 0.5rem;
 }
 .btn.max {
   display: grid;
@@ -2593,5 +2696,44 @@ select.theme {
   display: flex;
   gap: 0.375rem;
   padding: 0.1875rem 0.625rem 0.1875rem 1.75rem;
+}
+@container (width < 40rem) {
+  .bhead {
+    flex-wrap: wrap;
+    height: auto;
+    min-height: var(--head);
+    padding-block: 0.5rem;
+    row-gap: 0.375rem;
+  }
+  input.filter {
+    flex: 1 1 6rem;
+    width: auto;
+    min-width: 0;
+  }
+  .wt {
+    grid-template-columns: 0.75rem auto auto minmax(0, 1fr) auto auto;
+    row-gap: 0.125rem;
+  }
+  .wt .br {
+    grid-area: 1 / 2 / 2 / 6;
+  }
+  .wt .ago {
+    grid-area: 1 / 6;
+  }
+  .wt .prc {
+    grid-area: 2 / 2;
+  }
+  .wt .ports {
+    grid-area: 2 / 3;
+  }
+  .wt .dirty {
+    grid-area: 2 / 5;
+  }
+  .wt .ab {
+    grid-area: 2 / 6;
+  }
+  .wt .dirty.zero {
+    visibility: hidden;
+  }
 }
 </style>
