@@ -82,6 +82,7 @@ let files = $state([]);
 let file = $state(null);
 let base = $state("branch");
 let explore = $state(false);
+let loose = $state(false);
 let tree = $state([]);
 let openDirs = $state({});
 let showDiff = $state(false);
@@ -114,6 +115,9 @@ let menu = $state(null);
 let menuEl = $state();
 let restored = false;
 const initialParams = new URLSearchParams(location.search);
+let restoring = $state(initialParams.has("path"));
+let markBooted;
+const booted = new Promise((r) => (markBooted = r));
 fetch("/api/themes").then((r) => r.json()).then((t) => (themes = t));
 fetch("/api/vscode-themes").then((r) => r.json()).then((t) => (vsThemes = t));
 
@@ -179,7 +183,12 @@ const allClosed = $derived(closed.__all ?? true);
 
 $effect(() => {
   const es = new EventSource("/api/events");
-  es.addEventListener("status", (e) => (boot = JSON.parse(e.data)));
+  es.addEventListener("status", (e) => {
+    boot = JSON.parse(e.data);
+    if (boot.phase !== "ready") return;
+    markBooted();
+    if (loose && sel) fetch(`/api/open?path=${encodeURIComponent(sel)}`);
+  });
   es.onmessage = (e) => {
     const next = JSON.parse(e.data);
     const prev = new Map(
@@ -200,7 +209,10 @@ $effect(() => {
       restored = true;
       restoreUrl();
     }
-    if (sel && !next.flatMap((r) => r.worktrees).some((w) => w.path === sel)) {
+    if (
+      sel && !loose &&
+      !next.flatMap((r) => r.worktrees).some((w) => w.path === sel)
+    ) {
       sel = null;
       file = null;
       files = [];
@@ -219,7 +231,25 @@ $effect(() => {
   return () => clearInterval(tick);
 });
 
-function restoreUrl() {
+async function restoreUrl() {
+  const line = Math.max(0, Math.floor(Number(initialParams.get("line")) || 0));
+  const path = initialParams.get("path");
+  if (path) {
+    try {
+      await booted;
+      await openPath(path);
+      const f = initialParams.get("file");
+      if (f && loose) {
+        file = f;
+        reveal(f);
+        pendingLine = line;
+        scrollRow(f);
+      }
+    } finally {
+      restoring = false;
+    }
+    return;
+  }
   const wt = initialParams.get("wt");
   if (!wt || !repos.flatMap((r) => r.worktrees).some((w) => w.path === wt)) {
     return;
@@ -232,13 +262,18 @@ function restoreUrl() {
     reveal(file);
     loadTree();
   }
-  pendingLine = Math.max(0, Math.floor(Number(initialParams.get("line")) || 0));
+  pendingLine = line;
   loadFiles();
 }
 
 $effect(() => {
+  if (restoring) return;
   const q = new URLSearchParams();
-  if (sel) {
+  if (sel && loose) {
+    q.set("path", sel);
+    if (file) q.set("file", file);
+    if (pendingLine) q.set("line", pendingLine);
+  } else if (sel) {
     q.set("wt", sel);
     if (file) q.set("file", file);
     q.set("base", base);
@@ -253,6 +288,10 @@ $effect(() => {
 });
 
 async function loadFiles() {
+  if (loose) {
+    files = [];
+    return;
+  }
   const res = await fetch(
     `/api/files?wt=${encodeURIComponent(sel)}&base=${base}`,
   );
@@ -274,7 +313,49 @@ function reveal(path) {
   for (const d of ancestorDirs(path ? [path] : [])) openDirs[d] = true;
 }
 
+async function openPath(text) {
+  const from = sel ? `&from=${encodeURIComponent(sel)}` : "";
+  const res = await fetch(`/api/open?path=${encodeURIComponent(text)}${from}`);
+  if (!res.ok) return errBanner(await res.text());
+  await openAt(await res.json());
+}
+
+async function openAt(r) {
+  const same = sel === r.wt;
+  loose = r.loose;
+  explore = true;
+  if (!same) {
+    tree = [];
+    openDirs = {};
+  }
+  sel = r.wt;
+  if (r.kind === "file") {
+    file = r.rel;
+    pendingLine = r.line;
+    reveal(r.rel);
+  } else {
+    if (r.rel) {
+      reveal(r.rel);
+      openDirs[r.rel] = true;
+    }
+    if (!same) {
+      file = null;
+      pendingLine = 0;
+    }
+  }
+  loadFiles();
+  await loadTree();
+  if (r.rel) await scrollRow(r.rel);
+}
+
+async function scrollRow(path) {
+  await tick();
+  document.querySelector(`[data-path="${CSS.escape(path)}"]`)
+    ?.scrollIntoView({ block: "nearest" });
+}
+
 function selectWt(path) {
+  loose = false;
   pendingLine = 0;
   sel = path;
   file = null;
@@ -1137,7 +1218,7 @@ function confirmDiscard() {
       {#snippet treeRow(r)}
         {@const [dir, name] = fq ? splitPath(r.path) : ["", r.path.split("/").pop()]}
         {@const f = byPath.get(r.path)}
-        <div class="f tr" class:sel={file === r.path} role="button" tabindex="0"
+        <div class="f tr" class:sel={file === r.path} role="button" tabindex="0" data-path={r.path}
              style:padding-left="{0.625 + r.depth * 0.875}rem"
              onclick={() => r.dir ? toggleDir(r.path) : pick(r)}
              onkeydown={(e) => e.key === "Enter" ? (r.dir ? toggleDir(r.path) : pick(r)) : menuKey(e, fileItems(r))}
