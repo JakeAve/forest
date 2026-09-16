@@ -215,5 +215,6 @@ export function resolveTheme(theme) {
   }
   if (!vars["--untr"] && vars["--dim"]) vars["--untr"] = vars["--dim"];
   if (!vars["--merged"] && vars["--dim"]) vars["--merged"] = vars["--dim"];
+  if (vars["--dim"]) vars["--tk-cm"] = vars["--dim"];
   return { vars, dark };
 }

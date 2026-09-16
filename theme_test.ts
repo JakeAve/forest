@@ -50,6 +50,15 @@ Deno.test("missing dim/dimmer mix fg toward bg", () => {
   });
   assertEquals(vars["--dim"], "#949494");
   assertEquals(vars["--dimmer"], "#616161");
+  assertEquals(vars["--tk-cm"], vars["--dim"]);
+});
+
+Deno.test("tk-cm follows a theme's own dim", () => {
+  const { vars } = t({
+    "editor.background": "#ffffff",
+    "descriptionForeground": "#717171",
+  });
+  assertEquals(vars["--tk-cm"], "#717171");
 });
 
 Deno.test("missing add/del derive from gitDecoration fg at 16% alpha", () => {
@@ -127,6 +136,7 @@ const TEXT = [
   "--warn",
   "--danger",
   "--merged",
+  "--tk-cm",
 ];
 const SURFACE = ["--bg", "--bg2", "--bg3", "--input", "--hov"];
 
