@@ -206,6 +206,7 @@ export function resolveTheme(theme) {
     const f = parseColor(vars["--fg"]), g = parseColor(vars["--bg"]);
     if (!vars["--dim"]) vars["--dim"] = toHex(mix(f, g, 0.42));
     if (!vars["--dimmer"]) vars["--dimmer"] = toHex(mix(f, g, 0.62));
+    vars["--tk-cm"] = toHex(mix(f, g, 0.5));
   }
   for (const [bgv, fgv] of [["--add", "--addfg"], ["--del", "--delfg"]]) {
     if (!vars[bgv] && vars[fgv]) {
@@ -215,6 +216,5 @@ export function resolveTheme(theme) {
   }
   if (!vars["--untr"] && vars["--dim"]) vars["--untr"] = vars["--dim"];
   if (!vars["--merged"] && vars["--dim"]) vars["--merged"] = vars["--dim"];
-  if (vars["--dim"]) vars["--tk-cm"] = vars["--dim"];
   return { vars, dark };
 }
