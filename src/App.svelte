@@ -1,5 +1,5 @@
 <script>
-import { tick } from "svelte";
+import { tick, untrack } from "svelte";
 import Diff from "./Diff.svelte";
 import { matchWt } from "./filter.js";
 import {
@@ -267,7 +267,7 @@ async function restoreUrl() {
   file = initialParams.get("file") || null;
   if (explore) {
     reveal(file);
-    loadTree();
+    loadTree().then(() => scrollRow(file));
   }
   pendingLine = line;
   loadFiles();
@@ -401,7 +401,12 @@ async function openAt(r) {
   if (r.rel) await scrollRow(r.rel);
 }
 
+$effect(() => {
+  if (!fq) scrollRow(untrack(() => file));
+});
+
 async function scrollRow(path) {
+  if (!path) return;
   await tick();
   document.querySelector(`[data-path="${CSS.escape(path)}"]`)
     ?.scrollIntoView({ block: "nearest" });
@@ -437,7 +442,7 @@ function setBase(b) {
   if (b === "all") {
     if (explore) return;
     explore = true;
-    if (sel) loadTree();
+    if (sel) loadTree().then(() => scrollRow(file));
     return;
   }
   if (base === b && !explore) return;
