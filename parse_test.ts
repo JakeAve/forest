@@ -14,6 +14,7 @@ import {
   isLocalRequest,
   ownerWorktree,
   parseDiffHunks,
+  parseIgnored,
   parseLsofCommands,
   parseLsofPidPorts,
   parseOpenInput,
@@ -943,6 +944,24 @@ Deno.test("treeRows: unloaded dirs render as folders, sorted with folders", () =
     "1:x.md",
     "0:a.md",
   ]);
+});
+
+Deno.test("parseIgnored: drops folders listed only for their ignored contents", () => {
+  assertEquals(
+    parseIgnored([
+      "build/",
+      "node_modules/",
+      "onlyds/",
+      "onlyds/.DS_Store",
+      "pkg/",
+      "pkg/node_modules/",
+      ".env",
+    ]),
+    {
+      files: ["onlyds/.DS_Store", ".env"],
+      dirs: ["build", "node_modules", "pkg/node_modules"],
+    },
+  );
 });
 
 Deno.test("isIgnoredPath: exact entries and anything under an ignored folder", () => {

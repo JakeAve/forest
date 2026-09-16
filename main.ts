@@ -29,6 +29,7 @@ import {
   normPath,
   ownerWorktree,
   parseDiffHunks,
+  parseIgnored,
   parseLsofCommands,
   parseLsofPidPorts,
   parseOpenInput,
@@ -990,21 +991,58 @@ async function fileContents(wt: string, path: string, mode: string) {
 
 type Tree = { files: string[]; dirs: string[]; ignored: string[] };
 
+// ponytail: fixed name list, not per-ecosystem detection; add names as they turn up
+const DEP_DIRS = new Set([
+  "node_modules",
+  "bower_components",
+  "jspm_packages",
+  ".yarn",
+  ".pnpm-store",
+  ".next",
+  ".nuxt",
+  ".turbo",
+  ".parcel-cache",
+  ".venv",
+  "venv",
+  "__pycache__",
+  "site-packages",
+  ".tox",
+  ".pytest_cache",
+  ".mypy_cache",
+  ".ruff_cache",
+  ".gradle",
+  "target",
+  "vendor",
+  "Pods",
+  ".terraform",
+]);
+const depExcludes = [...DEP_DIRS].flatMap((d) => ["-x", d]);
+
 async function listTree(wt: string): Promise<Tree> {
   const ls = (...args: string[]) =>
     tryGit(wt, "ls-files", "-z", ...args).then((o) =>
       (o ?? "").split("\0").filter(Boolean)
     );
-  const [listed, ignored] = await Promise.all([
-    ls("--cached", "--others", "--exclude-standard"),
-    ls("--others", "--ignored", "--exclude-standard", "--directory"),
+  const [listed, ignoredRaw] = await Promise.all([
+    ls("--cached", "--others", "--exclude-standard", ...depExcludes),
+    ls(
+      "--others",
+      "--ignored",
+      "--exclude-standard",
+      "--directory",
+      ...depExcludes,
+    ),
   ]);
-  const all = [...new Set([...listed, ...ignored])];
-  const strip = (p: string) => p.replace(/\/$/, "");
+  const ignored = parseIgnored(ignoredRaw);
   return {
-    files: all.filter((p) => !p.endsWith("/")),
-    dirs: all.filter((p) => p.endsWith("/")).map(strip),
-    ignored: ignored.map(strip),
+    files: [
+      ...new Set([...listed.filter((p) => !p.endsWith("/")), ...ignored.files]),
+    ],
+    dirs: [
+      ...listed.filter((p) => p.endsWith("/")).map((p) => p.slice(0, -1)),
+      ...ignored.dirs,
+    ],
+    ignored: [...ignored.files, ...ignored.dirs],
   };
 }
 
@@ -1019,14 +1057,16 @@ async function listDir(root: string, dir: string): Promise<Tree> {
   return { files, dirs, ignored: [] };
 }
 
-async function walkTree(root: string): Promise<string[]> {
+async function walkTree(root: string): Promise<Tree> {
   const files: string[] = [];
+  const dirs: string[] = [];
   const queue = [""];
   for (let i = 0; i < queue.length && files.length < TREE_CAP; i++) {
     try {
       for await (const e of Deno.readDir(join(root, queue[i]))) {
         const rel = queue[i] ? `${queue[i]}/${e.name}` : e.name;
-        if (e.isDirectory && e.name !== ".git") queue.push(rel);
+        if (e.isDirectory && DEP_DIRS.has(e.name)) dirs.push(rel);
+        else if (e.isDirectory && e.name !== ".git") queue.push(rel);
         else if (e.isFile) files.push(rel);
         if (files.length >= TREE_CAP) break;
       }
@@ -1034,7 +1074,7 @@ async function walkTree(root: string): Promise<string[]> {
       continue;
     }
   }
-  return files;
+  return { files, dirs, ignored: dirs };
 }
 
 // ---- SSE ----
@@ -2118,7 +2158,7 @@ const server = Deno.serve({
       const dir = url.searchParams.get("dir");
       if (dir) return json(await listDir(wt, guardPath(dir)));
       if (!isLoose(wt)) return json(await listTree(wt));
-      return json({ files: await walkTree(wt), dirs: [], ignored: [] });
+      return json(await walkTree(wt));
     }
     if (url.pathname === "/api/hunks") {
       const wt = guardRoot(url.searchParams.get("wt"), req, info);

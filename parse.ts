@@ -757,6 +757,19 @@ export function treeRows(
   return rows;
 }
 
+/** `git ls-files --ignored --directory` entries as ignored files and folders; a folder git lists only because everything under it is ignored is dropped, since its own entries cover it. */
+export function parseIgnored(
+  entries: string[],
+): { files: string[]; dirs: string[] } {
+  const own = entries.filter((e) =>
+    !(e.endsWith("/") && entries.some((o) => o !== e && o.startsWith(e)))
+  );
+  return {
+    files: own.filter((e) => !e.endsWith("/")),
+    dirs: own.filter((e) => e.endsWith("/")).map((e) => e.slice(0, -1)),
+  };
+}
+
 /** Whether a tree path is git-ignored, given ignored files and folders. */
 export const isIgnoredPath = (path: string, ignored: string[]) =>
   ignored.some((i) => path === i || path.startsWith(i + "/"));

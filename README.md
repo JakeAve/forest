@@ -51,11 +51,13 @@ concurrent write returns 409 instead of clobbering.
 
 Switch the files band to **all files** to browse every file as a tree;
 gitignored files and folders are dimmed, and an ignored folder lists its
-contents one level at a time as you expand it. Changed files keep their status
-letter. Files open in a single editable pane, with a view/diff toggle when they
-have changes. Binary files and anything over 1 MB show a stub instead.
-Right-click any file for its relative or absolute path, or press ⌥⇧⌘C / ⌥⌘C for
-the open one.
+contents one level at a time as you expand it. Dependency and cache folders
+(`node_modules`, `.venv`, `target`, `vendor`, …) are treated the same even when
+nothing ignores them, and temporary roots never walk into them. Changed files
+keep their status letter. Files open in a single editable pane, with a view/diff
+toggle when they have changes. Binary files and anything over 1 MB show a stub
+instead. Right-click any file for its relative or absolute path, or press ⌥⇧⌘C /
+⌥⌘C for the open one.
 
 Port detection reads `lsof` and maps listening PIDs to their cwd, then to the
 owning worktree. PRs come from `gh pr list`, so PR badges need the `gh` CLI
