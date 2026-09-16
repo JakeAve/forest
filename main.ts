@@ -9,7 +9,7 @@ import {
   originValidationResponse,
 } from "@modelcontextprotocol/server";
 import { z } from "zod";
-import { basename, dirname, join, resolve } from "@std/path";
+import { basename, dirname, join, relative, resolve } from "@std/path";
 import { matchWt } from "./src/filter.js";
 import { mergeInclude, parseThemeText, resolveTheme } from "./src/theme.js";
 import {
@@ -31,6 +31,7 @@ import {
   parseDiffHunks,
   parseLsofCommands,
   parseLsofPidPorts,
+  parseOpenInput,
   parseStatus,
   parseUpstreamTrack,
   parseWorktreeList,
@@ -2041,6 +2042,66 @@ const server = Deno.serve({
           mode,
         ),
       );
+    }
+    if (url.pathname === "/api/open") {
+      const host = (info.remoteAddr as Deno.NetAddr).hostname;
+      if (!isLocalRequest(host, req.headers.get("host"))) {
+        return new Response("Forest only opens paths for this machine", {
+          status: 403,
+        });
+      }
+      if (!booted) {
+        return new Response("still scanning, try again", { status: 503 });
+      }
+      const { path, line } = parseOpenInput(url.searchParams.get("path") ?? "");
+      let p = normPath(path, HOME);
+      const from = url.searchParams.get("from");
+      if (!p.startsWith("/")) {
+        if (!from) return new Response("not found", { status: 404 });
+        p = resolve(from, p);
+      }
+      let real: string, stat: Deno.FileInfo;
+      try {
+        real = await Deno.realPath(p);
+        stat = await Deno.stat(real);
+      } catch (e) {
+        return e instanceof Deno.errors.PermissionDenied
+          ? new Response("not readable", { status: 403 })
+          : new Response("not found", { status: 404 });
+      }
+      const kind = stat.isDirectory ? "dir" : "file";
+      const wts = [...knownWorktrees.keys()];
+      let target = real;
+      let owner = ownerWorktree(real, wts);
+      if (!owner) {
+        owner = ownerWorktree(p, wts);
+        if (owner) target = p;
+      }
+      if (owner && stat.isDirectory && target !== owner) {
+        const ignored = await git(
+          owner,
+          "check-ignore",
+          "-q",
+          "--",
+          relative(owner, target),
+        ).then(() => true, () => false);
+        if (ignored) owner = undefined;
+      }
+      if (!owner) {
+        target = real;
+        owner = ownerWorktree(real, [...looseRoots]);
+        if (!owner) {
+          owner = stat.isDirectory ? real : dirname(real);
+          looseRoots.add(owner);
+        }
+      }
+      return json({
+        wt: owner,
+        rel: relative(owner, target),
+        kind,
+        loose: isLoose(owner),
+        line,
+      });
     }
     if (url.pathname === "/api/tree") {
       const wt = guardRoot(url.searchParams.get("wt"), req, info);
