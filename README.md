@@ -7,17 +7,23 @@ with a built-in diff viewer you can stage, discard, and edit from.
 
 Deno server + Svelte frontend. No database, no config to write by hand.
 
+![Forest showing worktrees across six repos, a worktree's changed files, and a side-by-side diff](.github/screenshot.png)
+
 ## Quick start
 
-Needs Deno 2, Node 20.19+ (for Vite 7), and git. `lsof` ships with macOS. PR
-badges also need the `gh` CLI, authenticated (`gh auth login`) — without it,
-Forest logs a warning once per repo and just runs with PR badges off.
+macOS only for now (it reads `lsof` and macOS app paths). Needs Deno 2, Node
+20.19+ (for Vite 7), and git. PR badges also need the `gh` CLI, authenticated
+(`gh auth login`) — without it, Forest logs a warning and runs with PR badges
+off.
 
 ```sh
-npm install       # frontend deps
-npm run build     # builds dist/, which the server serves
-deno task serve   # http://forest-app.localhost:38471
+git clone https://github.com/JakeAve/forest.git && cd forest
+deno task start --open
 ```
+
+`start` installs frontend deps, builds `dist/`, starts the server on
+http://forest-app.localhost:38471, and with `--open` opens it in your browser.
+Leave it running in a terminal; Ctrl-C stops it. Re-run it after pulling.
 
 Set `root` to the directory your repos live in — whatever that is on your
 machine — via the ⚙ settings panel, or write it directly:
@@ -29,7 +35,9 @@ mkdir -p ~/.forest && echo '{"root":"~/your-repos-dir"}' > ~/.forest/settings.js
 A leading `~` is expanded. The path is scanned one level deep: every immediate
 subdirectory containing a `.git` counts as a repo.
 
-`root` and `port` need a restart; everything else applies live.
+Settings marked "restart" in the [table below](#settings) need one; everything
+else applies live. `watch` is the one setting the ⚙ panel can't toggle — edit
+the file.
 
 ## What it shows
 
@@ -39,9 +47,15 @@ where activity means the newest of the HEAD commit and the mtime of any changed
 or untracked file, so a worktree you're editing sorts to the top before you
 commit anything.
 
-Fuzzy-filter by branch or repo name (`rm2750` finds `rom-2750-…`), or narrow to
-dirty-only / running-only. Right-click a repo or worktree for open, copy path,
-copy remote branch, open remote branch, and new worktree.
+The Recent group holds the most recently active worktrees; pin one from its
+right-click menu to keep it there. Fuzzy-filter by branch or repo name (`dc`
+finds `discount-codes`), or narrow to dirty-only / running-only.
+
+Right-click a worktree to open it, copy its path or branch, view or create its
+PR, push, rebase onto `origin/HEAD`, update the branch, enable auto-merge, mark
+a PR draft or ready, close it, kill a process listening in it, or remove the
+worktree. Select several to copy or remove them together. Right-click a repo for
+new worktree.
 
 Selecting a worktree lists its changed files, either since the branch point
 (merge-base with `origin/HEAD`) or just uncommitted. Selecting a file opens a
@@ -95,8 +109,10 @@ back.
 The daemon exposes the same data read-only to agents, over plain
 `GET /api/t/<name>?k=v` and over MCP at `/mcp`. Nothing here writes; a `wt` is
 any unique substring of a branch or repo name (or a full path), and an ambiguous
-one comes back as a 400 listing the candidates. `q` is looser: it fuzzy-matches
-like the UI filters (branch and repo name for `wts`, file path for `files`).
+one comes back as an error listing the candidates (a 400 over `/api/t/`, a tool
+error over MCP). `wt` also accepts any path inside a worktree, `~/…` included.
+`q` is looser: it fuzzy-matches like the UI filters (branch and repo name for
+`wts`, file path for `files`).
 
 | tool       | params                                  | returns                    |
 | ---------- | --------------------------------------- | -------------------------- |
@@ -149,12 +165,12 @@ are written.
 
 `host` defaults to loopback for a reason: setting it to `0.0.0.0` serves your
 repositories unauthenticated to everything on the LAN, including file contents
-and the write routes (save, discard, remove worktree). `/mcp` checks that the
-`Host` header is localhost or `forest-server.localhost`, which stops DNS
-rebinding from a browser but not a LAN client that sends that header itself.
-Opening a path outside every scanned repo (⌘O, above) only answers requests from
-this machine — a loopback address and a localhost `Host` — even when `host` is
-`0.0.0.0`.
+and every UI action (save, discard, push, close PR, remove worktree). `/mcp`
+checks that the `Host` header is localhost or `forest-server.localhost`, which
+stops DNS rebinding from a browser but not a LAN client that sends that header
+itself. Opening a path outside every scanned repo (⌘O, above) only answers
+requests from this machine — a loopback address and a `Host` of `localhost`,
+`127.0.0.1`, `[::1]` or `forest-app.localhost` — even when `host` is `0.0.0.0`.
 
 ### Launchers
 
@@ -178,9 +194,12 @@ accent vanishes against its own background gets a readable fallback instead.
 ## Development
 
 ```sh
-npm run dev       # http://forest-app.localhost:38472, proxies /api to :38471
-deno task serve   # run this alongside it
+deno task serve   # server on :38471, restarts on .ts changes
+npm run dev       # in a second terminal: http://forest-app.localhost:38472 with HMR, proxies /api
 ```
+
+`deno task serve` alone serves the last `dist/` build; it warns if there isn't
+one.
 
 ```sh
 deno task check   # fmt + lint + typecheck

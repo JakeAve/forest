@@ -2408,6 +2408,11 @@ if (BW) {
   });
 }
 
-console.log(
-  `forest on http://forest-app.localhost:${SETTINGS.port}  root=${ROOT}`,
-);
+const APP_URL = `http://forest-app.localhost:${SETTINGS.port}`;
+console.log(`forest on ${APP_URL}  root=${ROOT}`);
+if (!await Deno.stat(join(import.meta.dirname!, "dist")).catch(() => null)) {
+  console.warn("no dist/ to serve; run `deno task start`");
+}
+if (Deno.args.includes("--open")) {
+  new Deno.Command("open", { args: [APP_URL] }).spawn();
+}

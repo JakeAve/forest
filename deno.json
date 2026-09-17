@@ -4,6 +4,7 @@
     "setup": "git config core.hooksPath .githooks && chmod +x .githooks/pre-commit .githooks/pre-push",
     "check": "deno fmt --check . && deno lint . && deno check main.ts parse.ts",
     "test": "deno test -A",
+    "start": "npm install --silent && npx vite build --logLevel error && deno run -A main.ts",
     "serve": "deno run --watch -A main.ts",
     "desktop": "npx vite build && deno desktop -A --icon icons/forest.icns --include dist --output Forest.app main.ts",
     "pre-commit": "deno task check && deno task test",
