@@ -683,6 +683,73 @@ const prState = (w, action, e) =>
     e,
   );
 
+// The PR actions available on w. One list so the hover card's buttons and the
+// context menu can't drift: `label` is the card's, `menu` the wordier one, and
+// `confirm` is the question the card asks before an irreversible action.
+function prActions(w) {
+  const p = w.pr;
+  if (p?.state !== "OPEN") return [];
+  const behind = prAb(w).behind;
+  const ahead = prAb(w).ahead;
+  return [
+    prStatus(p).tone === "ok" && {
+      key: "merge",
+      label: "Merge squash",
+      menu: `Merge pull request #${p.number} (squash)`,
+      cls: "ok",
+      confirm: `Squash ${ahead} commit${
+        ahead === 1 ? "" : "s"
+      } into ${p.baseRefName}?`,
+      go: (e) => prState(w, "merge", e),
+    },
+    behind > 0 && {
+      key: "update",
+      label: `Update branch ↓${behind}`,
+      menu: `Update branch (↓${behind} from ${p.baseRefName})`,
+      cls: "warn",
+      go: (e) => updateBranch(w, e),
+    },
+    {
+      key: "draft",
+      label: p.isDraft ? "Ready for review" : "Convert to draft",
+      menu: p.isDraft ? "Publish pull request" : "Convert to draft",
+      cls: "",
+      go: (e) => prState(w, p.isDraft ? "ready" : "draft", e),
+    },
+    {
+      key: "close",
+      label: "Close",
+      menu: `Close pull request #${p.number}`,
+      cls: "dg",
+      confirm: `Close #${p.number} without merging?`,
+      go: (e) => prState(w, "close", e),
+    },
+  ].filter(Boolean);
+}
+
+// which action the card is asking about: { path, key }
+let asking = $state(null);
+function runAction(a, w, e) {
+  e?.stopPropagation();
+  if (a.confirm && !(asking?.path === w.path && asking.key === a.key)) {
+    asking = { path: w.path, key: a.key };
+    return;
+  }
+  asking = null;
+  a.go(e);
+}
+
+// A menu pick of a confirmable action opens the card on its question, so there
+// is one confirm UI however you got there -- and no merge on a single misclick.
+async function askInCard(w, a, e) {
+  asking = { path: w.path, key: a.key };
+  card = { path: w.path, x: e?.clientX ?? 0, y: e?.clientY ?? 0 };
+  await tick();
+  if (!cardEl || !card) return;
+  if (!cardEl.matches(":popover-open")) cardEl.showPopover();
+  placeCard();
+}
+
 async function removeWts(wts, force) {
   const live = wts.filter((w) => allWts.some((a) => a.path === w.path));
   if (!live.length) return (confirming = null);
@@ -813,6 +880,7 @@ function hideCard(now) {
   const close = () => {
     cardEl?.hidePopover();
     card = null;
+    asking = null;
   };
   if (now) close();
   else cardT = setTimeout(close, 200);
@@ -933,10 +1001,6 @@ function wtItems(w, solo = false) {
           e,
         ),
     },
-    !many && w.pr?.state === "OPEN" && prAb(w).behind > 0 && {
-      label: `Update branch (↓${prAb(w).behind} from ${w.pr.baseRefName})`,
-      fn: (e) => updateBranch(w, e),
-    },
     "-",
     {
       label: `${pin ? "Unpin" : "Pin"}${many ? ` ${t.length}` : ""}`,
@@ -952,14 +1016,11 @@ function wtItems(w, solo = false) {
       label: w.pr.autoMerge ? "Disable auto-merge" : "Enable auto-merge",
       fn: (e) => toggleAutoMerge(w, e),
     },
-    !many && w.pr?.state === "OPEN" && {
-      label: w.pr.isDraft ? "Publish pull request" : "Convert to draft",
-      fn: (e) => prState(w, w.pr.isDraft ? "ready" : "draft", e),
-    },
-    !many && w.pr?.state === "OPEN" && {
-      label: `Close pull request #${w.pr.number}`,
-      fn: (e) => prState(w, "close", e),
-    },
+    ...(many ? [] : prActions(w).map((a) => ({
+      label: a.confirm ? `${a.menu}…` : a.menu,
+      danger: a.cls === "dg",
+      fn: (e) => a.confirm ? askInCard(w, a, e) : a.go(e),
+    }))),
     !many && {
       label: w.isPrimary ? "Pull" : "Fetch + rebase",
       fn: (e) => rebase(w, e),
@@ -1890,6 +1951,25 @@ function confirmDiscard() {
             {/if}
           </section>
         {/if}
+      {/if}
+      {@const acts = prActions(w)}
+      {#if acts.length}
+        {@const ask = asking?.path === w.path &&
+          acts.find((a) => a.key === asking.key)}
+        <section class="practs">
+          {#if ask}
+            <span class="q">{ask.confirm}</span>
+            <button class="btn {ask.cls}" disabled={busy["ps:" + w.path]}
+                    onclick={(e) => runAction(ask, w, e)}>{ask.label}</button>
+            <button class="btn" onclick={() => (asking = null)}>Cancel</button>
+          {:else}
+            {#each acts as a (a.key)}
+              <button class="btn {a.cls}"
+                      disabled={busy["ps:" + w.path] || busy["ub:" + w.path]}
+                      onclick={(e) => runAction(a, w, e)}>{a.label}</button>
+            {/each}
+          {/if}
+        </section>
       {/if}
       <section class="foot">
         <a class="btn" href={p.url} target="_blank" rel="noreferrer">Open on GitHub ↗</a>
@@ -3120,6 +3200,27 @@ select.theme {
   display: flex;
   gap: 0.375rem;
   padding: 0.5rem 0.75rem 0.25rem;
+}
+.card .practs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.5rem 0.75rem;
+}
+.card .practs .q {
+  flex: 1;
+  font-size: 0.75rem;
+  color: var(--fg);
+}
+.card .btn.ok {
+  color: var(--addfg);
+  border-color: color-mix(in srgb, var(--acc) 55%, var(--line));
+  background: var(--add);
+}
+.card .btn.warn {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 45%, var(--line));
 }
 .card .foot .btn {
   text-decoration: none;

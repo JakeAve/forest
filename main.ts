@@ -2336,6 +2336,10 @@ const server = Deno.serve({
             ? ["ready", String(n), "--undo"]
             : b.action === "ready"
             ? ["ready", String(n)]
+            // no --delete-branch: the worktree still tracks it, and Forest's
+            // own remove flow is what should retire a branch.
+            : b.action === "merge"
+            ? ["merge", String(n), "--squash"]
             : null;
           if (!args) throw new Error("bad pr action");
           await exec(wt, ["gh", "pr", ...args]);
