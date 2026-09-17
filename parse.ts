@@ -677,6 +677,9 @@ export type PrCard = {
   deletions: number;
   changedFiles: number;
   mergeState: string;
+  /** vs the base branch, straight from GitHub. null when it didn't answer. */
+  ahead: number | null;
+  behind: number | null;
   reviews: CardReview[];
   awaiting: string[];
   threads: CardThread[];
@@ -772,6 +775,8 @@ export function prCard(d: Gql): PrCard {
     deletions: d.deletions ?? 0,
     changedFiles: d.changedFiles ?? 0,
     mergeState: d.mergeStateStatus ?? "UNKNOWN",
+    ahead: d.baseRef?.compare?.aheadBy ?? null,
+    behind: d.baseRef?.compare?.behindBy ?? null,
     reviews: [...latest.values()].sort((a, b) => (b.at ?? 0) - (a.at ?? 0)),
     awaiting: (d.reviewRequests?.nodes ?? [])
       .map((r: { requestedReviewer: Login }) => who(r.requestedReviewer))

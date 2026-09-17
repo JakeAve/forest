@@ -947,6 +947,11 @@ Deno.test("prCard: verdicts outrank comments, author and empty bodies drop out",
     ],
   );
   assertEquals(snippet(""), "");
+  // no baseRef in the fixture: the vs-base counts fall back to null so the UI
+  // can keep using its local ones.
+  assertEquals([c.ahead, c.behind], [null, null]);
+  const cmp = prCard({ baseRef: { compare: { aheadBy: 6, behindBy: 1 } } });
+  assertEquals([cmp.ahead, cmp.behind], [6, 1]);
 });
 
 Deno.test("parseLsofCommands and procsByCwd: c lines join to pid->command", () => {

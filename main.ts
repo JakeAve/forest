@@ -708,8 +708,9 @@ const PR_VIEW_FIELDS =
 
 // ponytail: first 100 threads/checks, last 100 reviews and 50 comments
 const CARD_QUERY =
-  `query($owner:String!,$repo:String!,$n:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$n){
+  `query($owner:String!,$repo:String!,$n:Int!,$head:String!){repository(owner:$owner,name:$repo){pullRequest(number:$n){
 author{login} createdAt updatedAt additions deletions changedFiles headRefName mergeStateStatus
+baseRef{compare(headRef:$head){aheadBy behindBy}}
 reviewRequests(first:20){nodes{requestedReviewer{... on User{login} ... on Bot{login} ... on Team{name} ... on Mannequin{login}}}}
 reviews(last:100){nodes{author{login} state submittedAt url body}}
 reviewThreads(first:100){nodes{isResolved path line originalLine comments(first:1){totalCount nodes{author{login} body url createdAt}} last:comments(last:1){nodes{author{login}}}}}
@@ -731,6 +732,10 @@ async function fetchCard(repo: string, n: number): Promise<PrCard | null> {
         "repo={repo}",
         "-F",
         `n=${n}`,
+        // the PR's own head ref: lets one query ask GitHub how far the branch
+        // is from its base without threading the branch name in here.
+        "-F",
+        `head=refs/pull/${n}/head`,
         "-f",
         `query=${CARD_QUERY}`,
         "--jq",

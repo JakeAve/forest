@@ -569,11 +569,14 @@ function gutterKey(e, n, el) {
 
 // while a PR is open, "behind" should mean behind its base branch, not behind
 // this worktree's own pushed remote (which is usually 0 once it's pushed).
+// GitHub's own count wins: the local base ref is only as fresh as the last
+// fetch, so a stale one reads "up to date" while the PR is already behind.
 function prAb(w) {
-  const open = w.pr?.state === "OPEN";
+  if (w.pr?.state !== "OPEN") return { ahead: w.ahead, behind: w.behind };
+  const c = w.pr.card;
   return {
-    ahead: open ? w.aheadMain : w.ahead,
-    behind: open ? w.behindMain : w.behind,
+    ahead: c?.ahead ?? w.aheadMain,
+    behind: c?.behind ?? w.behindMain,
   };
 }
 
@@ -930,8 +933,8 @@ function wtItems(w, solo = false) {
           e,
         ),
     },
-    !many && w.pr?.state === "OPEN" && w.behindMain > 0 && {
-      label: `Update branch (↓${w.behindMain} from ${w.pr.baseRefName})`,
+    !many && w.pr?.state === "OPEN" && prAb(w).behind > 0 && {
+      label: `Update branch (↓${prAb(w).behind} from ${w.pr.baseRefName})`,
       fn: (e) => updateBranch(w, e),
     },
     "-",
@@ -1757,7 +1760,7 @@ function confirmDiscard() {
       <div class="top">
         <div class="r">
           <a class="port pr" data-tone={s.tone} href={p.url} target="_blank" rel="noreferrer">#{p.number}</a>
-          <span class="st {p.isDraft ? 'draft' : p.state.toLowerCase()}">{p.isDraft ? "Draft" : p.state[0] + p.state.slice(1).toLowerCase()}</span>
+          <span class="st {s.tone}">{s.label}</span>
           {#if c}<span class="dim t">by {c.author} · {ago(c.createdAt)}</span><span class="ago">updated {ago(c.updatedAt)}</span>{/if}
         </div>
         <div class="ttl">{p.title}</div>
@@ -1769,16 +1772,17 @@ function confirmDiscard() {
         {/if}
       </div>
       {#if p.state === "OPEN"}
+        {@const behind = prAb(w).behind}
         <section>
-          <div class="hd"><span>Merge</span><span class={s.tone}>{s.label}</span></div>
+          <div class="hd"><span>Merge</span></div>
           {#if p.mergeable === "CONFLICTING"}
             <div class="r bad">Conflicts with {p.baseRefName}</div>
           {:else}
             <div class="r dim">No conflicts</div>
           {/if}
-          <div class="r" class:warn={w.behindMain > 0} class:dim={!w.behindMain}>
-            <span>{w.behindMain ? `↓${w.behindMain} behind` : "Up to date with"} {p.baseRefName}</span>
-            {#if w.behindMain > 0}
+          <div class="r" class:warn={behind > 0} class:dim={!behind}>
+            <span>{behind ? `↓${behind} behind` : "Up to date with"} {p.baseRefName}</span>
+            {#if behind > 0}
               <button class="btn" disabled={busy["ub:" + w.path]}
                       onclick={(e) => updateBranch(w, e)}>Update branch</button>
             {/if}
@@ -2922,6 +2926,10 @@ select.theme {
 }
 .card .st.merged {
   color: var(--merged);
+}
+.card .st.review {
+  color: var(--fg);
+  border-color: var(--dim);
 }
 .card section {
   border-top: 1px solid var(--line);
