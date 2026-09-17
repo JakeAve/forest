@@ -806,6 +806,106 @@ export function prCard(d: Gql): PrCard {
   };
 }
 
+export type PrStatus = {
+  tone: "ok" | "bad" | "warn" | "review" | "draft" | "merged" | "closed";
+  glyph: "" | "conflict" | "fail" | "changes" | "behind";
+  label: string;
+  since: number | null;
+  sinceLabel: string;
+};
+
+const READY = new Set(["CLEAN", "HAS_HOOKS", "UNSTABLE"]);
+
+/** The next thing between this PR and merge; pill, timer and card header all read it. */
+export function prStatus(pr: {
+  state: string;
+  stateSince: number;
+  isDraft: boolean;
+  mergeState: string;
+  mergeable: string;
+  reviewDecision: string;
+  ci: { state: string | null };
+  ciSince: number | null;
+  reviewSince: number | null;
+}): PrStatus {
+  const at = (since: number | null, sinceLabel: string) => ({
+    since,
+    sinceLabel,
+  });
+  const open = at(pr.stateSince, "open");
+  if (pr.state === "MERGED") {
+    return {
+      tone: "merged",
+      glyph: "",
+      label: "Merged",
+      ...at(pr.stateSince, "merged"),
+    };
+  }
+  if (pr.state === "CLOSED") {
+    return {
+      tone: "closed",
+      glyph: "",
+      label: "Closed",
+      ...at(pr.stateSince, "closed"),
+    };
+  }
+  if (pr.isDraft || pr.mergeState === "DRAFT") {
+    return { tone: "draft", glyph: "", label: "Draft", ...open };
+  }
+  if (pr.mergeable === "CONFLICTING" || pr.mergeState === "DIRTY") {
+    return { tone: "bad", glyph: "conflict", label: "Conflicts", ...open };
+  }
+  if (pr.reviewDecision === "CHANGES_REQUESTED") {
+    return {
+      tone: "bad",
+      glyph: "changes",
+      label: "Changes requested",
+      ...at(pr.reviewSince, "changes requested"),
+    };
+  }
+  if (pr.ci.state === "fail") {
+    return {
+      tone: "bad",
+      glyph: "fail",
+      label: "Checks failing",
+      ...at(pr.ciSince, "failing"),
+    };
+  }
+  if (READY.has(pr.mergeState)) {
+    return {
+      tone: "ok",
+      glyph: "",
+      label: "Ready to merge",
+      ...(pr.reviewDecision === "APPROVED"
+        ? at(pr.reviewSince, "approved")
+        : open),
+    };
+  }
+  if (pr.mergeState === "BEHIND") {
+    return { tone: "bad", glyph: "behind", label: "Behind base", ...open };
+  }
+  if (pr.reviewDecision === "REVIEW_REQUIRED") {
+    return { tone: "review", glyph: "", label: "Needs review", ...open };
+  }
+  if (pr.ci.state === "pending") {
+    return {
+      tone: "warn",
+      glyph: "",
+      label: "Checks running",
+      ...at(pr.ciSince, "running"),
+    };
+  }
+  if (pr.mergeState === "BLOCKED") {
+    return {
+      tone: "bad",
+      glyph: "",
+      label: "Blocked by branch rules",
+      ...open,
+    };
+  }
+  return { tone: "warn", glyph: "", label: "Checking", ...open };
+}
+
 /** Reviewers whose latest verdict is APPROVED; a comment does not change a verdict. */
 export function approvals(
   reviews: {

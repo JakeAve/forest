@@ -658,6 +658,7 @@ type Pr = {
   baseRefName: string;
   reviewDecision: "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED" | "";
   mergeable: "MERGEABLE" | "CONFLICTING" | "UNKNOWN";
+  mergeState: string; // GitHub mergeStateStatus
   autoMerge: boolean;
   ci: { state: "pass" | "fail" | "pending" | null; failing: string[] };
   // GitHub's own check-run/review timestamps for the current ci.state /
@@ -681,6 +682,7 @@ const NO_DETAIL: Omit<Pr, "number" | "url" | "state" | "stateSince"> = {
   baseRefName: "",
   reviewDecision: "",
   mergeable: "UNKNOWN",
+  mergeState: "UNKNOWN",
   autoMerge: false,
   ci: { state: null, failing: [] },
   ciSince: null,
@@ -702,7 +704,7 @@ const prFor = (
 
 type PrDetail = Omit<Pr, "number" | "url" | "state" | "stateSince">;
 const PR_VIEW_FIELDS =
-  "title,isDraft,baseRefName,reviewDecision,mergeable,autoMergeRequest,statusCheckRollup,reviews";
+  "title,isDraft,baseRefName,reviewDecision,mergeable,mergeStateStatus,autoMergeRequest,statusCheckRollup,reviews";
 
 // ponytail: first 100 threads/checks, last 100 reviews and 50 comments
 const CARD_QUERY =
@@ -755,6 +757,7 @@ function prDetailFields(
     baseRefName: d.baseRefName,
     reviewDecision,
     mergeable: d.mergeable,
+    mergeState: d.mergeStateStatus ?? "UNKNOWN",
     autoMerge: !!d.autoMergeRequest,
     ci,
     ciSince: ciSince(d.statusCheckRollup ?? [], ci.state) ??

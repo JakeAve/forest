@@ -28,6 +28,7 @@ import {
   prCard,
   previewSkip,
   procsByCwd,
+  prStatus,
   qbool,
   qnum,
   rateWindow,
@@ -1151,4 +1152,84 @@ Deno.test("parseGrep: NUL-separated fields survive colons, capped by limit", () 
   ]);
   assertEquals(parseGrep(out, 1).length, 1);
   assertEquals(parseGrep(""), []);
+});
+
+Deno.test("prStatus: the next blocker wins, in fix order", () => {
+  const base = {
+    state: "OPEN",
+    stateSince: 1,
+    isDraft: false,
+    mergeState: "BLOCKED",
+    mergeable: "MERGEABLE",
+    reviewDecision: "REVIEW_REQUIRED",
+    ci: { state: "pending" as string | null },
+    ciSince: 2,
+    reviewSince: 3,
+  };
+  const st = (o: Partial<typeof base>) => {
+    const { tone, glyph, label, since } = prStatus({ ...base, ...o });
+    return [tone, glyph, label, since];
+  };
+  assertEquals(st({ state: "MERGED" }), ["merged", "", "Merged", 1]);
+  assertEquals(st({ state: "CLOSED" }), ["closed", "", "Closed", 1]);
+  assertEquals(st({ isDraft: true }), ["draft", "", "Draft", 1]);
+  assertEquals(st({ mergeable: "CONFLICTING" }), [
+    "bad",
+    "conflict",
+    "Conflicts",
+    1,
+  ]);
+  assertEquals(st({ mergeState: "DIRTY" }), [
+    "bad",
+    "conflict",
+    "Conflicts",
+    1,
+  ]);
+  assertEquals(st({ reviewDecision: "CHANGES_REQUESTED" }), [
+    "bad",
+    "changes",
+    "Changes requested",
+    3,
+  ]);
+  assertEquals(st({ ci: { state: "fail" } }), [
+    "bad",
+    "fail",
+    "Checks failing",
+    2,
+  ]);
+  assertEquals(st({ mergeState: "CLEAN", reviewDecision: "APPROVED" }), [
+    "ok",
+    "",
+    "Ready to merge",
+    3,
+  ]);
+  assertEquals(st({ mergeState: "UNSTABLE", reviewDecision: "" }), [
+    "ok",
+    "",
+    "Ready to merge",
+    1,
+  ]);
+  assertEquals(st({ mergeState: "BEHIND" }), [
+    "bad",
+    "behind",
+    "Behind base",
+    1,
+  ]);
+  assertEquals(st({}), ["review", "", "Needs review", 1]);
+  assertEquals(st({ reviewDecision: "APPROVED" }), [
+    "warn",
+    "",
+    "Checks running",
+    2,
+  ]);
+  assertEquals(st({ reviewDecision: "APPROVED", ci: { state: "pass" } }), [
+    "bad",
+    "",
+    "Blocked by branch rules",
+    1,
+  ]);
+  assertEquals(
+    st({ mergeState: "UNKNOWN", reviewDecision: "", ci: { state: null } }),
+    ["warn", "", "Checking", 1],
+  );
 });

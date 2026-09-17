@@ -8,6 +8,7 @@ import {
   clampMenu,
   discardPrompt,
   isIgnoredPath,
+  prStatus,
   removeSummary,
   TREE_CAP,
   treeRows,
@@ -576,29 +577,6 @@ function prAb(w) {
   };
 }
 
-function prTimer(pr) {
-  if (pr.ci?.state === "fail") {
-    return { cls: "fail", label: "failing", text: ago(pr.ciSince) };
-  }
-  if (pr.ci?.state === "pending") {
-    return { cls: "pending", label: "running", text: ago(pr.ciSince) };
-  }
-  if (pr.reviewDecision === "APPROVED") {
-    return { cls: "approved", label: "approved", text: ago(pr.reviewSince) };
-  }
-  // fallback: every PR gets some timer, even once merged/closed and its CI
-  // detail has been dropped.
-  return {
-    cls: pr.state === "MERGED"
-      ? "merged"
-      : pr.state === "CLOSED"
-      ? "closed"
-      : "open",
-    label: pr.state.toLowerCase(),
-    text: ago(pr.stateSince),
-  };
-}
-
 function ago(ms) {
   if (!ms) return "—";
   const s = Math.max(0, (now - ms) / 1000);
@@ -850,31 +828,24 @@ $effect(() => {
 });
 
 const CHECK_GLYPH = { pass: "✓", fail: "✗", pending: "●" };
-const MERGE_STATE = {
-  CLEAN: ["Ready", "ok"],
-  HAS_HOOKS: ["Ready", "ok"],
-  BLOCKED: ["Blocked", "warn"],
-  BEHIND: ["Behind", "warn"],
-  UNSTABLE: ["Unstable", "warn"],
-  DIRTY: ["Conflicts", "bad"],
-  DRAFT: ["Draft", "dim"],
-};
 const VERDICT = {
   APPROVED: ["✓ Approved", "ok"],
   CHANGES_REQUESTED: ["✗ Changes requested", "bad"],
   COMMENTED: ["Commented", "dim"],
 };
 
-const prCls = (pr) =>
-  [
-    pr.state === "MERGED" && "merged",
-    pr.state === "CLOSED" && "closed",
-    pr.ci?.state === "pending" && "pending",
-    pr.ci?.state === "fail" && "fail",
-    pr.mergeable === "CONFLICTING" && "conflict",
-    pr.isDraft && "draft",
-    pr.autoMerge && "automerge",
-  ].filter(Boolean).join(" ");
+const AM_ICON =
+  '<path d="M1.896 4.559a6.25 6.25 0 0 1 8.839 0 .75.75 0 0 1-1.06 1.061 4.75 4.75 0 1 0 0 6.717L13.03 8.98l-1.553-1.554A.25.25 0 0 1 11.654 7h4.096a.25.25 0 0 1 .25.25v4.096a.25.25 0 0 1-.427.177l-1.482-1.482-3.356 3.356a6.25 6.25 0 0 1-8.839-8.838Z" fill="currentColor" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"/>';
+const GLYPH = {
+  conflict:
+    '<path d="M8.87 1.5a1 1 0 0 0-1.74 0L.75 12.5A1 1 0 0 0 1.62 14h12.76a1 1 0 0 0 .87-1.5ZM7 6h2v3.5H7Zm1 6.25a1.1 1.1 0 1 1 0-2.2 1.1 1.1 0 0 1 0 2.2Z" fill="currentColor" fill-rule="evenodd"/>',
+  fail:
+    '<path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/>',
+  changes:
+    '<path d="M8 2.5v6.5M8 13v.01" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round"/>',
+  behind:
+    '<path d="M8 2v11.5M3.5 9l4.5 4.5L12.5 9" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>',
+};
 
 function dur(ms) {
   if (ms == null || ms < 0) return "–";
@@ -1558,23 +1529,16 @@ function confirmDiscard() {
           dirName(w)}<span class="dir">{dirName(w)}</span>{/if}</span>
         <span class="prc">
           {#if w.pr}
-            {@const t = prTimer(w.pr)}
-            <a class="port pr {prCls(w.pr)}"
+            {@const s = prStatus(w.pr)}
+            <a class="port pr {s.tone}"
                href={w.pr.url}
                target="_blank" rel="noreferrer"
-               aria-label={[`${w.pr.state.toLowerCase()} PR #${w.pr.number}`, w.pr.title]
+               aria-label={[`${s.label}, PR #${w.pr.number}`, w.pr.title]
                  .filter(Boolean).join(": ")}
                onpointerenter={(e) => showCard(w, e)} onpointerleave={() => hideCard()}
                onfocus={(e) => showCard(w, e)} onblur={() => hideCard()}
-               onclick={(e) => e.stopPropagation()}>#{w.pr.number}{w.pr.reviewDecision ===
-              "CHANGES_REQUESTED" ? "!" : ""}{#if w.pr.autoMerge}
-                <svg class="am-icon" viewBox="0 0 16 16" width="10" height="10">
-                  <path d="M1.896 4.559a6.25 6.25 0 0 1 8.839 0 .75.75 0 0 1-1.06 1.061 4.75 4.75 0 1 0 0 6.717L13.03 8.98l-1.553-1.554A.25.25 0 0 1 11.654 7h4.096a.25.25 0 0 1 .25.25v4.096a.25.25 0 0 1-.427.177l-1.482-1.482-3.356 3.356a6.25 6.25 0 0 1-8.839-8.838Z" />
-                </svg>
-              {/if}</a>
-            {#if t}
-              <span class="prt {t.cls}" title="{t.label} for {t.text}">{t.text}</span>
-            {/if}
+               onclick={(e) => e.stopPropagation()}>{#if w.pr.autoMerge}<svg class="g am" viewBox="0 0 16 16">{@html AM_ICON}</svg>{/if}#{w.pr.number}{#if s.glyph}<svg class="g" viewBox="0 0 16 16">{@html GLYPH[s.glyph]}</svg>{/if}</a>
+            <span class="prt {s.tone}" title="{s.sinceLabel} for {ago(s.since)}">{ago(s.since)}</span>
           {/if}
         </span>
         <span class="ports">
@@ -1789,9 +1753,10 @@ function confirmDiscard() {
       {@const w = cardWt}
       {@const p = w.pr}
       {@const c = p.card}
+      {@const s = prStatus(p)}
       <div class="top">
         <div class="r">
-          <a class="port pr {prCls(p)}" href={p.url} target="_blank" rel="noreferrer">#{p.number}</a>
+          <a class="port pr {s.tone}" href={p.url} target="_blank" rel="noreferrer">#{p.number}</a>
           <span class="st {p.isDraft ? 'draft' : p.state.toLowerCase()}">{p.isDraft ? "Draft" : p.state[0] + p.state.slice(1).toLowerCase()}</span>
           {#if c}<span class="dim t">by {c.author} · {ago(c.createdAt)}</span><span class="ago">updated {ago(c.updatedAt)}</span>{/if}
         </div>
@@ -1804,9 +1769,8 @@ function confirmDiscard() {
         {/if}
       </div>
       {#if p.state === "OPEN"}
-        {@const ms = MERGE_STATE[c?.mergeState]}
         <section>
-          <div class="hd"><span>Merge</span>{#if ms}<span class={ms[1]}>{ms[0]}</span>{/if}</div>
+          <div class="hd"><span>Merge</span><span class={s.tone}>{s.label}</span></div>
           {#if p.mergeable === "CONFLICTING"}
             <div class="r bad">Conflicts with {p.baseRefName}</div>
           {:else}
@@ -2556,69 +2520,59 @@ select.theme {
   text-decoration: underline;
 }
 .pr {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25em;
   border-color: transparent;
   color: var(--bg);
   background: var(--acc);
 }
-.am-icon {
-  fill: currentColor;
-  vertical-align: -1px;
-  margin-left: 0.125rem;
+.pr .g {
+  width: 10px;
+  height: 10px;
 }
 .prt {
   font: 0.625rem var(--mono);
   white-space: nowrap;
+  color: var(--dim);
 }
-.prt.pending {
-  color: var(--warn);
-}
-.prt.fail {
-  color: var(--danger);
-}
-.prt.approved {
+.prt.ok {
   color: var(--acc);
 }
-.prt.open {
-  color: var(--dim);
+.prt.bad {
+  color: var(--danger);
+}
+.prt.warn {
+  color: var(--warn);
 }
 .prt.merged {
   color: var(--merged);
 }
-.prt.closed {
-  color: var(--dim);
+.pr.bad {
+  background: var(--danger);
 }
-.pr.draft {
-  border-color: var(--acc);
-  color: var(--acc);
-  background: transparent;
-}
-.pr.pending {
+.pr.warn {
   background: var(--warn);
 }
-.pr.fail {
-  background: var(--danger);
-}
-.pr.conflict {
-  background: var(--danger);
-}
 .pr.merged {
-  border-color: transparent;
-  color: var(--bg);
   background: var(--merged);
 }
 .pr.closed {
-  border-color: transparent;
-  color: var(--bg);
   background: var(--dim);
 }
+.pr.review,
+.pr.draft {
+  background: transparent;
+  color: var(--fg);
+  border-color: var(--dim);
+}
+.pr.draft {
+  color: var(--dim);
+  border-style: dashed;
+}
 .pr:hover {
-  border-color: transparent;
   filter: brightness(1.15);
   text-decoration: underline;
-}
-.pr.draft:hover {
-  border-color: var(--acc);
-  filter: none;
 }
 .wt .dirty {
   font: 0.6875rem var(--mono);
@@ -3117,8 +3071,14 @@ select.theme {
 .card .bad {
   color: var(--danger);
 }
-.card .dim {
+.card .dim,
+.card .review,
+.card .draft,
+.card .closed {
   color: var(--dim);
+}
+.card .merged {
+  color: var(--merged);
 }
 .card .mono {
   font: 0.6875rem var(--mono);
