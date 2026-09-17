@@ -15,6 +15,7 @@ import {
   trimSeps,
 } from "../parse.ts";
 import { parseThemeText, resolveTheme } from "./theme.js";
+import { marked } from "marked";
 
 let settings = $state(null);
 fetch("/api/settings").then((r) => r.json()).then((s) => (settings = s));
@@ -157,12 +158,49 @@ const selWt = $derived(
 );
 const selFile = $derived(files.find((f) => f.path === file));
 const isHtml = $derived(/\.html?$/i.test(file ?? ""));
+const isMd = $derived(/\.(md|markdown)$/i.test(file ?? ""));
+const canPreview = $derived(isHtml || isMd);
 $effect(() => {
   void sel, void file;
   previewSrc = "";
   previewReady = false;
   rawView = null;
 });
+
+const MD_VARS = [
+  "--bg",
+  "--bg2",
+  "--bg3",
+  "--fg",
+  "--dim",
+  "--line",
+  "--acc",
+  "--mono",
+  "--sans",
+];
+const MD_CSS =
+  `body{margin:0;padding:1.5rem 2rem;max-width:52rem;font:14px/1.6 var(--sans);background:var(--bg);color:var(--fg)}
+h1,h2{border-bottom:1px solid var(--line);padding-bottom:.3em}
+h1,h2,h3,h4,h5,h6{margin:1.5em 0 .6em;line-height:1.25}
+a{color:var(--acc)}
+code{background:var(--bg3);border-radius:6px;padding:.2em .4em;font:85% var(--mono)}
+pre{background:var(--bg2);border:1px solid var(--line);border-radius:6px;padding:1rem;overflow:auto}
+pre code{background:none;padding:0;font-size:100%}
+blockquote{margin:0;padding:0 1em;color:var(--dim);border-left:.25em solid var(--line)}
+table{border-collapse:collapse}
+th,td{border:1px solid var(--line);padding:.4em .8em}
+img{max-width:100%}
+hr{border:0;border-top:1px solid var(--line)}`;
+
+// the iframe is its own document, so the app's theme vars are copied in
+function mdDoc(src) {
+  const cs = getComputedStyle(document.documentElement);
+  const vars = MD_VARS.map((v) => `${v}:${cs.getPropertyValue(v)}`).join(";");
+  return `<!doctype html><meta charset="utf-8"><style>:root{color-scheme:${
+    cs.colorScheme || "dark"
+  };${vars}}
+${MD_CSS}</style>${marked.parse(src, { async: false })}`;
+}
 
 function togglePreview(e) {
   const on = e.currentTarget.checked;
@@ -189,11 +227,14 @@ function restoreRawView() {
 }
 
 $effect(() => {
-  if (!(preview && isHtml && sel && file)) return void (previewReady = false);
-  void diffTick;
+  if (!(preview && canPreview && sel && file)) {
+    return void (previewReady = false);
+  }
+  void diffTick, void theme;
   const q = `wt=${encodeURIComponent(sel)}&path=${encodeURIComponent(file)}`;
   fetch(`/api/file?${q}&base=${base}`).then((r) => r.json()).then((d) => {
-    const next = d.work ?? d.base ?? "";
+    const raw = d.work ?? d.base ?? "";
+    const next = isMd ? mdDoc(raw) : raw;
     if (next !== previewSrc) previewReady = false;
     previewSrc = next;
   });
@@ -1824,7 +1865,7 @@ function confirmDiscard() {
         <button class="btn" title="discard editor changes, reload from disk"
                 onclick={() => { banner = null; diffRef?.reloadTheirs(); }}>Discard</button>
       {/if}
-      {#if isHtml && !diffDirty}
+      {#if canPreview && !diffDirty}
         <label class="meta wraplbl">
           <input type="checkbox" class="cbxin" checked={preview} onchange={togglePreview}>
           <span class="cbx" class:on={preview}></span>Preview
@@ -1838,9 +1879,9 @@ function confirmDiscard() {
       {@render maxBtn(3)}
     </div>
     <div class="body" bind:this={srcBodyEl}>
-      {#if preview && isHtml && previewSrc}
+      {#if preview && canPreview && previewSrc}
         {#key previewSrc}
-          <iframe class="preview" class:ready={previewReady} title="Preview of {file}"
+          <iframe class="preview" class:md={isMd} class:ready={previewReady} title="Preview of {file}"
                   sandbox="allow-scripts" srcdoc={previewSrc}
                   onload={() => (previewReady = true)}></iframe>
         {/key}
@@ -2424,6 +2465,9 @@ dialog.settings::backdrop {
   border: 0;
   background: #fff;
   opacity: 0;
+}
+.preview.md {
+  background: var(--bg);
 }
 .preview.ready {
   opacity: 1;

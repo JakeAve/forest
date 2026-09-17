@@ -24,6 +24,7 @@
     "npm:@codemirror/view@^6.38.1": "6.43.9",
     "npm:@modelcontextprotocol/server@2.0.0": "2.0.0",
     "npm:@sveltejs/vite-plugin-svelte@^6.2.1": "6.2.4_svelte@5.56.10_vite@7.3.6",
+    "npm:marked@^18.0.13": "18.0.13",
     "npm:svelte@^5.39.2": "5.56.10",
     "npm:vite@^7.1.5": "7.3.6",
     "npm:zod@4.6.2": "4.6.2"
@@ -952,6 +953,10 @@
         "@jridgewell/sourcemap-codec"
       ]
     },
+    "marked@18.0.13": {
+      "integrity": "sha512-xTxVzZsBFwunP6HDmtBkabUQEYArnP7/rMDGmPj9SlrKlQ4i8MdYVow+nJL0eOqwpUqhzBoTBRADGN6uYwPyOw==",
+      "bin": true
+    },
     "nanoid@3.3.18": {
       "integrity": "sha512-DTg4MJbGMWkfi6VZFdNt2/caMbQy4Ou+Op/hJQvGEWcnVfoA1QA+xzRKAzw9jD6+GVOOeYr/mIcuDSdug6F6+w==",
       "bin": true
@@ -1093,6 +1098,7 @@
         "npm:@codemirror/state@^6.5.2",
         "npm:@codemirror/view@^6.38.1",
         "npm:@sveltejs/vite-plugin-svelte@^6.2.1",
+        "npm:marked@^18.0.13",
         "npm:svelte@^5.39.2",
         "npm:vite@^7.1.5",
         "npm:zod@4.6.2"
