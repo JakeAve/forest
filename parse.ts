@@ -635,22 +635,175 @@ export function reviewSince(
   return times.length ? Math.max(...times) : null;
 }
 
-export type Check = { name: string; bucket: string; since: number | null };
+export type CardCheck = {
+  name: string;
+  bucket: "pass" | "fail" | "pending" | "skipping" | "cancel";
+  required: boolean;
+  url: string;
+  startedAt: number | null;
+  completedAt: number | null;
+};
+export type CardReview = {
+  login: string;
+  state: string;
+  at: number | null;
+  url: string;
+};
+export type CardThread = {
+  path: string;
+  line: number | null;
+  login: string;
+  body: string;
+  tag: string;
+  url: string;
+  at: number | null;
+  replies: number;
+  lastBy: string;
+  resolved: boolean;
+};
+export type CardComment = {
+  login: string;
+  body: string;
+  url: string;
+  at: number | null;
+  review: boolean;
+};
+export type PrCard = {
+  author: string;
+  createdAt: number | null;
+  updatedAt: number | null;
+  headRefName: string;
+  additions: number;
+  deletions: number;
+  changedFiles: number;
+  mergeState: string;
+  reviews: CardReview[];
+  awaiting: string[];
+  threads: CardThread[];
+  comments: CardComment[];
+  checks: CardCheck[];
+};
 
-/** `gh pr checks --required --json name,bucket,startedAt,completedAt` rows. */
-export function requiredChecks(
-  rows: {
-    name?: string;
-    bucket?: string;
-    startedAt?: string;
-    completedAt?: string;
-  }[],
-): Check[] {
-  return rows.map((r) => ({
-    name: r.name ?? "",
-    bucket: r.bucket ?? "pending",
-    since: validTime(r.completedAt) ?? validTime(r.startedAt) ?? null,
-  }));
+/** Markdown/HTML comment body as one plain line. */
+export const snippet = (body = "") =>
+  body
+    .replace(/<!--[\s\S]*?-->/g, " ")
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, " ")
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/:[a-z_]+:/g, " ")
+    .replace(/[*_`#>|]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 280);
+
+const VERDICT = new Set(["APPROVED", "CHANGES_REQUESTED"]);
+const PASS_CONCLUSION = new Set(["SUCCESS", "NEUTRAL"]);
+
+function checkBucket(c: {
+  status?: string;
+  conclusion?: string;
+  state?: string;
+}): CardCheck["bucket"] {
+  if (c.state) {
+    return c.state === "SUCCESS"
+      ? "pass"
+      : PENDING_STATE.has(c.state)
+      ? "pending"
+      : "fail";
+  }
+  if (c.status !== "COMPLETED") return "pending";
+  if (PASS_CONCLUSION.has(c.conclusion ?? "")) return "pass";
+  if (c.conclusion === "SKIPPED" || c.conclusion === "STALE") return "skipping";
+  if (c.conclusion === "CANCELLED") return "cancel";
+  return "fail";
+}
+
+type Login = { login?: string; name?: string } | null | undefined;
+const who = (a: Login) => a?.login ?? a?.name ?? "ghost";
+
+// deno-lint-ignore no-explicit-any
+type Gql = any;
+
+/** The `pullRequest` object from forest's card GraphQL query, shaped for the hover card. */
+export function prCard(d: Gql): PrCard {
+  const author = who(d.author);
+  const latest = new Map<string, CardReview>();
+  const reviews: Gql[] = [...(d.reviews?.nodes ?? [])].sort((a, b) =>
+    (a.submittedAt ?? "").localeCompare(b.submittedAt ?? "")
+  );
+  for (const r of reviews) {
+    const login = who(r.author);
+    if (login === author) continue;
+    if (!VERDICT.has(r.state) && r.state !== "COMMENTED") continue;
+    const prev = latest.get(login);
+    if (prev && VERDICT.has(prev.state) && !VERDICT.has(r.state)) continue;
+    latest.set(login, {
+      login,
+      state: r.state,
+      at: validTime(r.submittedAt) ?? null,
+      url: r.url ?? "",
+    });
+  }
+  const comments: CardComment[] = [
+    ...(d.comments?.nodes ?? []).map((c: Gql) => ({
+      login: who(c.author),
+      body: snippet(c.body),
+      url: c.url ?? "",
+      at: validTime(c.createdAt) ?? null,
+      review: false,
+    })),
+    ...reviews.map((r) => ({
+      login: who(r.author),
+      body: snippet(r.body),
+      url: r.url ?? "",
+      at: validTime(r.submittedAt) ?? null,
+      review: true,
+    })),
+  ].filter((c) => c.body).sort((a, b) => (b.at ?? 0) - (a.at ?? 0));
+  const contexts = d.commits?.nodes?.[0]?.commit?.statusCheckRollup?.contexts
+    ?.nodes ?? [];
+  return {
+    author,
+    createdAt: validTime(d.createdAt) ?? null,
+    updatedAt: validTime(d.updatedAt) ?? null,
+    headRefName: d.headRefName ?? "",
+    additions: d.additions ?? 0,
+    deletions: d.deletions ?? 0,
+    changedFiles: d.changedFiles ?? 0,
+    mergeState: d.mergeStateStatus ?? "UNKNOWN",
+    reviews: [...latest.values()].sort((a, b) => (b.at ?? 0) - (a.at ?? 0)),
+    awaiting: (d.reviewRequests?.nodes ?? [])
+      .map((r: { requestedReviewer: Login }) => who(r.requestedReviewer))
+      .filter((l: string) => !latest.has(l)),
+    threads: (d.reviewThreads?.nodes ?? []).map((t: Gql) => {
+      const first = t.comments?.nodes?.[0] ?? {};
+      return {
+        path: t.path ?? "",
+        line: t.line ?? t.originalLine ?? null,
+        login: who(first.author),
+        body: snippet(first.body),
+        tag: first.body?.match(/\bP([0-3]) Badge/)?.[0].slice(0, 2) ?? "",
+        url: first.url ?? "",
+        at: validTime(first.createdAt) ?? null,
+        replies: Math.max(0, (t.comments?.totalCount ?? 1) - 1),
+        lastBy: who(t.last?.nodes?.[0]?.author),
+        resolved: !!t.isResolved,
+      };
+    }),
+    comments,
+    checks: contexts.map((c: Gql) => ({
+      name: c.name ?? c.context ?? "",
+      bucket: checkBucket(c),
+      required: !!c.isRequired,
+      url: c.detailsUrl ?? c.targetUrl ?? "",
+      startedAt: validTime(c.startedAt) ?? null,
+      completedAt: validTime(c.completedAt) ??
+        (c.state && !PENDING_STATE.has(c.state)
+          ? validTime(c.createdAt) ?? null
+          : null),
+    })),
+  };
 }
 
 /** Reviewers whose latest verdict is APPROVED; a comment does not change a verdict. */

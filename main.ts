@@ -15,7 +15,6 @@ import { mergeInclude, parseThemeText, resolveTheme } from "./src/theme.js";
 import {
   approvals,
   backoffOver,
-  type Check,
   ciSince,
   ciSummary,
   classifyPath,
@@ -40,13 +39,14 @@ import {
   parseUpstreamTrack,
   parseWorktreeList,
   pool,
+  type PrCard,
+  prCard,
   previewSkip,
   procsByCwd,
   qbool,
   qnum,
   rateWindow,
   remoteWebUrl,
-  requiredChecks,
   reviewSince,
   selectWt,
   settingsOverrides,
@@ -666,7 +666,7 @@ type Pr = {
   ciSince: number | null;
   reviewSince: number | null;
   approvals: number;
-  checks: Check[]; // required checks only, from `gh pr checks --required`
+  card: PrCard | null; // hover card detail, from CARD_QUERY
   detailAt: number | null;
 };
 type PrSlim = Pick<Pr, "number" | "url" | "state" | "stateSince">;
@@ -686,7 +686,7 @@ const NO_DETAIL: Omit<Pr, "number" | "url" | "state" | "stateSince"> = {
   ciSince: null,
   reviewSince: null,
   approvals: 0,
-  checks: [],
+  card: null,
   detailAt: null,
 };
 const prFor = (
@@ -704,27 +704,48 @@ type PrDetail = Omit<Pr, "number" | "url" | "state" | "stateSince">;
 const PR_VIEW_FIELDS =
   "title,isDraft,baseRefName,reviewDecision,mergeable,autoMergeRequest,statusCheckRollup,reviews";
 
-// `gh pr checks` exits non-zero for "no checks reported" and may still print
-// its JSON on other non-zero exits; anything unparseable reads as no checks.
-async function fetchChecks(repo: string, n: number): Promise<Check[]> {
-  const out = await exec(repo, [
-    "gh",
-    "pr",
-    "checks",
-    String(n),
-    "--required",
-    "--json",
-    "name,bucket,startedAt,completedAt",
-  ]).catch((e: Error) => e.message);
+// ponytail: first 100 threads/checks, last 100 reviews and 50 comments
+const CARD_QUERY =
+  `query($owner:String!,$repo:String!,$n:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$n){
+author{login} createdAt updatedAt additions deletions changedFiles headRefName mergeStateStatus
+reviewRequests(first:20){nodes{requestedReviewer{... on User{login} ... on Bot{login} ... on Team{name} ... on Mannequin{login}}}}
+reviews(last:100){nodes{author{login} state submittedAt url body}}
+reviewThreads(first:100){nodes{isResolved path line originalLine comments(first:1){totalCount nodes{author{login} body url createdAt}} last:comments(last:1){nodes{author{login}}}}}
+comments(last:50){nodes{author{login} body url createdAt}}
+commits(last:1){nodes{commit{statusCheckRollup{contexts(first:100){nodes{
+... on CheckRun{name status conclusion startedAt completedAt detailsUrl isRequired(pullRequestNumber:$n)}
+... on StatusContext{context state createdAt targetUrl isRequired(pullRequestNumber:$n)}}}}}}}}}}`;
+
+async function fetchCard(repo: string, n: number): Promise<PrCard | null> {
   try {
-    return requiredChecks(JSON.parse(out));
+    return prCard(JSON.parse(
+      await exec(repo, [
+        "gh",
+        "api",
+        "graphql",
+        "-F",
+        "owner={owner}",
+        "-F",
+        "repo={repo}",
+        "-F",
+        `n=${n}`,
+        "-f",
+        `query=${CARD_QUERY}`,
+        "--jq",
+        ".data.repository.pullRequest",
+      ]),
+    ));
   } catch {
-    return [];
+    return null;
   }
 }
 
-// deno-lint-ignore no-explicit-any
-function prDetailFields(d: any, checks: Check[], prev?: PrDetail): PrDetail {
+function prDetailFields(
+  // deno-lint-ignore no-explicit-any
+  d: any,
+  card: PrCard | null,
+  prev?: PrDetail,
+): PrDetail {
   const now = Date.now();
   const reviewDecision = d.reviewDecision ?? "";
   const ci = ciSummary(d.statusCheckRollup ?? []);
@@ -741,7 +762,7 @@ function prDetailFields(d: any, checks: Check[], prev?: PrDetail): PrDetail {
     reviewSince: reviewSince(d.reviews ?? [], reviewDecision) ??
       (prev && prev.reviewDecision === reviewDecision ? prev.reviewSince : now),
     approvals: approvals(d.reviews ?? []),
-    checks,
+    card: card ?? prev?.card ?? null,
     detailAt: null,
   };
 }
@@ -834,7 +855,7 @@ async function refreshPrs(repos: Repo[]) {
     );
   });
   await pool(PR_JOBS, jobs, async ([repo, n]) => {
-    const checksP = fetchChecks(repo, n);
+    const cardP = fetchCard(repo, n);
     const out = await exec(repo, [
       "gh",
       "pr",
@@ -854,7 +875,11 @@ async function refreshPrs(repos: Repo[]) {
     });
     if (out === null) return;
     const prev = prDetail.get(`${repo}#${n}`);
-    const fields = prDetailFields(JSON.parse(out), await checksP, prev);
+    const fields = prDetailFields(
+      JSON.parse(out),
+      await cardP,
+      prev,
+    );
     if (
       prev &&
       JSON.stringify({ ...prev, detailAt: null }) ===
@@ -871,7 +896,7 @@ async function refreshPrs(repos: Repo[]) {
 // change should show up now, not up to prPollMs later. Best-effort: caller
 // swallows failures, since the mutation itself already succeeded.
 async function refreshOnePr(repo: string, n: number): Promise<void> {
-  const checksP = fetchChecks(repo, n);
+  const cardP = fetchCard(repo, n);
   const out = await exec(repo, [
     "gh",
     "pr",
@@ -900,7 +925,7 @@ async function refreshOnePr(repo: string, n: number): Promise<void> {
   }
 
   prDetail.set(key, {
-    ...prDetailFields(d, await checksP, prDetail.get(key)),
+    ...prDetailFields(d, await cardP, prDetail.get(key)),
     detailAt: Date.now(),
   });
   publish();
