@@ -1530,7 +1530,7 @@ function confirmDiscard() {
         <span class="prc">
           {#if w.pr}
             {@const s = prStatus(w.pr)}
-            <a class="port pr {s.tone}"
+            <a class="port pr" data-tone={s.tone}
                href={w.pr.url}
                target="_blank" rel="noreferrer"
                aria-label={[`${s.label}, PR #${w.pr.number}`, w.pr.title]
@@ -1756,7 +1756,7 @@ function confirmDiscard() {
       {@const s = prStatus(p)}
       <div class="top">
         <div class="r">
-          <a class="port pr {s.tone}" href={p.url} target="_blank" rel="noreferrer">#{p.number}</a>
+          <a class="port pr" data-tone={s.tone} href={p.url} target="_blank" rel="noreferrer">#{p.number}</a>
           <span class="st {p.isDraft ? 'draft' : p.state.toLowerCase()}">{p.isDraft ? "Draft" : p.state[0] + p.state.slice(1).toLowerCase()}</span>
           {#if c}<span class="dim t">by {c.author} · {ago(c.createdAt)}</span><span class="ago">updated {ago(c.updatedAt)}</span>{/if}
         </div>
@@ -2548,25 +2548,25 @@ select.theme {
 .prt.merged {
   color: var(--merged);
 }
-.pr.bad {
+.pr[data-tone="bad"] {
   background: var(--danger);
 }
-.pr.warn {
+.pr[data-tone="warn"] {
   background: var(--warn);
 }
-.pr.merged {
+.pr[data-tone="merged"] {
   background: var(--merged);
 }
-.pr.closed {
+.pr[data-tone="closed"] {
   background: var(--dim);
 }
-.pr.review,
-.pr.draft {
+.pr[data-tone="review"],
+.pr[data-tone="draft"] {
   background: transparent;
   color: var(--fg);
   border-color: var(--dim);
 }
-.pr.draft {
+.pr[data-tone="draft"] {
   color: var(--dim);
   border-style: dashed;
 }
