@@ -108,6 +108,9 @@ let openEl = $state();
 let editingPath = $state(false);
 let openDirs = $state({});
 let showDiff = $state(false);
+let preview = $state(false);
+let previewSrc = $state("");
+let previewReady = $state(false);
 let q = $state("");
 let fq = $state("");
 let dirtyOnly = $state(false);
@@ -151,6 +154,24 @@ const selWt = $derived(
   repos.flatMap((r) => r.worktrees).find((w) => w.path === sel),
 );
 const selFile = $derived(files.find((f) => f.path === file));
+const isHtml = $derived(/\.html?$/i.test(file ?? ""));
+$effect(() => {
+  void sel, void file;
+  previewSrc = "";
+  previewReady = false;
+});
+
+$effect(() => {
+  if (!(preview && isHtml && sel && file)) return void (previewReady = false);
+  void diffTick;
+  const q = `wt=${encodeURIComponent(sel)}&path=${encodeURIComponent(file)}`;
+  fetch(`/api/file?${q}&base=${base}`).then((r) => r.json()).then((d) => {
+    const next = d.work ?? d.base ?? "";
+    if (next !== previewSrc) previewReady = false;
+    previewSrc = next;
+  });
+});
+
 const shownFiles = $derived(files.filter((f) => matchPath(fq, f.path)));
 const stagedFiles = $derived(shownFiles.filter((f) => f.staged));
 const unstagedFiles = $derived(shownFiles.filter((f) => f.unstaged));
@@ -1776,6 +1797,12 @@ function confirmDiscard() {
         <button class="btn" title="discard editor changes, reload from disk"
                 onclick={() => { banner = null; diffRef?.reloadTheirs(); }}>Discard</button>
       {/if}
+      {#if isHtml && !diffDirty}
+        <label class="meta wraplbl">
+          <input type="checkbox" class="cbxin" bind:checked={preview}>
+          <span class="cbx" class:on={preview}></span>Preview
+        </label>
+      {/if}
       <label class="meta wraplbl">
         <input type="checkbox" class="cbxin" bind:checked={wrap} onchange={saveLayout}>
         <span class="cbx" class:on={wrap}></span>Wrap
@@ -1784,7 +1811,13 @@ function confirmDiscard() {
       {@render maxBtn(3)}
     </div>
     <div class="body">
-      {#if sel && file && settings}
+      {#if preview && isHtml && previewSrc}
+        {#key previewSrc}
+          <iframe class="preview" class:ready={previewReady} title="Preview of {file}"
+                  sandbox="allow-scripts" srcdoc={previewSrc}
+                  onload={() => (previewReady = true)}></iframe>
+        {/key}
+      {:else if sel && file && settings}
         <Source bind:this={diffRef} wt={sel} path={file} {base} tick={diffTick} line={pendingLine}
               collapse={{ margin: settings.collapseMargin, minSize: settings.collapseMinSize }}
               single={explore && !(selFile && showDiff)}
@@ -2356,6 +2389,16 @@ dialog.settings::backdrop {
   overflow: auto;
   min-height: 0;
   padding: 0 0.375rem 0.375rem;
+}
+.preview {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: #fff;
+  opacity: 0;
+}
+.preview.ready {
+  opacity: 1;
 }
 .sourceband .body {
   margin: 0 0.5rem 0.5rem;
