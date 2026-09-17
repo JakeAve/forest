@@ -134,6 +134,10 @@ let removing = $state(false);
 let confirming = $state(null);
 let menu = $state(null);
 let menuEl = $state();
+let card = $state(null); // { path, x, y }: PR hover card anchored under a pill
+let cardEl = $state();
+let cardT;
+const cardWt = $derived(card && allWts.find((w) => w.path === card.path));
 let restored = false;
 const initialParams = new URLSearchParams(location.search);
 let restoring = $state(initialParams.has("path"));
@@ -792,6 +796,100 @@ function runItem(item, e) {
   menuEl?.hidePopover();
   item.fn(e);
 }
+
+function showCard(w, e) {
+  clearTimeout(cardT);
+  const box = e.currentTarget.getBoundingClientRect();
+  cardT = setTimeout(async () => {
+    card = {
+      path: w.path,
+      x: Math.round(box.left),
+      y: Math.round(box.bottom + 4),
+    };
+    await tick();
+    if (!cardEl || !card) return;
+    if (!cardEl.matches(":popover-open")) cardEl.showPopover();
+    placeCard();
+  }, 250);
+}
+function placeCard() {
+  if (!cardEl || !card) return;
+  const r = cardEl.getBoundingClientRect();
+  const p = clampMenu(
+    card.x,
+    card.y,
+    r.width,
+    r.height,
+    innerWidth,
+    innerHeight,
+  );
+  cardEl.style.left = `${p.x}px`;
+  cardEl.style.top = `${p.y}px`;
+}
+const holdCard = () => clearTimeout(cardT);
+function hideCard(now) {
+  clearTimeout(cardT);
+  const close = () => {
+    cardEl?.hidePopover();
+    card = null;
+  };
+  if (now) close();
+  else cardT = setTimeout(close, 200);
+}
+
+$effect(() => {
+  if (!card) return;
+  const onKey = (ev) => ev.key === "Escape" && hideCard(true);
+  const onScroll = (ev) => !cardEl?.contains(ev.target) && hideCard(true);
+  addEventListener("keydown", onKey, true);
+  addEventListener("scroll", onScroll, true);
+  return () => {
+    removeEventListener("keydown", onKey, true);
+    removeEventListener("scroll", onScroll, true);
+  };
+});
+
+const CHECK_GLYPH = { pass: "✓", fail: "✗", pending: "●" };
+const MERGE_STATE = {
+  CLEAN: ["Ready", "ok"],
+  HAS_HOOKS: ["Ready", "ok"],
+  BLOCKED: ["Blocked", "warn"],
+  BEHIND: ["Behind", "warn"],
+  UNSTABLE: ["Unstable", "warn"],
+  DIRTY: ["Conflicts", "bad"],
+  DRAFT: ["Draft", "dim"],
+};
+const VERDICT = {
+  APPROVED: ["✓ Approved", "ok"],
+  CHANGES_REQUESTED: ["✗ Changes requested", "bad"],
+  COMMENTED: ["Commented", "dim"],
+};
+
+const prCls = (pr) =>
+  [
+    pr.state === "MERGED" && "merged",
+    pr.state === "CLOSED" && "closed",
+    pr.ci?.state === "pending" && "pending",
+    pr.ci?.state === "fail" && "fail",
+    pr.mergeable === "CONFLICTING" && "conflict",
+    pr.isDraft && "draft",
+    pr.autoMerge && "automerge",
+  ].filter(Boolean).join(" ");
+
+function dur(ms) {
+  if (ms == null || ms < 0) return "–";
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ${String(s % 60).padStart(2, "0")}s`;
+  return `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, "0")}m`;
+}
+const runFor = (c) =>
+  !c.startedAt
+    ? c.bucket === "pending" ? "queued" : "–"
+    : c.bucket === "pending"
+    ? `${dur(now - c.startedAt)}…`
+    : dur((c.completedAt ?? c.startedAt) - c.startedAt);
 
 function wtItems(w, solo = false) {
   const t = !solo && checked[w.path] && checkedWts.length > 1
@@ -1461,24 +1559,13 @@ function confirmDiscard() {
         <span class="prc">
           {#if w.pr}
             {@const t = prTimer(w.pr)}
-            <a class="port pr" class:merged={w.pr.state === "MERGED"}
-               class:closed={w.pr.state === "CLOSED"}
-               class:pending={w.pr.ci?.state === "pending"}
-               class:fail={w.pr.ci?.state === "fail"}
-               class:draft={w.pr.isDraft} class:automerge={w.pr.autoMerge}
+            <a class="port pr {prCls(w.pr)}"
                href={w.pr.url}
                target="_blank" rel="noreferrer"
-               title={[
-                 `${w.pr.state.toLowerCase()} PR #${w.pr.number}`,
-                 w.pr.ci?.state && `CI ${w.pr.ci.state}${
-                   w.pr.ci.failing?.length ? `: ${w.pr.ci.failing.join(", ")}` : ""
-                 }`,
-                 w.pr.reviewDecision &&
-                 w.pr.reviewDecision.toLowerCase().replaceAll("_", " "),
-                 w.pr.isDraft && "draft",
-                 w.pr.autoMerge && "auto-merge enabled",
-                 w.pr.title,
-               ].filter(Boolean).join(" · ")}
+               aria-label={[`${w.pr.state.toLowerCase()} PR #${w.pr.number}`, w.pr.title]
+                 .filter(Boolean).join(": ")}
+               onpointerenter={(e) => showCard(w, e)} onpointerleave={() => hideCard()}
+               onfocus={(e) => showCard(w, e)} onblur={() => hideCard()}
                onclick={(e) => e.stopPropagation()}>#{w.pr.number}{w.pr.reviewDecision ===
               "CHANGES_REQUESTED" ? "!" : ""}{#if w.pr.autoMerge}
                 <svg class="am-icon" viewBox="0 0 16 16" width="10" height="10">
@@ -1695,6 +1782,153 @@ function confirmDiscard() {
         <button class:dg={it.danger} onclick={(e) => runItem(it, e)}>{it.label}{#if it.kbd}<kbd>{it.kbd}</kbd>{/if}</button>
       {/if}
     {/each}
+  </div>
+  <div class="ctx card" popover="manual" bind:this={cardEl}
+       onpointerenter={holdCard} onpointerleave={() => hideCard()}>
+    {#if cardWt?.pr}
+      {@const w = cardWt}
+      {@const p = w.pr}
+      {@const c = p.card}
+      <div class="top">
+        <div class="r">
+          <a class="port pr {prCls(p)}" href={p.url} target="_blank" rel="noreferrer">#{p.number}</a>
+          <span class="st {p.isDraft ? 'draft' : p.state.toLowerCase()}">{p.isDraft ? "Draft" : p.state[0] + p.state.slice(1).toLowerCase()}</span>
+          {#if c}<span class="dim t">by {c.author} · {ago(c.createdAt)}</span><span class="ago">updated {ago(c.updatedAt)}</span>{/if}
+        </div>
+        <div class="ttl">{p.title}</div>
+        {#if c}
+          <div class="r sm">
+            <span class="dim t">{p.baseRefName} ← {c.headRefName}</span>
+            <span class="ago"><span class="ok">+{c.additions}</span> <span class="bad">−{c.deletions}</span> · {c.changedFiles} files</span>
+          </div>
+        {/if}
+      </div>
+      {#if p.state === "OPEN"}
+        {@const ms = MERGE_STATE[c?.mergeState]}
+        <section>
+          <div class="hd"><span>Merge</span>{#if ms}<span class={ms[1]}>{ms[0]}</span>{/if}</div>
+          {#if p.mergeable === "CONFLICTING"}
+            <div class="r bad">Conflicts with {p.baseRefName}</div>
+          {:else}
+            <div class="r dim">No conflicts</div>
+          {/if}
+          <div class="r" class:warn={w.behindMain > 0} class:dim={!w.behindMain}>
+            <span>{w.behindMain ? `↓${w.behindMain} behind` : "Up to date with"} {p.baseRefName}</span>
+            {#if w.behindMain > 0}
+              <button class="btn" disabled={busy["ub:" + w.path]}
+                      onclick={(e) => updateBranch(w, e)}>Update branch</button>
+            {/if}
+          </div>
+          <label class="r">
+            <input type="checkbox" class="cbxin" checked={p.autoMerge} disabled={busy["am:" + w.path]}
+                   onchange={(e) => toggleAutoMerge(w, e)}>
+            <span class="cbx" class:on={p.autoMerge}></span>Auto-merge (squash)
+          </label>
+        </section>
+      {/if}
+      {#if c}
+        {#if c.reviews.length || c.awaiting.length}
+          <section>
+            <div class="hd"><span>Reviews</span></div>
+            {#each c.reviews as rv (rv.login)}
+              <a class="r lk" href={rv.url} target="_blank" rel="noreferrer">
+                <span class="t">{rv.login}</span>
+                <span class={VERDICT[rv.state]?.[1]}>{VERDICT[rv.state]?.[0]}</span>
+                <span class="ago">{ago(rv.at)}</span><span class="go">↗</span>
+              </a>
+            {/each}
+            {#if c.awaiting.length}
+              <details ontoggle={placeCard}>
+                <summary class="hd">{c.awaiting.length} awaiting review</summary>
+                {#each c.awaiting as login (login)}
+                  <div class="r dim">{login}</div>
+                {/each}
+              </details>
+            {/if}
+          </section>
+        {/if}
+        {#if c.threads.length}
+          {@const open = c.threads.filter((t) => !t.resolved)}
+          {@const done = c.threads.filter((t) => t.resolved)}
+          <section>
+            <div class="hd"><span>Code threads</span>
+              <span><span class:warn={open.length}>{open.length} unresolved</span> of {c.threads.length}</span></div>
+            {#each open as t (t.url)}
+              <a class="th" href={t.url} target="_blank" rel="noreferrer">
+                <span class="r0">
+                  <span>{t.login}</span>
+                  <span class="mono dim t">{t.path}{t.line ? `:${t.line}` : ""}</span>
+                  {#if t.tag}<span class="tag {t.tag}">{t.tag}</span>{/if}
+                  <span class="ago">{ago(t.at)}</span><span class="go">↗</span>
+                </span>
+                <span class="txt">{t.body}</span>
+                <span class="meta">{t.replies ? `${t.replies} repl${t.replies === 1 ? "y" : "ies"} · last by ${t.lastBy}` : "No replies"}</span>
+              </a>
+            {/each}
+            {#if done.length}
+              <details ontoggle={placeCard}>
+                <summary class="hd">{done.length} resolved</summary>
+                {#each done as t (t.url)}
+                  <a class="r lk" href={t.url} target="_blank" rel="noreferrer">
+                    <span>{t.login}</span>
+                    <span class="mono dim t">{t.path}{t.line ? `:${t.line}` : ""}</span>
+                    <span class="ago">{ago(t.at)}</span><span class="go">↗</span>
+                  </a>
+                {/each}
+              </details>
+            {/if}
+          </section>
+        {/if}
+        {#if c.comments.length}
+          <section>
+            <details ontoggle={placeCard}>
+              <summary class="hd"><span>Comments</span><span>{c.comments.length}</span></summary>
+              {#each c.comments as cm (cm.url)}
+                <a class="th flat" href={cm.url} target="_blank" rel="noreferrer">
+                  <span class="r0"><span>{cm.login}</span>{#if cm.review}<span class="dim">review</span>{/if}
+                    <span class="ago">{ago(cm.at)}</span><span class="go">↗</span></span>
+                  <span class="txt dim">{cm.body}</span>
+                </a>
+              {/each}
+            </details>
+          </section>
+        {/if}
+        {#if c.checks.length}
+          {@const req = c.checks.filter((k) => k.required)}
+          {@const opt = c.checks.filter((k) => !k.required)}
+          {#snippet checkRow(k)}
+            <a class="r lk chk {k.bucket}" href={k.url} target="_blank" rel="noreferrer">
+              <span class="g">{CHECK_GLYPH[k.bucket] ?? "○"}</span>
+              <span class="t">{k.name}</span>
+              <span class="dur">{runFor(k)}</span>
+              <span class="fin">{k.bucket === "pending" ? "–" : ago(k.completedAt)}</span>
+              <span class="go">↗</span>
+            </a>
+          {/snippet}
+          <section>
+            <div class="hd"><span>{req.length ? "Required checks" : "Checks"}</span>
+              <span class="cols"><span class="dur">ran for</span><span class="fin">finished</span><span class="go"></span></span></div>
+            {#each req.length ? req : opt as k, i (k.url + i)}
+              {@render checkRow(k)}
+            {/each}
+            {#if req.length && opt.length}
+              {@const bad = opt.filter((k) => k.bucket === "fail").length}
+              <details ontoggle={placeCard}>
+                <summary class="hd"><span>{opt.length} optional checks{#if bad} · <span class="bad">{bad} failing</span>{/if}</span></summary>
+                {#each opt as k, i (k.url + i)}
+                  {@render checkRow(k)}
+                {/each}
+              </details>
+            {/if}
+          </section>
+        {/if}
+      {/if}
+      <section class="foot">
+        <a class="btn" href={p.url} target="_blank" rel="noreferrer">Open on GitHub ↗</a>
+        <a class="btn" href="{p.url}/files" target="_blank" rel="noreferrer">Files changed</a>
+        <button class="btn" onclick={(e) => copy(e, p.url, "prlink:" + p.url)}>Copy link</button>
+      </section>
+    {/if}
   </div>
   {#if toast}
     <div class="toast" onclick={() => (toast = "")} role="presentation">
@@ -2364,6 +2598,9 @@ select.theme {
 .pr.fail {
   background: var(--danger);
 }
+.pr.conflict {
+  background: var(--danger);
+}
 .pr.merged {
   border-color: transparent;
   color: var(--bg);
@@ -2657,7 +2894,7 @@ select.theme {
   border-radius: 0.625rem;
   box-shadow: 0 0.5rem 1.5rem color-mix(in srgb, var(--bg) 70%, transparent);
 }
-.ctx button {
+.ctx button:not(.btn) {
   display: block;
   width: 100%;
   text-align: left;
@@ -2676,7 +2913,7 @@ select.theme {
   color: var(--dimmer);
   font: 0.6875rem var(--mono);
 }
-.ctx button:hover {
+.ctx button:not(.btn):hover {
   background: var(--hl);
   color: var(--hlfg);
 }
@@ -2686,6 +2923,238 @@ select.theme {
 .ctx button.dg:hover {
   background: color-mix(in srgb, var(--danger) 22%, var(--bg2));
   color: var(--danger);
+}
+.card {
+  width: 27rem;
+  max-width: calc(100vw - 1rem);
+  max-height: calc(100vh - 1rem);
+  overflow-y: auto;
+  padding: 0 0 0.25rem;
+  font: 0.75rem var(--sans);
+  color: var(--fg);
+}
+.card .top {
+  padding: 0.625rem 0.75rem 0.5rem;
+}
+.card .r,
+.card .r0 {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+.card section .r {
+  padding: 0.1875rem 0.375rem;
+  border-radius: 0.375rem;
+}
+.card .ttl {
+  font-size: 0.8125rem;
+  line-height: 1.35;
+  margin: 0.25rem 0 0.375rem;
+}
+.card .sm {
+  font: 0.6875rem var(--mono);
+}
+.card .st {
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  padding: 0 0.4375rem;
+  font-size: 0.6875rem;
+  color: var(--acc);
+}
+.card .st.draft,
+.card .st.closed {
+  color: var(--dim);
+}
+.card .st.merged {
+  color: var(--merged);
+}
+.card section {
+  border-top: 1px solid var(--line);
+  padding: 0.5rem 0.375rem;
+}
+.card .hd {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--dim);
+  font-size: 0.6875rem;
+  padding: 0 0.375rem;
+  margin-bottom: 0.25rem;
+}
+.card summary.hd {
+  justify-content: flex-start;
+}
+.card summary.hd > span + span {
+  margin-left: auto;
+}
+.card summary {
+  list-style: none;
+  cursor: pointer;
+  margin: 0.25rem 0 0;
+}
+.card summary::-webkit-details-marker {
+  display: none;
+}
+.card summary::before {
+  content: "▸";
+  display: inline-block;
+  margin-right: 0.3125rem;
+}
+.card details[open] > summary::before {
+  transform: rotate(90deg);
+}
+.card summary:hover {
+  color: var(--fg);
+}
+.card a.lk,
+.card a.th {
+  color: inherit;
+  text-decoration: none;
+}
+.card a.lk:hover,
+.card a.th:hover {
+  background: var(--hl);
+}
+.card .go {
+  width: 0.625rem;
+  color: var(--dim);
+  font-size: 0.6875rem;
+  visibility: hidden;
+}
+.card a:hover .go {
+  visibility: visible;
+}
+.card .th {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+  padding: 0.375rem 0.5rem;
+  margin: 0 0.375rem 0.3125rem;
+}
+.card .th.flat {
+  background: none;
+  border-color: transparent;
+  margin: 0;
+}
+.card .r0 > :first-child {
+  flex: none;
+  white-space: nowrap;
+}
+.card .th .txt {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  max-height: 2.8em;
+  line-height: 1.4;
+  margin: 0.1875rem 0 0.125rem;
+}
+.card .th .meta {
+  display: block;
+  color: var(--dimmer);
+  font-size: 0.6875rem;
+}
+.card .tag {
+  font: 0.6875rem var(--mono);
+  color: var(--dim);
+}
+.card .tag.P0,
+.card .tag.P1 {
+  color: var(--danger);
+}
+.card .tag.P2 {
+  color: var(--warn);
+}
+.card .t {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.card .ago {
+  margin-left: auto;
+  color: var(--dimmer);
+  font: 0.6875rem var(--mono);
+  white-space: nowrap;
+}
+.card .cols {
+  display: flex;
+  gap: 0.5rem;
+}
+.card .dur,
+.card .fin {
+  flex: none;
+  text-align: right;
+  font: 0.6875rem var(--mono);
+  color: var(--dim);
+}
+.card .dur {
+  width: 4.25rem;
+  margin-left: auto;
+}
+.card .fin {
+  width: 3.25rem;
+  color: var(--dimmer);
+}
+.card .cols .dur,
+.card .cols .fin {
+  font-family: var(--sans);
+  color: var(--dim);
+}
+.card .chk.pending .dur {
+  color: var(--warn);
+}
+.card .ok {
+  color: var(--acc);
+}
+.card .warn {
+  color: var(--warn);
+}
+.card .bad {
+  color: var(--danger);
+}
+.card .dim {
+  color: var(--dim);
+}
+.card .mono {
+  font: 0.6875rem var(--mono);
+}
+.card label.r {
+  cursor: pointer;
+}
+.card .cbx {
+  flex: none;
+}
+.card .g {
+  width: 1em;
+  flex: none;
+  text-align: center;
+  font: 0.75rem var(--mono);
+}
+.card .chk.pass .g {
+  color: var(--acc);
+}
+.card .chk.fail .g {
+  color: var(--danger);
+}
+.card .chk.pending .g {
+  color: var(--warn);
+}
+.card .chk.skipping .g,
+.card .chk.cancel .g {
+  color: var(--dim);
+}
+.card .foot {
+  display: flex;
+  gap: 0.375rem;
+  padding: 0.5rem 0.75rem 0.25rem;
+}
+.card .foot .btn {
+  text-decoration: none;
 }
 .ctx hr {
   border: none;

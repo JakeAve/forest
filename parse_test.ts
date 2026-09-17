@@ -2,6 +2,7 @@ import { assertEquals, assertThrows } from "@std/assert";
 import type { DiffWorktree } from "./parse.ts";
 import {
   ancestorDirs,
+  approvals,
   backoffOver,
   ciSince,
   ciSummary,
@@ -24,6 +25,7 @@ import {
   parseUpstreamTrack,
   parseWorktreeList,
   pool,
+  prCard,
   previewSkip,
   procsByCwd,
   qbool,
@@ -33,6 +35,7 @@ import {
   removeSummary,
   reviewSince,
   selectWt,
+  snippet,
   statusCounts,
   TREE_CAP,
   treeRows,
@@ -796,6 +799,153 @@ Deno.test("reviewSince: latest matching review, or null if none match", () => {
   );
   assertEquals(reviewSince([{ state: "COMMENTED" }], "APPROVED"), null);
   assertEquals(reviewSince([{ state: "APPROVED" }], ""), null);
+});
+
+Deno.test("approvals: distinct reviewers by latest verdict, comments ignored", () => {
+  const a = { login: "a" }, b = { login: "b" };
+  assertEquals(
+    approvals([
+      { author: a, state: "APPROVED", submittedAt: "2026-01-01T00:00:00Z" },
+      { author: a, state: "COMMENTED", submittedAt: "2026-01-02T00:00:00Z" },
+      { author: b, state: "APPROVED", submittedAt: "2026-01-01T00:00:00Z" },
+      {
+        author: b,
+        state: "CHANGES_REQUESTED",
+        submittedAt: "2026-01-03T00:00:00Z",
+      },
+    ]),
+    1,
+  );
+  assertEquals(approvals([]), 0);
+});
+
+Deno.test("prCard: verdicts outrank comments, author and empty bodies drop out", () => {
+  const t = (m: number) => `2026-01-01T00:${String(m).padStart(2, "0")}:00Z`;
+  const c = prCard({
+    author: { login: "me" },
+    reviewRequests: {
+      nodes: [{ requestedReviewer: { login: "bob" } }, {
+        requestedReviewer: { name: "team" },
+      }, { requestedReviewer: { login: "ann" } }],
+    },
+    reviews: {
+      nodes: [
+        {
+          author: { login: "ann" },
+          state: "COMMENTED",
+          submittedAt: t(3),
+          url: "r3",
+          body: "",
+        },
+        {
+          author: { login: "ann" },
+          state: "APPROVED",
+          submittedAt: t(1),
+          url: "r1",
+          body: "ok",
+        },
+        {
+          author: { login: "me" },
+          state: "COMMENTED",
+          submittedAt: t(2),
+          url: "r2",
+          body: "",
+        },
+        {
+          author: { login: "bot" },
+          state: "DISMISSED",
+          submittedAt: t(4),
+          url: "r4",
+          body: "",
+        },
+      ],
+    },
+    comments: {
+      nodes: [{
+        author: null,
+        body: "<!-- x -->\n## :tada: **Hi** [there](u)",
+        url: "c1",
+        createdAt: t(5),
+      }],
+    },
+    reviewThreads: {
+      nodes: [{
+        isResolved: false,
+        path: "a.ts",
+        line: null,
+        originalLine: 9,
+        comments: {
+          totalCount: 3,
+          nodes: [{
+            author: { login: "codex" },
+            body: "![P1 Badge](x) fix",
+            url: "d1",
+            createdAt: t(0),
+          }],
+        },
+        last: { nodes: [{ author: { login: "me" } }] },
+      }],
+    },
+    commits: {
+      nodes: [{
+        commit: {
+          statusCheckRollup: {
+            contexts: {
+              nodes: [
+                {
+                  name: "ci",
+                  status: "IN_PROGRESS",
+                  startedAt: t(1),
+                  completedAt: "0001-01-01T00:00:00Z",
+                  isRequired: true,
+                  detailsUrl: "j1",
+                },
+                { name: "skip", status: "COMPLETED", conclusion: "SKIPPED" },
+                {
+                  context: "legacy",
+                  state: "ERROR",
+                  createdAt: t(2),
+                  targetUrl: "s1",
+                },
+              ],
+            },
+          },
+        },
+      }],
+    },
+  });
+  assertEquals(c.reviews, [{
+    login: "ann",
+    state: "APPROVED",
+    at: Date.parse(t(1)),
+    url: "r1",
+  }]);
+  assertEquals(c.awaiting, ["bob", "team"]);
+  assertEquals(c.comments.map((x) => [x.login, x.body, x.review]), [
+    ["ghost", "Hi there", false],
+    ["ann", "ok", true],
+  ]);
+  assertEquals(c.threads[0], {
+    path: "a.ts",
+    line: 9,
+    login: "codex",
+    body: "fix",
+    tag: "P1",
+    url: "d1",
+    at: Date.parse(t(0)),
+    replies: 2,
+    lastBy: "me",
+    resolved: false,
+  });
+  assertEquals(
+    c.checks.map((x) => [x.name, x.bucket, x.required, x.completedAt]),
+    [
+      ["ci", "pending", true, null],
+      ["skip", "skipping", false, null],
+      ["legacy", "fail", false, Date.parse(t(2))],
+    ],
+  );
+  assertEquals(snippet(""), "");
 });
 
 Deno.test("parseLsofCommands and procsByCwd: c lines join to pid->command", () => {

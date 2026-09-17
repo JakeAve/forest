@@ -75,7 +75,12 @@ instead. Right-click any file for its relative or absolute path, or press ⌥⇧
 
 Port detection reads `lsof` and maps listening PIDs to their cwd, then to the
 owning worktree. PRs come from `gh pr list`, so PR badges need the `gh` CLI
-authenticated; everything else works without it.
+authenticated; everything else works without it. Hover (or focus) a PR badge for
+its card, filled by one GraphQL query per open PR: merge state with an
+update-branch button and auto-merge checkbox, reviewers who have responded
+(pending requests collapsed), unresolved code threads with the rest collapsed,
+comments (collapsed), and checks with run time and finish time, optional ones
+collapsed. Every review, thread, comment and check links to GitHub.
 
 ⌘O (or clicking the path in the Files header) turns it into a path box for
 opening anything: absolute paths, `~/…`, a trailing `/`, `path:line` /
