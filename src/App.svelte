@@ -1,6 +1,6 @@
 <script>
 import { tick, untrack } from "svelte";
-import Diff from "./Diff.svelte";
+import Source from "./Source.svelte";
 import Palette from "./Palette.svelte";
 import { matchPath, matchWt, pathText, rank, wtText } from "./filter.js";
 import {
@@ -1277,7 +1277,7 @@ const paletteItems = $derived.by(() => {
     ...(selWt && !loose ? asPalette(wtItems(selWt, true), selWt.branch) : []),
     cmd("Settings", () => dlg.showModal()),
     ...LAYOUTS.map(([p, name]) => cmd(`${name} layout`, () => setPreset(p))),
-    ...["Worktrees", "Files", "Diff"].map((name, i) =>
+    ...["Worktrees", "Files", "Source"].map((name, i) =>
       cmd(
         `${max === i + 1 ? "Restore" : "Maximize"} ${name}`,
         () => toggleMax(i + 1),
@@ -1760,10 +1760,10 @@ function confirmDiscard() {
        onmousedown={(e) => drag(e, 2, b2El)} ondblclick={() => collapse(2)}
        onkeydown={(e) => gutterKey(e, 2, b2El)}></div>
 
-  <div class="band diffband" class:maxed={max === 3}>
+  <div class="band sourceband" class:maxed={max === 3}>
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div class="bhead" oncontextmenu={(e) => file && openMenu(e, fileItems({ path: file }))}>
-      <b>{file ?? (explore ? "File" : "Diff")}</b><span class="sp"></span>
+      <b>{file ?? "Source"}</b><span class="sp"></span>
       {#if explore && selFile}
         <div class="seg">
           <button class:on={!showDiff} onclick={() => (showDiff = false)}>View</button>
@@ -1785,7 +1785,7 @@ function confirmDiscard() {
     </div>
     <div class="body">
       {#if sel && file && settings}
-        <Diff bind:this={diffRef} wt={sel} path={file} {base} tick={diffTick} line={pendingLine}
+        <Source bind:this={diffRef} wt={sel} path={file} {base} tick={diffTick} line={pendingLine}
               collapse={{ margin: settings.collapseMargin, minSize: settings.collapseMinSize }}
               single={explore && !(selFile && showDiff)}
               {split} onsplit={(s) => { split = s; saveLayout(); }} {wrap}
@@ -2269,7 +2269,7 @@ dialog.settings::backdrop {
 .files {
   grid-area: f;
 }
-.diffband {
+.sourceband {
   grid-area: d;
 }
 .g1 {
@@ -2357,7 +2357,7 @@ dialog.settings::backdrop {
   min-height: 0;
   padding: 0 0.375rem 0.375rem;
 }
-.diffband .body {
+.sourceband .body {
   margin: 0 0.5rem 0.5rem;
   padding: 0;
   background: var(--bg);

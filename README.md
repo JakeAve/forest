@@ -94,9 +94,10 @@ files. No git features there, but editing and ⌘S work. Temporary roots last
 until the server restarts.
 
 The layout buttons in the title bar arrange the three panes as a stack, a
-worktree sidebar beside files over diff, or three columns. Each layout keeps its
-own sizes; drag the gaps between panes (or focus one and use the arrow keys) to
-resize, and double-click a gap between stacked panes to collapse the one above.
+worktree sidebar beside files over source, or three columns. Each layout keeps
+its own sizes; drag the gaps between panes (or focus one and use the arrow keys)
+to resize, and double-click a gap between stacked panes to collapse the one
+above.
 
 ⌘K or ⌘P opens the command palette from anywhere, the editor included. It
 fuzzy-searches worktrees, repos, and the selected worktree's folders and files,
