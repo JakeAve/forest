@@ -134,6 +134,10 @@ let removing = $state(false);
 let confirming = $state(null);
 let menu = $state(null);
 let menuEl = $state();
+let card = $state(null); // { path, x, y }: PR hover card anchored under a pill
+let cardEl = $state();
+let cardT;
+const cardWt = $derived(card && allWts.find((w) => w.path === card.path));
 let restored = false;
 const initialParams = new URLSearchParams(location.search);
 let restoring = $state(initialParams.has("path"));
@@ -792,6 +796,66 @@ function runItem(item, e) {
   menuEl?.hidePopover();
   item.fn(e);
 }
+
+function showCard(w, e) {
+  clearTimeout(cardT);
+  const box = e.currentTarget.getBoundingClientRect();
+  cardT = setTimeout(async () => {
+    card = {
+      path: w.path,
+      x: Math.round(box.left),
+      y: Math.round(box.bottom + 4),
+    };
+    await tick();
+    if (!cardEl || !card) return;
+    if (!cardEl.matches(":popover-open")) cardEl.showPopover();
+    const r = cardEl.getBoundingClientRect();
+    const p = clampMenu(
+      card.x,
+      card.y,
+      r.width,
+      r.height,
+      innerWidth,
+      innerHeight,
+    );
+    cardEl.style.left = `${p.x}px`;
+    cardEl.style.top = `${p.y}px`;
+  }, 250);
+}
+const holdCard = () => clearTimeout(cardT);
+function hideCard(now) {
+  clearTimeout(cardT);
+  const close = () => {
+    cardEl?.hidePopover();
+    card = null;
+  };
+  if (now) close();
+  else cardT = setTimeout(close, 200);
+}
+
+$effect(() => {
+  if (!card) return;
+  const onKey = (ev) => ev.key === "Escape" && hideCard(true);
+  const onScroll = () => hideCard(true);
+  addEventListener("keydown", onKey, true);
+  addEventListener("scroll", onScroll, true);
+  return () => {
+    removeEventListener("keydown", onKey, true);
+    removeEventListener("scroll", onScroll, true);
+  };
+});
+
+function reviewLabel(p) {
+  const n = p.approvals
+    ? ` · ${p.approvals} approval${p.approvals === 1 ? "" : "s"}`
+    : "";
+  return {
+    APPROVED: `approved${n}`,
+    CHANGES_REQUESTED: `changes requested${n}`,
+    REVIEW_REQUIRED: `review required${n}`,
+  }[p.reviewDecision] ?? `no review required${n}`;
+}
+const CHECK_GLYPH = { pass: "✓", fail: "✗", pending: "●" };
 
 function wtItems(w, solo = false) {
   const t = !solo && checked[w.path] && checkedWts.length > 1
@@ -1465,20 +1529,14 @@ function confirmDiscard() {
                class:closed={w.pr.state === "CLOSED"}
                class:pending={w.pr.ci?.state === "pending"}
                class:fail={w.pr.ci?.state === "fail"}
+               class:conflict={w.pr.mergeable === "CONFLICTING"}
                class:draft={w.pr.isDraft} class:automerge={w.pr.autoMerge}
                href={w.pr.url}
                target="_blank" rel="noreferrer"
-               title={[
-                 `${w.pr.state.toLowerCase()} PR #${w.pr.number}`,
-                 w.pr.ci?.state && `CI ${w.pr.ci.state}${
-                   w.pr.ci.failing?.length ? `: ${w.pr.ci.failing.join(", ")}` : ""
-                 }`,
-                 w.pr.reviewDecision &&
-                 w.pr.reviewDecision.toLowerCase().replaceAll("_", " "),
-                 w.pr.isDraft && "draft",
-                 w.pr.autoMerge && "auto-merge enabled",
-                 w.pr.title,
-               ].filter(Boolean).join(" · ")}
+               aria-label={[`${w.pr.state.toLowerCase()} PR #${w.pr.number}`, w.pr.title]
+                 .filter(Boolean).join(": ")}
+               onpointerenter={(e) => showCard(w, e)} onpointerleave={() => hideCard()}
+               onfocus={(e) => showCard(w, e)} onblur={() => hideCard()}
                onclick={(e) => e.stopPropagation()}>#{w.pr.number}{w.pr.reviewDecision ===
               "CHANGES_REQUESTED" ? "!" : ""}{#if w.pr.autoMerge}
                 <svg class="am-icon" viewBox="0 0 16 16" width="10" height="10">
@@ -1695,6 +1753,49 @@ function confirmDiscard() {
         <button class:dg={it.danger} onclick={(e) => runItem(it, e)}>{it.label}{#if it.kbd}<kbd>{it.kbd}</kbd>{/if}</button>
       {/if}
     {/each}
+  </div>
+  <div class="ctx card" popover="manual" bind:this={cardEl}
+       onpointerenter={holdCard} onpointerleave={() => hideCard()}>
+    {#if cardWt?.pr}
+      {@const w = cardWt}
+      {@const p = w.pr}
+      <div class="r ttl">
+        <a href={p.url} target="_blank" rel="noreferrer">#{p.number}</a>
+        <span class="t">{p.title}</span>
+      </div>
+      <div class="r"><span>{p.isDraft ? "draft" : p.state.toLowerCase()}</span>
+        <span class="ago">{ago(p.stateSince)}</span></div>
+      {#if p.state === "OPEN"}
+        <div class="r" class:ok={p.reviewDecision === "APPROVED"}
+             class:bad={p.reviewDecision === "CHANGES_REQUESTED"}>
+          <span>{reviewLabel(p)}</span><span class="ago">{ago(p.reviewSince)}</span></div>
+        {#if p.mergeable === "CONFLICTING"}
+          <div class="r bad"><span>conflicts with {p.baseRefName}</span></div>
+        {/if}
+        <div class="r" class:warn={w.behindMain > 0}>
+          <span>{w.behindMain ? `↓${w.behindMain} behind` : "up to date with"} {p.baseRefName}</span>
+          {#if w.behindMain > 0}
+            <button class="btn" disabled={busy["ub:" + w.path]}
+                    onclick={(e) => updateBranch(w, e)}>Update branch</button>
+          {/if}
+        </div>
+        <label class="r">
+          <input type="checkbox" checked={p.autoMerge} disabled={busy["am:" + w.path]}
+                 onchange={(e) => toggleAutoMerge(w, e)}>
+          auto-merge (squash)
+        </label>
+        <div class="r hd">Required checks</div>
+        {#each p.checks ?? [] as c (c.name)}
+          <div class="r chk {c.bucket}">
+            <span class="g">{CHECK_GLYPH[c.bucket] ?? "○"}</span>
+            <span class="t">{c.name}</span>
+            <span class="ago">{c.bucket === "pending" && !c.since ? "queued" : ago(c.since)}</span>
+          </div>
+        {:else}
+          <div class="r dim"><span>none</span></div>
+        {/each}
+      {/if}
+    {/if}
   </div>
   {#if toast}
     <div class="toast" onclick={() => (toast = "")} role="presentation">
@@ -2364,6 +2465,9 @@ select.theme {
 .pr.fail {
   background: var(--danger);
 }
+.pr.conflict {
+  background: var(--danger);
+}
 .pr.merged {
   border-color: transparent;
   color: var(--bg);
@@ -2686,6 +2790,80 @@ select.theme {
 .ctx button.dg:hover {
   background: color-mix(in srgb, var(--danger) 22%, var(--bg2));
   color: var(--danger);
+}
+.card {
+  min-width: 16rem;
+  max-width: 24rem;
+  padding: 0.375rem 0;
+  font: 0.75rem var(--sans);
+  color: var(--fg);
+}
+.card .r {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.1875rem 0.75rem;
+}
+.card .ttl {
+  padding-bottom: 0.375rem;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 0.25rem;
+}
+.card .ttl a {
+  color: var(--acc);
+  font: 0.75rem var(--mono);
+  text-decoration: none;
+}
+.card .ttl a:hover {
+  text-decoration: underline;
+}
+.card .t {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.card .ago {
+  margin-left: auto;
+  color: var(--dim);
+  font: 0.6875rem var(--mono);
+}
+.card .hd {
+  margin-top: 0.25rem;
+  color: var(--dim);
+}
+.card .ok {
+  color: var(--acc);
+}
+.card .warn {
+  color: var(--warn);
+}
+.card .bad {
+  color: var(--danger);
+}
+.card .dim {
+  color: var(--dim);
+}
+.card label.r {
+  cursor: pointer;
+}
+.card .g {
+  width: 1em;
+  text-align: center;
+  font: 0.75rem var(--mono);
+}
+.card .chk.pass .g {
+  color: var(--acc);
+}
+.card .chk.fail .g {
+  color: var(--danger);
+}
+.card .chk.pending .g {
+  color: var(--warn);
+}
+.card .chk.skipping .g,
+.card .chk.cancel .g {
+  color: var(--dim);
 }
 .ctx hr {
   border: none;

@@ -13,7 +13,9 @@ import { basename, dirname, join, relative, resolve } from "@std/path";
 import { matchPath, matchWt } from "./src/filter.js";
 import { mergeInclude, parseThemeText, resolveTheme } from "./src/theme.js";
 import {
+  approvals,
   backoffOver,
+  type Check,
   ciSince,
   ciSummary,
   classifyPath,
@@ -44,6 +46,7 @@ import {
   qnum,
   rateWindow,
   remoteWebUrl,
+  requiredChecks,
   reviewSince,
   selectWt,
   settingsOverrides,
@@ -662,6 +665,8 @@ type Pr = {
   // has no matching timestamp (e.g. a state with no reviews yet).
   ciSince: number | null;
   reviewSince: number | null;
+  approvals: number;
+  checks: Check[]; // required checks only, from `gh pr checks --required`
   detailAt: number | null;
 };
 type PrSlim = Pick<Pr, "number" | "url" | "state" | "stateSince">;
@@ -680,6 +685,8 @@ const NO_DETAIL: Omit<Pr, "number" | "url" | "state" | "stateSince"> = {
   ci: { state: null, failing: [] },
   ciSince: null,
   reviewSince: null,
+  approvals: 0,
+  checks: [],
   detailAt: null,
 };
 const prFor = (
@@ -692,6 +699,52 @@ const prFor = (
     ? { ...p, ...(prDetail.get(`${repo}#${p.number}`) ?? NO_DETAIL) }
     : null;
 };
+
+type PrDetail = Omit<Pr, "number" | "url" | "state" | "stateSince">;
+const PR_VIEW_FIELDS =
+  "title,isDraft,baseRefName,reviewDecision,mergeable,autoMergeRequest,statusCheckRollup,reviews";
+
+// `gh pr checks` exits non-zero for "no checks reported" and may still print
+// its JSON on other non-zero exits; anything unparseable reads as no checks.
+async function fetchChecks(repo: string, n: number): Promise<Check[]> {
+  const out = await exec(repo, [
+    "gh",
+    "pr",
+    "checks",
+    String(n),
+    "--required",
+    "--json",
+    "name,bucket,startedAt,completedAt",
+  ]).catch((e: Error) => e.message);
+  try {
+    return requiredChecks(JSON.parse(out));
+  } catch {
+    return [];
+  }
+}
+
+// deno-lint-ignore no-explicit-any
+function prDetailFields(d: any, checks: Check[], prev?: PrDetail): PrDetail {
+  const now = Date.now();
+  const reviewDecision = d.reviewDecision ?? "";
+  const ci = ciSummary(d.statusCheckRollup ?? []);
+  return {
+    title: d.title,
+    isDraft: d.isDraft,
+    baseRefName: d.baseRefName,
+    reviewDecision,
+    mergeable: d.mergeable,
+    autoMerge: !!d.autoMergeRequest,
+    ci,
+    ciSince: ciSince(d.statusCheckRollup ?? [], ci.state) ??
+      (prev && prev.ci.state === ci.state ? prev.ciSince : now),
+    reviewSince: reviewSince(d.reviews ?? [], reviewDecision) ??
+      (prev && prev.reviewDecision === reviewDecision ? prev.reviewSince : now),
+    approvals: approvals(d.reviews ?? []),
+    checks,
+    detailAt: null,
+  };
+}
 
 // repo path -> earliest next gh call. Only an OPEN pr can change under us, so a
 // repo without one is checked on the idle floor: enough to notice a PR opened in
@@ -781,13 +834,14 @@ async function refreshPrs(repos: Repo[]) {
     );
   });
   await pool(PR_JOBS, jobs, async ([repo, n]) => {
+    const checksP = fetchChecks(repo, n);
     const out = await exec(repo, [
       "gh",
       "pr",
       "view",
       String(n),
       "--json",
-      "title,isDraft,baseRefName,reviewDecision,mergeable,autoMergeRequest,statusCheckRollup,reviews",
+      PR_VIEW_FIELDS,
     ]).catch((e) => {
       stats.ghFailTotal++;
       const first = !ghFailed.has(repo);
@@ -799,26 +853,8 @@ async function refreshPrs(repos: Repo[]) {
       return null;
     });
     if (out === null) return;
-    const d = JSON.parse(out);
-    const reviewDecision = d.reviewDecision ?? "";
-    const ci = ciSummary(d.statusCheckRollup ?? []);
     const prev = prDetail.get(`${repo}#${n}`);
-    const now = Date.now();
-    const fields = {
-      title: d.title,
-      isDraft: d.isDraft,
-      baseRefName: d.baseRefName,
-      reviewDecision,
-      mergeable: d.mergeable,
-      autoMerge: !!d.autoMergeRequest,
-      ci,
-      ciSince: ciSince(d.statusCheckRollup ?? [], ci.state) ??
-        (prev && prev.ci.state === ci.state ? prev.ciSince : now),
-      reviewSince: reviewSince(d.reviews ?? [], reviewDecision) ??
-        (prev && prev.reviewDecision === reviewDecision
-          ? prev.reviewSince
-          : now),
-    };
+    const fields = prDetailFields(JSON.parse(out), await checksP, prev);
     if (
       prev &&
       JSON.stringify({ ...prev, detailAt: null }) ===
@@ -835,17 +871,17 @@ async function refreshPrs(repos: Repo[]) {
 // change should show up now, not up to prPollMs later. Best-effort: caller
 // swallows failures, since the mutation itself already succeeded.
 async function refreshOnePr(repo: string, n: number): Promise<void> {
+  const checksP = fetchChecks(repo, n);
   const out = await exec(repo, [
     "gh",
     "pr",
     "view",
     String(n),
     "--json",
-    "state,title,isDraft,baseRefName,reviewDecision,mergeable,autoMergeRequest,statusCheckRollup,reviews,createdAt,closedAt,mergedAt",
+    `state,createdAt,closedAt,mergedAt,${PR_VIEW_FIELDS}`,
   ]);
   const d = JSON.parse(out);
   const key = `${repo}#${n}`;
-  const now = Date.now();
 
   const since = Date.parse(
     d.state === "MERGED"
@@ -863,22 +899,9 @@ async function refreshOnePr(repo: string, n: number): Promise<void> {
     }
   }
 
-  const reviewDecision = d.reviewDecision ?? "";
-  const ci = ciSummary(d.statusCheckRollup ?? []);
-  const prev = prDetail.get(key);
   prDetail.set(key, {
-    title: d.title,
-    isDraft: d.isDraft,
-    baseRefName: d.baseRefName,
-    reviewDecision,
-    mergeable: d.mergeable,
-    autoMerge: !!d.autoMergeRequest,
-    ci,
-    ciSince: ciSince(d.statusCheckRollup ?? [], ci.state) ??
-      (prev && prev.ci.state === ci.state ? prev.ciSince : now),
-    reviewSince: reviewSince(d.reviews ?? [], reviewDecision) ??
-      (prev && prev.reviewDecision === reviewDecision ? prev.reviewSince : now),
-    detailAt: now,
+    ...prDetailFields(d, await checksP, prDetail.get(key)),
+    detailAt: Date.now(),
   });
   publish();
 }

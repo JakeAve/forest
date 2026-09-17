@@ -2,6 +2,7 @@ import { assertEquals, assertThrows } from "@std/assert";
 import type { DiffWorktree } from "./parse.ts";
 import {
   ancestorDirs,
+  approvals,
   backoffOver,
   ciSince,
   ciSummary,
@@ -31,6 +32,7 @@ import {
   rateWindow,
   remoteWebUrl,
   removeSummary,
+  requiredChecks,
   reviewSince,
   selectWt,
   statusCounts,
@@ -796,6 +798,53 @@ Deno.test("reviewSince: latest matching review, or null if none match", () => {
   );
   assertEquals(reviewSince([{ state: "COMMENTED" }], "APPROVED"), null);
   assertEquals(reviewSince([{ state: "APPROVED" }], ""), null);
+});
+
+Deno.test("approvals: distinct reviewers by latest verdict, comments ignored", () => {
+  const a = { login: "a" }, b = { login: "b" };
+  assertEquals(
+    approvals([
+      { author: a, state: "APPROVED", submittedAt: "2026-01-01T00:00:00Z" },
+      { author: a, state: "COMMENTED", submittedAt: "2026-01-02T00:00:00Z" },
+      { author: b, state: "APPROVED", submittedAt: "2026-01-01T00:00:00Z" },
+      {
+        author: b,
+        state: "CHANGES_REQUESTED",
+        submittedAt: "2026-01-03T00:00:00Z",
+      },
+    ]),
+    1,
+  );
+  assertEquals(approvals([]), 0);
+});
+
+Deno.test("requiredChecks: since is completedAt, else startedAt, else null", () => {
+  assertEquals(
+    requiredChecks([
+      {
+        name: "ci",
+        bucket: "pass",
+        startedAt: "2026-01-01T00:00:00Z",
+        completedAt: "2026-01-01T00:05:00Z",
+      },
+      {
+        name: "run",
+        bucket: "pending",
+        startedAt: "2026-01-01T00:00:00Z",
+        completedAt: "0001-01-01T00:00:00Z",
+      },
+      { name: "queued", bucket: "pending" },
+    ]),
+    [
+      { name: "ci", bucket: "pass", since: Date.parse("2026-01-01T00:05:00Z") },
+      {
+        name: "run",
+        bucket: "pending",
+        since: Date.parse("2026-01-01T00:00:00Z"),
+      },
+      { name: "queued", bucket: "pending", since: null },
+    ],
+  );
 });
 
 Deno.test("parseLsofCommands and procsByCwd: c lines join to pid->command", () => {

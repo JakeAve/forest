@@ -635,6 +635,43 @@ export function reviewSince(
   return times.length ? Math.max(...times) : null;
 }
 
+export type Check = { name: string; bucket: string; since: number | null };
+
+/** `gh pr checks --required --json name,bucket,startedAt,completedAt` rows. */
+export function requiredChecks(
+  rows: {
+    name?: string;
+    bucket?: string;
+    startedAt?: string;
+    completedAt?: string;
+  }[],
+): Check[] {
+  return rows.map((r) => ({
+    name: r.name ?? "",
+    bucket: r.bucket ?? "pending",
+    since: validTime(r.completedAt) ?? validTime(r.startedAt) ?? null,
+  }));
+}
+
+/** Reviewers whose latest verdict is APPROVED; a comment does not change a verdict. */
+export function approvals(
+  reviews: {
+    author?: { login?: string };
+    state?: string;
+    submittedAt?: string;
+  }[],
+): number {
+  const latest = new Map<string, string>();
+  const sorted = [...reviews].sort((a, b) =>
+    (a.submittedAt ?? "").localeCompare(b.submittedAt ?? "")
+  );
+  for (const r of sorted) {
+    if (r.state === "COMMENTED") continue;
+    latest.set(r.author?.login ?? "", r.state ?? "");
+  }
+  return [...latest.values()].filter((s) => s === "APPROVED").length;
+}
+
 /** Path-shaped input only: anything else is a fuzzy selector, left alone. */
 export const normPath = (p: string, home = "") =>
   p.replace(/^~\/?/, home + "/").replace(/\/+/g, "/").replace(/(.)\/$/, "$1");
