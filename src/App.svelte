@@ -111,6 +111,8 @@ let showDiff = $state(false);
 let preview = $state(false);
 let previewSrc = $state("");
 let previewReady = $state(false);
+let srcBodyEl = $state();
+let rawView = null;
 let q = $state("");
 let fq = $state("");
 let dirtyOnly = $state(false);
@@ -159,7 +161,32 @@ $effect(() => {
   void sel, void file;
   previewSrc = "";
   previewReady = false;
+  rawView = null;
 });
+
+function togglePreview(e) {
+  const on = e.currentTarget.checked;
+  if (on) rawView = { top: srcBodyEl.scrollTop, head: diffRef?.cursor() ?? 0 };
+  preview = on;
+}
+
+function restoreRawView() {
+  if (preview || !rawView) return;
+  const { top, head } = rawView;
+  rawView = null;
+  diffRef?.setCursor(head);
+  // the editor keeps measuring for several frames after build, and a pending
+  // line jump scrolls in its own frame, so hold the offset until it settles
+  let frames = 20;
+  const stop = () => (frames = 0);
+  srcBodyEl.addEventListener("wheel", stop, { once: true, passive: true });
+  const hold = () => {
+    if (frames-- <= 0) return srcBodyEl.removeEventListener("wheel", stop);
+    srcBodyEl.scrollTop = top;
+    requestAnimationFrame(hold);
+  };
+  hold();
+}
 
 $effect(() => {
   if (!(preview && isHtml && sel && file)) return void (previewReady = false);
@@ -1799,7 +1826,7 @@ function confirmDiscard() {
       {/if}
       {#if isHtml && !diffDirty}
         <label class="meta wraplbl">
-          <input type="checkbox" class="cbxin" bind:checked={preview}>
+          <input type="checkbox" class="cbxin" checked={preview} onchange={togglePreview}>
           <span class="cbx" class:on={preview}></span>Preview
         </label>
       {/if}
@@ -1810,7 +1837,7 @@ function confirmDiscard() {
       {#if selFile}<span class="meta mono">+{selFile.added} −{selFile.removed}</span>{/if}
       {@render maxBtn(3)}
     </div>
-    <div class="body">
+    <div class="body" bind:this={srcBodyEl}>
       {#if preview && isHtml && previewSrc}
         {#key previewSrc}
           <iframe class="preview" class:ready={previewReady} title="Preview of {file}"
@@ -1826,7 +1853,8 @@ function confirmDiscard() {
               onconflict={conflictBanner}
               onerror={errBanner}
               oncopy={showToast}
-              onsaved={loadFiles} />
+              onsaved={loadFiles}
+              onready={restoreRawView} />
       {:else}
         <div class="empty">Select a file</div>
       {/if}

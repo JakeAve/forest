@@ -39,6 +39,7 @@ let {
   onerror,
   onsaved,
   oncopy,
+  onready,
 } = $props();
 
 const highlight = syntaxHighlighting(
@@ -294,6 +295,17 @@ function build({ file, hunks }) {
   builtWt = wt;
   builtPath = path;
   if (line && line !== usedLine) scrollToLine(line);
+  onready?.();
+}
+
+export const cursor = () => view?.b.state.selection.main.head ?? 0;
+
+export function setCursor(head) {
+  if (!view) return;
+  view.b.dispatch({
+    selection: { anchor: Math.min(head, view.b.state.doc.length) },
+  });
+  view.b.contentDOM.focus({ preventScroll: true });
 }
 
 async function hunkAct(kind, hunk) {
