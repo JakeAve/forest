@@ -1832,6 +1832,25 @@ function confirmDiscard() {
           </div>
         {/if}
       </div>
+      {@const acts = prActions(w)}
+      {#if acts.length}
+        {@const ask = asking?.path === w.path &&
+          acts.find((a) => a.key === asking.key)}
+        <section class="practs">
+          {#if ask}
+            <span class="q">{ask.confirm}</span>
+            <button class="btn {ask.cls}" disabled={busy["ps:" + w.path]}
+                    onclick={(e) => runAction(ask, w, e)}>{ask.label}</button>
+            <button class="btn" onclick={() => (asking = null)}>Cancel</button>
+          {:else}
+            {#each acts as a (a.key)}
+              <button class="btn {a.cls}"
+                      disabled={busy["ps:" + w.path] || busy["ub:" + w.path]}
+                      onclick={(e) => runAction(a, w, e)}>{a.label}</button>
+            {/each}
+          {/if}
+        </section>
+      {/if}
       {#if p.state === "OPEN"}
         {@const behind = prAb(w).behind}
         <section>
@@ -1951,25 +1970,6 @@ function confirmDiscard() {
             {/if}
           </section>
         {/if}
-      {/if}
-      {@const acts = prActions(w)}
-      {#if acts.length}
-        {@const ask = asking?.path === w.path &&
-          acts.find((a) => a.key === asking.key)}
-        <section class="practs">
-          {#if ask}
-            <span class="q">{ask.confirm}</span>
-            <button class="btn {ask.cls}" disabled={busy["ps:" + w.path]}
-                    onclick={(e) => runAction(ask, w, e)}>{ask.label}</button>
-            <button class="btn" onclick={() => (asking = null)}>Cancel</button>
-          {:else}
-            {#each acts as a (a.key)}
-              <button class="btn {a.cls}"
-                      disabled={busy["ps:" + w.path] || busy["ub:" + w.path]}
-                      onclick={(e) => runAction(a, w, e)}>{a.label}</button>
-            {/each}
-          {/if}
-        </section>
       {/if}
       <section class="foot">
         <a class="btn" href={p.url} target="_blank" rel="noreferrer">Open on GitHub ↗</a>
