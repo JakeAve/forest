@@ -939,6 +939,18 @@ async function refreshOnePr(repo: string, n: number): Promise<void> {
   publish();
 }
 
+// GitHub recomputes mergeability after a mutation, so the read above can still
+// carry the old mergeStateStatus -- or UNKNOWN, which the pill shows as
+// "Checking". Read once more after the beat the watcher already waits after a
+// push. Unrefed: a pending recheck must not hold up shutdown.
+function refreshPrSoon(repo: string, n: number): void {
+  const t = setTimeout(
+    () => void refreshOnePr(repo, n).catch(() => {}),
+    PR_PUSH_MS,
+  );
+  Deno.unrefTimer(t);
+}
+
 // ---- files & diff ----
 
 const knownWorktrees = new Map<string, string>(); // wt path -> repo main path
@@ -2289,6 +2301,7 @@ const server = Deno.serve({
             `repos/{owner}/{repo}/pulls/${n}/update-branch`,
           ]);
           await refreshOnePr(knownWorktrees.get(wt)!, n).catch(() => {});
+          refreshPrSoon(knownWorktrees.get(wt)!, n);
           break;
         }
         case "/api/auto-merge": {
@@ -2301,6 +2314,7 @@ const server = Deno.serve({
               : ["gh", "pr", "merge", String(n), "--disable-auto"],
           );
           await refreshOnePr(knownWorktrees.get(wt)!, n).catch(() => {});
+          refreshPrSoon(knownWorktrees.get(wt)!, n);
           // the merge landed on the remote, not locally — fetch so the
           // ahead/behind-vs-base afterMutation() recomputes below isn't
           // reading last sweep's now-stale refs.
@@ -2344,6 +2358,7 @@ const server = Deno.serve({
           if (!args) throw new Error("bad pr action");
           await exec(wt, ["gh", "pr", ...args]);
           await refreshOnePr(knownWorktrees.get(wt)!, n).catch(() => {});
+          refreshPrSoon(knownWorktrees.get(wt)!, n);
           break;
         }
         case "/api/wt-remove": {
