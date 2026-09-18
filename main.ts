@@ -28,13 +28,10 @@ import {
   parseDiffHunks,
   parseGrep,
   parseIgnored,
-  parseLsofCommands,
-  parseLsofPidPorts,
   parseOpenInput,
   parseStatus,
   pool,
   previewSkip,
-  procsByCwd,
   qbool,
   qnum,
   rateWindow,
@@ -44,9 +41,12 @@ import {
 import { createExec } from "./exec.ts";
 import { createRepo, REPO_JOBS } from "./repo.ts";
 import { createPrs } from "./prs.ts";
+import { createPorts } from "./ports.ts";
+import { createSse, enc } from "./sse.ts";
+import { createStore } from "./store.ts";
 import { DEFAULTS, loadSettings, saveSettings } from "./settings.ts";
-import { bumpMax, MAX_FIELDS, newStats, statsLine, timed } from "./stats.ts";
-import type { Procs, Repo, Tree, Worktree, WtRow } from "./types.ts";
+import { bumpMax, MAX_FIELDS, newStats, statsLine } from "./stats.ts";
+import type { Repo, Tree, WtRow } from "./types.ts";
 
 const HOME = Deno.env.get("HOME")!;
 const SETTINGS_PATH = join(HOME, ".forest", "settings.json");
@@ -99,35 +99,10 @@ async function loadVsCodeTheme(path: string): Promise<unknown> {
 }
 const stats = newStats();
 const sh = createExec(stats);
-const { exec, git, tryGit, gitIn, lsof } = sh;
+const { exec, git, tryGit, gitIn } = sh;
 const repo = createRepo({ sh, root: ROOT });
-
-// ---- listening dev servers ----
-
-// GLOBAL and timed: one lsof for the whole machine, PID -> cwd -> worktree.
-// It cannot be attributed to one repo, so it can never be recomputed per repo;
-// it gets its own cadence and is merged into the snapshot by publish().
-let procsByCwdCache = new Map<string, Procs>();
-
-async function refreshPorts() {
-  procsByCwdCache = await timed(stats, "portsMs", listeningPorts());
-}
-
-async function listeningPorts(): Promise<Map<string, Procs>> {
-  const net = await lsof("-nP", "-iTCP", "-sTCP:LISTEN", "-Fpcn");
-  const byPid = parseLsofPidPorts(net);
-  if (!byPid.size) return new Map();
-  const cmds = parseLsofCommands(net);
-  const cwds = await lsof(
-    "-a",
-    "-d",
-    "cwd",
-    "-Fpn",
-    "-p",
-    [...byPid.keys()].join(","),
-  );
-  return procsByCwd(byPid, cmds, cwds);
-}
+const sse = createSse();
+const ports = createPorts(sh, stats);
 
 // ---- open pull requests ----
 
@@ -135,13 +110,18 @@ const prs = createPrs({
   sh,
   settings: SETTINGS,
   stats,
-  onChange: () => publish(),
+  onChange: () => store.publish(),
 });
 
-// ---- files & diff ----
+const store = createStore({
+  prFor: (r, w) => prs.prFor(r, w),
+  procs: () => ports.current(),
+  onSnapshot: (j) => sse.broadcast(j),
+  stats,
+});
+const { byPath: repoByPath, known: knownWorktrees, repoPaths } = store;
 
-const knownWorktrees = new Map<string, string>(); // wt path -> repo main path
-const repoPaths = new Map<string, string>();
+// ---- files & diff ----
 
 function guardWt(wt: string | null): string {
   if (!wt || !knownWorktrees.has(wt)) {
@@ -333,96 +313,7 @@ async function walkTree(root: string): Promise<Tree> {
   return { files, dirs, ignored: dirs };
 }
 
-// ---- SSE ----
-// ponytail: polls every worktree every pollMs; scope to expanded repo groups if it ever feels slow
-
-const enc = new TextEncoder();
-const clients = new Set<ReadableStreamDefaultController>();
-let snapshot = "[]";
-
-function send(chunk: Uint8Array) {
-  for (const c of clients) {
-    try {
-      c.enqueue(chunk);
-    } catch {
-      clients.delete(c);
-    }
-  }
-}
-
-function broadcast(s: string) {
-  send(enc.encode(`data: ${s}\n\n`));
-}
-
-// A silent stream is indistinguishable from a dead one: enqueue on a dead
-// socket buffers rather than throwing, so the server keeps a zombie client and
-// the browser fires no error, never reconnects, and shows stale data until a
-// manual refresh. EventSource ignores comment lines.
-setInterval(() => send(enc.encode(": ping\n\n")), 20_000);
-
-// Boot progress rides a named event so the snapshot stays a bare array. The
-// first sweep publishes each repo as it lands, so the list fills in instead of
-// appearing all at once; this says how much is still coming.
 let booted = false;
-let bootStatus = { phase: "repos", done: 0, total: 0 };
-const statusChunk = () =>
-  enc.encode(`event: status\ndata: ${JSON.stringify(bootStatus)}\n\n`);
-
-function setStatus(o: Partial<typeof bootStatus>) {
-  bootStatus = { ...bootStatus, ...o };
-  send(statusChunk());
-}
-
-// ---- snapshot assembly ----
-// The snapshot has three sources on three cadences: git data
-// per repo (event-driven), ports globally (timed), PRs per repo (timed). This
-// map is the source of truth; the snapshot is derived from it, so a partial
-// recompute only has to replace one entry.
-const repoByPath = new Map<string, Repo>();
-
-// Rebuilds knownWorktrees/repoPaths from the whole map every time, so a partial
-// recompute can never drop a still-live worktree from the guardWt allowlist.
-// Synchronous throughout: no request can observe the map half-rebuilt.
-function publish() {
-  const repos = [...repoByPath.values()].sort((a, b) =>
-    a.name.localeCompare(b.name)
-  );
-  knownWorktrees.clear();
-  repoPaths.clear();
-  const wtByPath = new Map<string, Worktree>();
-  for (const r of repos) {
-    repoPaths.set(r.name, r.path);
-    for (const w of r.worktrees) {
-      knownWorktrees.set(w.path, r.path);
-      wtByPath.set(w.path, w);
-      w.pr = prs.prFor(r.path, w);
-      w.ports = []; // recomputed from scratch: publish() runs on live objects
-      w.procs = [];
-    }
-  }
-  const wtPaths = [...wtByPath.keys()];
-  for (const [cwd, procs] of procsByCwdCache) {
-    const w = wtByPath.get(ownerWorktree(cwd, wtPaths) ?? "");
-    if (w) {
-      const byKey = new Map(
-        [...w.procs, ...procs].map((p) => [`${p.pid}:${p.port}`, p]),
-      );
-      w.procs = [...byKey.values()].sort((a, b) => a.port - b.port);
-    }
-  }
-  for (const w of wtByPath.values()) {
-    w.ports = [...new Set(w.procs.map((p) => p.port))].sort((a, b) => a - b);
-  }
-  const s = JSON.stringify(repos);
-  if (s !== snapshot) {
-    snapshot = s;
-    stats.broadcastsTotal++;
-    stats.snapshotBytes = s.length;
-    broadcast(s);
-  }
-  stats.repos = repos.length;
-  stats.worktrees = knownWorktrees.size;
-}
 
 // ---- divergence: the actual experiment ----
 // When the safety-net sweep asked for a check. A timestamp, not a flag,
@@ -512,7 +403,7 @@ function sweepAll(): Promise<void> {
     touched = new Set([...dirty].map((wt) => knownWorktrees.get(wt) ?? wt));
     const t0 = performance.now();
     const dirs = await repo.repoDirs();
-    if (!booted) setStatus({ phase: "repos", done: 0, total: dirs.length });
+    if (!booted) sse.setStatus({ phase: "repos", done: 0, total: dirs.length });
     let done = 0;
     const repos = await pool(
       REPO_JOBS,
@@ -525,8 +416,8 @@ function sweepAll(): Promise<void> {
         // extra root rescan — it self-corrects on the next publish.
         if (!booted) {
           if (r) repoByPath.set(r.path, r);
-          setStatus({ done: ++done });
-          publish();
+          sse.setStatus({ done: ++done });
+          store.publish();
         }
         return r;
       },
@@ -558,14 +449,14 @@ async function poll() {
   // paint without it — at boot that is ~half the wait, and it is the only stage
   // that depends on the network. The PR tags land on the second publish.
   const prsDone = prs.refreshPrs(repos);
-  await refreshPorts();
-  publish();
-  if (!booted) setStatus({ phase: "prs" });
+  await ports.refresh();
+  store.publish();
+  if (!booted) sse.setStatus({ phase: "prs" });
   await prsDone;
-  publish();
+  store.publish();
   if (!booted) {
     booted = true;
-    setStatus({ phase: "ready" });
+    sse.setStatus({ phase: "ready" });
   }
   stats.pollsTotal++;
   stats.pollMs = Math.round(performance.now() - t0);
@@ -791,7 +682,7 @@ async function drain() {
         bumpMax(stats, "recomputeMsMax", rms);
         for (const wt of wts) hotEntry(wt).win.add(Date.now());
       });
-      if (run.length) publish();
+      if (run.length) store.publish();
     }
   } finally {
     draining = false;
@@ -897,7 +788,7 @@ async function watchLoop() {
 }
 
 const gauges = () => ({
-  clients: clients.size,
+  clients: sse.size(),
   mode: mode(),
   watchDirty: dirty.size,
   hotWts: [...hot.values()].filter((h) => h.st).length,
@@ -959,6 +850,8 @@ setInterval(() => {
   stats.lagMsTotal += lag;
   bumpMax(stats, "lagMsMax", lag);
 }, LAG_MS);
+
+setInterval(sse.ping, 20_000);
 
 setInterval(() => {
   logLine({ type: "stats", ...statsLine(stats, SETTINGS, gauges()) });
@@ -1038,9 +931,9 @@ let lastSafetySweep = Date.now();
           checkRequestedAt = Date.now();
           await poll();
         } else {
-          await refreshPorts();
+          await ports.refresh();
           await prs.refreshPrs([...repoByPath.values()]);
-          publish();
+          store.publish();
         }
       } else await poll();
     } catch (e) {
@@ -1234,13 +1127,13 @@ const server = Deno.serve({
       const stream = new ReadableStream({
         start(c) {
           ctrl = c;
-          clients.add(c);
-          c.enqueue(enc.encode(`data: ${snapshot}\n\n`));
+          sse.add(c);
+          c.enqueue(enc(`data: ${store.snapshot()}\n\n`));
           // a client that connects after boot must not be left on a spinner
-          c.enqueue(statusChunk());
+          c.enqueue(sse.statusChunk());
         },
         cancel() {
-          clients.delete(ctrl);
+          sse.remove(ctrl);
         },
       });
       return new Response(stream, {
@@ -1528,7 +1421,7 @@ const server = Deno.serve({
         }
         case "/api/kill-pid": {
           const pid = Number(b.pid);
-          const known = [...procsByCwdCache.values()].some((procs) =>
+          const known = [...ports.current().values()].some((procs) =>
             procs.some((p) => p.pid === pid)
           );
           if (!Number.isInteger(pid) || !known) {

@@ -7,6 +7,7 @@ export function fakeExec(
   const calls: string[] = [];
   const missing: string[] = [];
 
+  // deno-lint-ignore require-await
   const exec: Exec = async (cwd, cmd) => {
     const key = cmd.join(" ");
     calls.push(`${cwd} $ ${key}`);
