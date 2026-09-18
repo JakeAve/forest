@@ -2,7 +2,6 @@ import { assert, assertEquals } from "@std/assert";
 import { FakeTime } from "@std/testing/time";
 import { fakeExec, GH_CARD, GH_PR_LIST, GH_PR_VIEW } from "./fixtures.ts";
 import { createPrs } from "./prs.ts";
-import type { Shell } from "./exec.ts";
 import { DEFAULTS } from "./settings.ts";
 import { newStats } from "./stats.ts";
 import type { Repo, Worktree } from "./types.ts";
@@ -26,13 +25,7 @@ const make = (table: Record<string, Entry>) => {
         ? GH_CARD
         : t[k as string],
   });
-  const fake = fakeExec(proxied);
-  // a real gh failure is a rejection; fakeExec's table entries throw synchronously
-  const sh: Shell = {
-    ...fake,
-    exec: (cwd, cmd, stdin) =>
-      Promise.resolve().then(() => fake.exec(cwd, cmd, stdin)),
-  };
+  const sh = fakeExec(proxied);
   const stats = newStats();
   let changes = 0;
   const prs = createPrs({
@@ -44,8 +37,8 @@ const make = (table: Record<string, Entry>) => {
   return {
     prs,
     stats,
-    calls: fake.calls,
-    lists: () => fake.calls.filter((c) => c.includes("gh pr list")).length,
+    calls: sh.calls,
+    lists: () => sh.calls.filter((c) => c.includes("gh pr list")).length,
     changed: () => changes,
   };
 };

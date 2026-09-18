@@ -7,7 +7,7 @@ export function fakeExec(
   const calls: string[] = [];
   const missing: string[] = [];
 
-  const exec: Exec = (cwd, cmd) => {
+  const exec: Exec = async (cwd, cmd) => {
     const key = cmd.join(" ");
     calls.push(`${cwd} $ ${key}`);
     const hit = table[key];
@@ -16,9 +16,9 @@ export function fakeExec(
       if (opts?.fallback === undefined) {
         throw new Error(`fakeExec: no entry for ${key}`);
       }
-      return Promise.resolve(opts.fallback);
+      return opts.fallback;
     }
-    return Promise.resolve(typeof hit === "function" ? hit(cwd) : hit);
+    return typeof hit === "function" ? hit(cwd) : hit;
   };
 
   const git = (cwd: string, ...args: string[]) => exec(cwd, ["git", ...args]);
@@ -29,14 +29,11 @@ export function fakeExec(
     exec,
     git,
     tryGit: (cwd, ...args) =>
-      Promise.resolve()
-        .then(() => git(cwd, "--no-optional-locks", ...args))
-        .catch(() => null),
+      git(cwd, "--no-optional-locks", ...args).catch(() => null),
     gitIn: async (cwd, _stdin, ...args) => {
       await git(cwd, ...args);
     },
-    lsof: (...args) =>
-      Promise.resolve().then(() => exec("", ["lsof", ...args])).catch(() => ""),
+    lsof: (...args) => exec("", ["lsof", ...args]).catch(() => ""),
   };
 }
 
