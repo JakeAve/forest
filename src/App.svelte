@@ -108,6 +108,7 @@ let treeOf = $state(null);
 let openEl = $state();
 let editingPath = $state(false);
 let newing = $state(false);
+let renameFrom = $state(null);
 let newEl;
 let selDir = $state(null);
 let openDirs = $state({});
@@ -481,23 +482,38 @@ async function editPath() {
   openEl.select();
 }
 
-async function startNew() {
+async function startNew(from = null, e) {
+  e?.stopPropagation();
+  renameFrom = from;
   newing = true;
   await tick();
-  newEl.value = file ? file.replace(/[^/]*$/, "") : "";
+  newEl.value = from ?? (file ? file.replace(/[^/]*$/, "") : "");
   newEl.focus();
+  if (from) newEl.setSelectionRange(from.lastIndexOf("/") + 1, from.length);
 }
 
 async function newBoxKey(e) {
   if (e.key === "Escape") return newEl.blur();
   if (e.key !== "Enter") return;
   const path = newEl.value.trim().replace(/^\/+/, "");
-  if (!path || !await act("new", { wt: sel, path }, "new")) return;
+  const from = renameFrom;
+  if (!path || path === from) return;
+  const ok = from
+    ? await act("rename", { wt: sel, from, to: path }, "new")
+    : await act("new", { wt: sel, path }, "new");
+  if (!ok) return;
   newing = false;
-  if (path.endsWith("/")) {
+  const dir = from
+    ? treeDirs.includes(from) || tree.some((q) => q.startsWith(from + "/"))
+    : path.endsWith("/");
+  if (from) {
+    dropPath(from);
+    if (explore) await loadTree();
+  }
+  if (dir) {
     // ponytail: git can't list an empty dir, so it shows only until the next
     // tree load; it sticks once a file lands in it
-    const d = path.slice(0, -1);
+    const d = path.replace(/\/$/, "");
     treeDirs = [...new Set([...treeDirs, d])];
     reveal(d);
     openDirs[d] = true;
@@ -509,6 +525,14 @@ async function newBoxKey(e) {
     scrollRow(path);
   }
   loadFiles();
+}
+
+function dropPath(p) {
+  const gone = (q) => q === p || q.startsWith(p + "/");
+  tree = tree.filter((q) => !gone(q));
+  treeDirs = treeDirs.filter((q) => !gone(q));
+  if (file && gone(file)) file = null;
+  if (selDir && gone(selDir)) selDir = null;
 }
 
 async function openBoxKey(e) {
@@ -1234,6 +1258,13 @@ function fileItems(f, mode) {
       danger: true,
       fn: (e) => discardArm(f, e),
     },
+    "-",
+    { label: "Rename…", fn: (e) => startNew(f.path, e) },
+    {
+      label: "Delete",
+      danger: true,
+      fn: (e) => discardArm({ path: f.path, del: true }, e),
+    },
   ];
 }
 
@@ -1488,10 +1519,16 @@ function discardArm(f, e) {
   discarding = f;
 }
 
-function confirmDiscard() {
+async function confirmDiscard() {
   const f = discarding;
   discarding = null;
-  op("discard", { path: f.path, untracked: f.status === "U" });
+  if (!f.del) {
+    return op("discard", { path: f.path, untracked: f.status === "U" });
+  }
+  if (await act("delete", { wt: sel, path: f.path }, "delete")) {
+    dropPath(f.path);
+  }
+  loadFiles();
 }
 </script>
 
@@ -1774,11 +1811,12 @@ function confirmDiscard() {
       {/if}
       {#if sel}
         {#if newing}
-          <input class="filter open" placeholder="New file, or end with / for a folder"
+          <input class="filter open"
+                 placeholder={renameFrom ? "New path" : "New file, or end with / for a folder"}
                  bind:this={newEl} onkeydown={newBoxKey} onblur={() => (newing = false)}>
         {:else}
           <button class="btn max" title="New file or folder" aria-label="New file or folder"
-                  onclick={startNew}>＋</button>
+                  onclick={() => startNew()}>＋</button>
         {/if}
       {/if}
       <input class="filter" placeholder="Filter files" bind:value={fq}>
@@ -1791,10 +1829,12 @@ function confirmDiscard() {
     </div>
     {#if discarding}
       <div class="bhead selbar confirm">
-        <b>{discardPrompt(discarding.path, discarding.status === "U")}</b>
+        <b>{discarding.del
+            ? `Delete ${discarding.path}? this cannot be undone`
+            : discardPrompt(discarding.path, discarding.status === "U")}</b>
         <span class="sp"></span>
         <button class="btn dg" onclick={confirmDiscard}>
-          {discarding.status === "U" ? "Delete" : "Discard"}</button>
+          {discarding.del || discarding.status === "U" ? "Delete" : "Discard"}</button>
         <button class="btn" onclick={() => (discarding = null)}>Cancel</button>
       </div>
     {/if}

@@ -2273,7 +2273,8 @@ const server = Deno.serve({
         url.pathname === "/api/kill-pid";
       const wt = noWt
         ? ""
-        : url.pathname === "/api/save" || url.pathname === "/api/new"
+        : ["/api/save", "/api/new", "/api/rename", "/api/delete"]
+            .includes(url.pathname)
         ? guardRoot(b.wt ?? null, req, info)
         : guardWt(b.wt ?? null);
       switch (url.pathname) {
@@ -2456,6 +2457,18 @@ const server = Deno.serve({
           }
           break;
         }
+        case "/api/rename": {
+          const to = join(wt, guardPath(b.to));
+          if (await Deno.lstat(to).catch(() => null)) {
+            throw new Error(`${b.to} already exists`);
+          }
+          await Deno.mkdir(dirname(to), { recursive: true });
+          await Deno.rename(join(wt, guardPath(b.from)), to);
+          break;
+        }
+        case "/api/delete":
+          await Deno.remove(join(wt, guardPath(b.path)), { recursive: true });
+          break;
         case "/api/save": {
           const p = join(wt, guardPath(b.path));
           const cur = await Deno.readTextFile(p).catch(() => null);
