@@ -1,4 +1,5 @@
 import type { Exec, Shell } from "./exec.ts";
+import type { Repo, Worktree } from "./types.ts";
 
 export function fakeExec(
   table: Record<string, string | ((cwd: string) => string)>,
@@ -8,9 +9,9 @@ export function fakeExec(
   const missing: string[] = [];
 
   // deno-lint-ignore require-await
-  const exec: Exec = async (cwd, cmd) => {
+  const exec: Exec = async (cwd, cmd, stdin) => {
     const key = cmd.join(" ");
-    calls.push(`${cwd} $ ${key}`);
+    calls.push(`${cwd} $ ${key}${stdin === undefined ? "" : ` <<< ${stdin}`}`);
     const hit = table[key];
     if (hit === undefined) {
       missing.push(key);
@@ -31,10 +32,49 @@ export function fakeExec(
     git,
     tryGit: (cwd, ...args) =>
       git(cwd, "--no-optional-locks", ...args).catch(() => null),
-    gitIn: async (cwd, _stdin, ...args) => {
-      await git(cwd, ...args);
+    gitIn: async (cwd, stdin, ...args) => {
+      await exec(cwd, ["git", ...args], stdin);
     },
     lsof: (...args) => exec("", ["lsof", ...args]).catch(() => ""),
+  };
+}
+
+export function worktree(over: Partial<Worktree> = {}): Worktree {
+  return {
+    repo: "forest",
+    path: "/r/forest",
+    branch: "main",
+    head: "aaaaaaa1",
+    ahead: 0,
+    behind: 0,
+    aheadMain: 0,
+    behindMain: 0,
+    gone: false,
+    state: null,
+    dirty: 0,
+    staged: 0,
+    modified: 0,
+    untracked: 0,
+    subject: "",
+    author: "",
+    lastActivity: 0,
+    isPrimary: false,
+    remote: null,
+    ports: [],
+    procs: [],
+    pr: null,
+    ...over,
+  };
+}
+
+export function repo(over: Partial<Repo> = {}): Repo {
+  return {
+    name: "forest",
+    path: "/r/forest",
+    webUrl: "https://github.com/x/y",
+    defaultBranch: "main",
+    worktrees: [],
+    ...over,
   };
 }
 
@@ -132,11 +172,9 @@ export const GH_CARD = JSON.stringify({
 export function pushable<T>(): AsyncIterable<T> & {
   push(v: T): void;
   end(): void;
-  fail(e: unknown): void;
 } {
   const queue: T[] = [];
   let done = false;
-  let err: { e: unknown } | null = null;
   let wake: (() => void) | null = null;
   const bump = () => {
     wake?.();
@@ -151,14 +189,9 @@ export function pushable<T>(): AsyncIterable<T> & {
       done = true;
       bump();
     },
-    fail: (e) => {
-      err = { e };
-      bump();
-    },
     async *[Symbol.asyncIterator]() {
       while (true) {
         while (queue.length) yield queue.shift()!;
-        if (err) throw err.e;
         if (done) return;
         await new Promise<void>((r) => wake = r);
       }

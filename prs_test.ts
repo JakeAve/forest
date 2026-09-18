@@ -1,6 +1,13 @@
 import { assert, assertEquals } from "@std/assert";
 import { FakeTime } from "@std/testing/time";
-import { fakeExec, GH_CARD, GH_PR_LIST, GH_PR_VIEW } from "./fixtures.ts";
+import {
+  fakeExec,
+  GH_CARD,
+  GH_PR_LIST,
+  GH_PR_VIEW,
+  repo,
+  worktree,
+} from "./fixtures.ts";
 import { createPrs } from "./prs.ts";
 import { DEFAULTS } from "./settings.ts";
 import { newStats } from "./stats.ts";
@@ -43,39 +50,11 @@ const make = (table: Record<string, Entry>) => {
   };
 };
 
-const wt = (branch: string, remote: string | null = null): Worktree => ({
-  repo: "forest",
-  path: `/r/forest-${branch}`,
-  branch,
-  head: "aaaaaaa1",
-  ahead: 0,
-  behind: 0,
-  aheadMain: 0,
-  behindMain: 0,
-  gone: false,
-  state: null,
-  dirty: 0,
-  staged: 0,
-  modified: 0,
-  untracked: 0,
-  subject: "",
-  author: "",
-  lastActivity: 0,
-  isPrimary: false,
-  remote,
-  ports: [],
-  procs: [],
-  pr: null,
-});
+const wt = (branch: string, remote: string | null = null): Worktree =>
+  worktree({ path: `/r/forest-${branch}`, branch, remote });
 
-const mkRepo = (over: Partial<Repo> = {}): Repo => ({
-  name: "forest",
-  path: REPO,
-  webUrl: "https://github.com/JakeAve/forest",
-  defaultBranch: "main",
-  worktrees: [wt("feat")],
-  ...over,
-});
+const mkRepo = (over: Partial<Repo> = {}): Repo =>
+  repo({ path: REPO, worktrees: [wt("feat")], ...over });
 
 const boom = () => {
   throw new Error("gh: no auth");

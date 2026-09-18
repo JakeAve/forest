@@ -6,7 +6,6 @@ export type StoreApi = {
   byPath: Map<string, Repo>;
   known: Map<string, string>;
   repoPaths: Map<string, string>;
-  repos(): Repo[];
   snapshot(): string;
   publish(): void;
 };
@@ -33,7 +32,6 @@ export function createStore(
     byPath,
     known,
     repoPaths,
-    repos: () => [...byPath.values()],
     snapshot: () => snapshot,
     // Rebuilds knownWorktrees/repoPaths from the whole map every time, so a partial
     // recompute can never drop a still-live worktree from the guardWt allowlist.

@@ -48,7 +48,6 @@ const files = createFiles({
   sh,
   known: store.known,
   mergeBase: repo.mergeBase,
-  home: HOME,
 });
 
 const LOG_PATH = join(HOME, ".forest", "forest-log.jsonl");

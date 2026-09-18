@@ -1,40 +1,15 @@
 import { assertEquals } from "@std/assert";
 import { newStats } from "./stats.ts";
 import { createStore } from "./store.ts";
+import { repo, worktree } from "./fixtures.ts";
 import type { Pr, Procs, Repo, Worktree } from "./types.ts";
 
-const wt = (repo: string, path: string): Worktree => ({
-  repo,
-  path,
-  branch: "main",
-  head: "aaaaaaa1",
-  ahead: 0,
-  behind: 0,
-  aheadMain: 0,
-  behindMain: 0,
-  gone: false,
-  state: null,
-  dirty: 0,
-  staged: 0,
-  modified: 0,
-  untracked: 0,
-  subject: "",
-  author: "",
-  lastActivity: 0,
-  isPrimary: false,
-  remote: null,
-  ports: [],
-  procs: [],
-  pr: null,
-});
-
-const mkRepo = (name: string, wts: string[]): Repo => ({
-  name,
-  path: `/r/${name}`,
-  webUrl: null,
-  defaultBranch: "main",
-  worktrees: wts.map((p) => wt(name, p)),
-});
+const mkRepo = (name: string, wts: string[]): Repo =>
+  repo({
+    name,
+    path: `/r/${name}`,
+    worktrees: wts.map((p) => worktree({ repo: name, path: p })),
+  });
 
 const make = (opts?: {
   prFor?: (repo: string, w: Worktree) => Pr | null;
@@ -129,5 +104,5 @@ Deno.test("publish does not call onSnapshot when the JSON is unchanged", () => {
   store.byPath.set("/r/other", mkRepo("other", ["/r/other"]));
   store.publish();
   assertEquals(sent.length, 2);
-  assertEquals(store.repos().length, 2);
+  assertEquals(store.byPath.size, 2);
 });

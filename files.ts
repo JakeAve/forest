@@ -75,7 +75,6 @@ export function createFiles(deps: {
   sh: Shell;
   known: Map<string, string>;
   mergeBase: RepoApi["mergeBase"];
-  home: string;
 }): FilesApi {
   const { tryGit } = deps.sh;
   const { known } = deps;

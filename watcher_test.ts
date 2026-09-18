@@ -1,57 +1,34 @@
 import { assert, assertEquals, assertStrictEquals } from "@std/assert";
 import { FakeTime } from "@std/testing/time";
-import { pushable } from "./fixtures.ts";
+import { pushable, repo as mkRepo, worktree } from "./fixtures.ts";
 import type { RepoApi } from "./repo.ts";
 import { DEFAULTS } from "./settings.ts";
 import { newStats } from "./stats.ts";
 import { createStore } from "./store.ts";
-import type { Repo, Worktree } from "./types.ts";
+import type { Repo } from "./types.ts";
 import { createWatcher } from "./watcher.ts";
-
-const wt = (repo: string, path: string, isPrimary = false): Worktree => ({
-  repo,
-  path,
-  branch: "main",
-  head: "aaaaaaa1",
-  ahead: 0,
-  behind: 0,
-  aheadMain: 0,
-  behindMain: 0,
-  gone: false,
-  state: null,
-  dirty: 0,
-  staged: 0,
-  modified: 0,
-  untracked: 0,
-  subject: "",
-  author: "",
-  lastActivity: 0,
-  isPrimary,
-  remote: null,
-  ports: [],
-  procs: [],
-  pr: null,
-});
 
 const fixtures = (): Map<string, Repo> =>
   new Map([
-    ["/r/forest", {
-      name: "forest",
-      path: "/r/forest",
-      webUrl: null,
-      defaultBranch: "main",
-      worktrees: [
-        wt("forest", "/r/forest", true),
-        wt("forest", "/r/forest-feat"),
-      ],
-    }],
-    ["/r/other", {
-      name: "other",
-      path: "/r/other",
-      webUrl: null,
-      defaultBranch: "main",
-      worktrees: [wt("other", "/r/other", true)],
-    }],
+    [
+      "/r/forest",
+      mkRepo({
+        worktrees: [
+          worktree({ path: "/r/forest", isPrimary: true }),
+          worktree({ path: "/r/forest-feat" }),
+        ],
+      }),
+    ],
+    [
+      "/r/other",
+      mkRepo({
+        name: "other",
+        path: "/r/other",
+        worktrees: [
+          worktree({ repo: "other", path: "/r/other", isPrimary: true }),
+        ],
+      }),
+    ],
   ]);
 
 type Stream = ReturnType<typeof pushable<{ paths: string[] }>>;
@@ -79,7 +56,6 @@ function make(opts: { openFails?: (call: number) => boolean } = {}) {
     recomputes: [] as string[][],
     repoDirs: 0,
     pushes: [] as string[],
-    failed: new Set<string>(),
     logs: [] as Record<string, unknown>[],
     streams: [] as Stream[],
     opens: 0,
@@ -109,7 +85,6 @@ function make(opts: { openFails?: (call: number) => boolean } = {}) {
     prs: {
       refreshPrs: () => Promise.resolve(),
       pushSoon: (r) => void h.pushes.push(r),
-      isFailed: (r) => h.failed.has(r),
     },
     ports: { refresh: () => Promise.resolve() },
     store,
@@ -380,17 +355,13 @@ Deno.test("computeRepo null keeps the old repo when .git exists and deletes it w
   assertEquals(h.store.known.has("/r/forest-feat"), false);
 });
 
-Deno.test("a refs/remotes event calls prs.pushSoon unless the repo is failed", async () => {
+Deno.test("a refs/remotes event calls prs.pushSoon", async () => {
   using time = new FakeTime();
   using _q = quiet();
   const h = await boot();
   h.streams[0].push(ev("/r/forest/.git/refs/heads/main"));
   h.streams[0].push(ev("/r/forest/.git/refs/remotes/origin/feat"));
   await tick(time, 0);
-  assertEquals(h.pushes, ["/r/forest"]);
-  h.failed.add("/r/forest");
-  h.streams[0].push(ev("/r/forest/.git/refs/remotes/origin/feat"));
-  await tick(time, 300);
   assertEquals(h.pushes, ["/r/forest"]);
 });
 

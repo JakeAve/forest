@@ -20,7 +20,6 @@ const mk = (
     known: new Map(known),
     // deno-lint-ignore require-await
     mergeBase: async () => BASE,
-    home: "/home/jake",
   });
 
 const make = (

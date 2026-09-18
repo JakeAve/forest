@@ -1,54 +1,21 @@
 import { assertEquals } from "@std/assert";
+import { fakeExec, repo as mkRepo, worktree } from "./fixtures.ts";
 import { newStats } from "./stats.ts";
+import { createFiles } from "./files.ts";
 import { createStore } from "./store.ts";
 import { createTools } from "./tools.ts";
 import { DEFAULTS } from "./settings.ts";
-import type { FilesApi } from "./files.ts";
 import type { Pr, Repo, Worktree } from "./types.ts";
 
 const HOME = "/home/jake";
 
-const wt = (
-  repo: string,
-  path: string,
-  o: Partial<Worktree> = {},
-): Worktree => ({
-  repo,
-  path,
-  branch: "main",
-  head: "aaaaaaa1",
-  ahead: 0,
-  behind: 0,
-  aheadMain: 0,
-  behindMain: 0,
-  gone: false,
-  state: null,
-  dirty: 0,
-  staged: 0,
-  modified: 0,
-  untracked: 0,
-  subject: "",
-  author: "",
-  lastActivity: 0,
-  isPrimary: false,
-  remote: null,
-  ports: [],
-  procs: [],
-  pr: null,
-  ...o,
-});
-
 const pr = (state: Pr["state"]) => ({ number: 1, url: "u", state } as Pr);
 
-const mkRepo = (name: string, wts: Worktree[]): Repo => ({
-  name,
-  path: `/r/${name}`,
-  webUrl: "https://github.com/JakeAve/forest",
-  defaultBranch: "main",
-  worktrees: wts,
-});
-
-const make = (repos: Repo[], settings = { ...DEFAULTS }) => {
+const make = (
+  repos: Repo[],
+  settings = { ...DEFAULTS },
+  table: Record<string, string> = {},
+) => {
   const store = createStore({
     prFor: (_r, w) => w.pr,
     procs: () => new Map(),
@@ -57,25 +24,29 @@ const make = (repos: Repo[], settings = { ...DEFAULTS }) => {
   });
   for (const r of repos) store.byPath.set(r.path, r);
   store.publish();
-  return createTools({
-    store,
-    files: {} as FilesApi,
-    settings,
-    home: HOME,
+  const files = createFiles({
+    sh: fakeExec(table),
+    known: store.known,
+    // deno-lint-ignore require-await
+    mergeBase: async () => "HEAD",
   });
+  return createTools({ store, files, settings, home: HOME });
 };
 
 Deno.test("wts filters by pr state and recent", async () => {
   const t = make([
-    mkRepo("forest", [
-      wt("forest", "/r/forest", { lastActivity: 3, pr: pr("OPEN") }),
-      wt("forest", "/r/forest-old", {
-        branch: "old",
-        lastActivity: 2,
-        pr: pr("MERGED"),
-      }),
-      wt("forest", "/r/forest-new", { branch: "new", lastActivity: 1 }),
-    ]),
+    mkRepo({
+      worktrees: [
+        worktree({ path: "/r/forest", lastActivity: 3, pr: pr("OPEN") }),
+        worktree({
+          path: "/r/forest-old",
+          branch: "old",
+          lastActivity: 2,
+          pr: pr("MERGED"),
+        }),
+        worktree({ path: "/r/forest-new", branch: "new", lastActivity: 1 }),
+      ],
+    }),
   ]);
 
   const open = await t.callTool("wts", { pr: "open" }) as Worktree[];
@@ -88,14 +59,14 @@ Deno.test("wts filters by pr state and recent", async () => {
   assertEquals(recent.map((w) => w.path), ["/r/forest", "/r/forest-old"]);
 });
 
-// `wts` itself takes no selector; the ambiguous path is resolveWt, reached by
-// every tool that takes a `wt`.
-Deno.test("wts returns candidates for an ambiguous selector", async () => {
+Deno.test("link returns candidates for an ambiguous wt selector", async () => {
   const t = make([
-    mkRepo("forest", [
-      wt("forest", "/r/forest-a", { branch: "feat-a" }),
-      wt("forest", "/r/forest-b", { branch: "feat-b" }),
-    ]),
+    mkRepo({
+      worktrees: [
+        worktree({ path: "/r/forest-a", branch: "feat-a" }),
+        worktree({ path: "/r/forest-b", branch: "feat-b" }),
+      ],
+    }),
   ]);
 
   const e = await t.callTool("link", { wt: "feat" }).then(
@@ -118,10 +89,12 @@ Deno.test("wts returns candidates for an ambiguous selector", async () => {
 
 Deno.test("whoami returns the owning worktree row", async () => {
   const t = make([
-    mkRepo("forest", [
-      wt("forest", "/r/forest"),
-      wt("forest", "/r/forest/nested", { branch: "nested" }),
-    ]),
+    mkRepo({
+      worktrees: [
+        worktree({ path: "/r/forest" }),
+        worktree({ path: "/r/forest/nested", branch: "nested" }),
+      ],
+    }),
   ]);
 
   assertEquals(
@@ -134,7 +107,7 @@ Deno.test("whoami returns the owning worktree row", async () => {
 });
 
 Deno.test("link builds a forest-app.localhost URL for a loopback host", async () => {
-  const t = make([mkRepo("forest", [wt("forest", "/r/forest")])]);
+  const t = make([mkRepo({ worktrees: [worktree({ path: "/r/forest" })] })]);
   assertEquals(
     await t.callTool("link", { wt: "/r/forest", file: "src/a.ts", line: 12 }),
     {
@@ -143,12 +116,36 @@ Deno.test("link builds a forest-app.localhost URL for a loopback host", async ()
     },
   );
 
-  const lan = make([mkRepo("forest", [wt("forest", "/r/forest")])], {
+  const lan = make([mkRepo({ worktrees: [worktree({ path: "/r/forest" })] })], {
     ...DEFAULTS,
     host: "10.0.0.5",
     port: 1234,
   });
   assertEquals(await lan.callTool("link", { wt: "/r/forest" }), {
     url: "http://10.0.0.5:1234/?wt=%2Fr%2Fforest",
+  });
+});
+
+Deno.test("files lists changed files for a resolved worktree", async () => {
+  const G = "git --no-optional-locks";
+  const t = make(
+    [mkRepo({ worktrees: [worktree({ path: "/r/forest" })] })],
+    undefined,
+    {
+      [`${G} diff --no-renames --name-status -z HEAD`]: "M\0src/a.ts\0",
+      [`${G} diff --no-renames --numstat -z HEAD`]: "1\t2\tsrc/a.ts\0",
+      [`${G} status --porcelain=v2 -z --untracked-files=all`]: "",
+    },
+  );
+  assertEquals(await t.callTool("files", { wt: "/r/forest" }), {
+    base: "HEAD",
+    files: [{
+      path: "src/a.ts",
+      status: "M",
+      added: 1,
+      removed: 2,
+      staged: false,
+      unstaged: false,
+    }],
   });
 });

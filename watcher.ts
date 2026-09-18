@@ -39,7 +39,7 @@ export type WatcherApi = {
 export function createWatcher(
   { repo, prs, ports, store, sse, stats, settings, root, log, watchFs }: {
     repo: RepoApi;
-    prs: Pick<PrsApi, "refreshPrs" | "pushSoon" | "isFailed">;
+    prs: Pick<PrsApi, "refreshPrs" | "pushSoon">;
     ports: { refresh(): Promise<void> };
     store: StoreApi;
     sse: Pick<SseApi, "setStatus">;
@@ -472,12 +472,8 @@ export function createWatcher(
       if (storm) continue; // counted, never marked: that is what bounds the work
       if (rate > settings.watchStormRate) return enterStorm(rate);
       // a push writes refs/remotes/<remote>/<branch>, and `gh pr create` opens the
-      // PR a beat after it: look shortly after the ref, not on it. A repo gh cannot
-      // read is left in its backoff -- pushing to it does not fix the auth.
-      if (
-        repo && bucket === "refs" && !prs.isFailed(repo) &&
-        path.includes("/refs/remotes/")
-      ) {
+      // PR a beat after it: look shortly after the ref, not on it.
+      if (repo && bucket === "refs" && path.includes("/refs/remotes/")) {
         prs.pushSoon(repo, now);
       }
       if (wt) markWt(wt);
@@ -486,7 +482,7 @@ export function createWatcher(
     }
   }
 
-  async function watchLoop() {
+  async function watch() {
     let backoff = 1000;
     let first = true;
     while (true) {
@@ -595,7 +591,7 @@ export function createWatcher(
   }
 
   function start() {
-    if (settings.watch) watchLoop();
+    if (settings.watch) watch();
     (async () => {
       const bootT0 = performance.now();
       await poll().catch((e) => {
@@ -637,7 +633,7 @@ export function createWatcher(
     mode,
     booted: () => booted,
     gauges,
-    watch: watchLoop,
+    watch,
     start,
   };
 }

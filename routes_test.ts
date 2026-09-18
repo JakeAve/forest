@@ -1,6 +1,6 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
-import { fakeExec } from "./fixtures.ts";
+import { fakeExec, repo as mkRepo, worktree } from "./fixtures.ts";
 import { createFiles } from "./files.ts";
 import { createSse } from "./sse.ts";
 import { createStore } from "./store.ts";
@@ -10,42 +10,9 @@ import { DEFAULTS } from "./settings.ts";
 import { newStats } from "./stats.ts";
 import type { PrsApi } from "./prs.ts";
 import type { WatcherApi } from "./watcher.ts";
-import type { Repo, Worktree } from "./types.ts";
+import type { Worktree } from "./types.ts";
 
 const HOME = "/home/jake";
-
-const wt = (repo: string, path: string, branch = "main"): Worktree => ({
-  repo,
-  path,
-  branch,
-  head: "aaaaaaa1",
-  ahead: 0,
-  behind: 0,
-  aheadMain: 0,
-  behindMain: 0,
-  gone: false,
-  state: null,
-  dirty: 0,
-  staged: 0,
-  modified: 0,
-  untracked: 0,
-  subject: "",
-  author: "",
-  lastActivity: 0,
-  isPrimary: false,
-  remote: null,
-  ports: [],
-  procs: [],
-  pr: null,
-});
-
-const mkRepo = (name: string, wts: Worktree[]): Repo => ({
-  name,
-  path: `/r/${name}`,
-  webUrl: null,
-  defaultBranch: "main",
-  worktrees: wts,
-});
 
 const info = (hostname: string) =>
   ({
@@ -77,8 +44,8 @@ const make = (opts?: {
     onSnapshot: () => {},
     stats,
   });
-  const wts = opts?.worktrees ?? [wt("forest", "/r/forest")];
-  store.byPath.set("/r/forest", mkRepo("forest", wts));
+  const wts = opts?.worktrees ?? [worktree({ path: "/r/forest" })];
+  store.byPath.set("/r/forest", mkRepo({ worktrees: wts }));
   store.publish();
 
   const files = createFiles({
@@ -86,7 +53,6 @@ const make = (opts?: {
     known: store.known,
     // deno-lint-ignore require-await
     mergeBase: async () => "HEAD",
-    home: HOME,
   });
 
   const mutations: number[] = [];
@@ -166,10 +132,27 @@ Deno.test("POST /api/stage runs git add -- path and returns ok", async () => {
   assertEquals(mutations.length, 1);
 });
 
+Deno.test("POST /api/stage-hunk pipes the patch to git apply --cached", async () => {
+  const { routes, sh } = make({ table: { "git apply --cached": "" } });
+  const res = await routes(
+    post("/api/stage-hunk", {
+      wt: "/r/forest",
+      patch: "@@ -1 +1 @@\n-a\n+b\n",
+    }),
+    LOCAL,
+  );
+  assertEquals(res.status, 200);
+  assertEquals(sh.calls, [
+    "/r/forest $ git apply --cached <<< @@ -1 +1 @@\n-a\n+b\n",
+  ]);
+});
+
 Deno.test("POST /api/save returns 409 with current when expect mismatches", async () => {
   await withTmp(async (dir) => {
     await Deno.writeTextFile(join(dir, "a.ts"), "on disk");
-    const { routes, mutations } = make({ worktrees: [wt("forest", dir)] });
+    const { routes, mutations } = make({
+      worktrees: [worktree({ path: dir })],
+    });
 
     const bad = await routes(
       post("/api/save", {
@@ -222,7 +205,7 @@ Deno.test("POST /api/wt-create rejects a bad slug and an unknown repo", async ()
 Deno.test("GET /api/open resolves a path inside a known worktree", async () => {
   await withTmp(async (dir) => {
     await Deno.writeTextFile(join(dir, "a.ts"), "x");
-    const { routes } = make({ worktrees: [wt("forest", dir)] });
+    const { routes } = make({ worktrees: [worktree({ path: dir })] });
     const res = await routes(
       get(`/api/open?path=${encodeURIComponent(join(dir, "a.ts"))}:12`),
       LOCAL,
@@ -248,12 +231,11 @@ Deno.test("GET /api/open from a foreign Host is 403", async () => {
   assertStringIncludes(await res.text(), "only opens paths for this machine");
 });
 
-// `wts` takes no selector; /api/t/files is the read-only tool route that resolves one.
-Deno.test("GET /api/t/wts with an ambiguous selector is 400 with candidates", async () => {
+Deno.test("GET /api/t/files with an ambiguous wt is 400 with candidates", async () => {
   const { routes } = make({
     worktrees: [
-      wt("forest", "/r/forest-a", "feat-a"),
-      wt("forest", "/r/forest-b", "feat-b"),
+      worktree({ path: "/r/forest-a", branch: "feat-a" }),
+      worktree({ path: "/r/forest-b", branch: "feat-b" }),
     ],
   });
   const res = await routes(get("/api/t/files?wt=feat"), LOCAL);
@@ -303,7 +285,9 @@ Deno.test("POST /api/rename onto an existing path is 400 already exists", async 
   await withTmp(async (dir) => {
     await Deno.writeTextFile(join(dir, "a.ts"), "a");
     await Deno.writeTextFile(join(dir, "b.ts"), "b");
-    const { routes, mutations } = make({ worktrees: [wt("forest", dir)] });
+    const { routes, mutations } = make({
+      worktrees: [worktree({ path: dir })],
+    });
     const res = await routes(
       post("/api/rename", { wt: dir, from: "a.ts", to: "b.ts" }),
       LOCAL,
