@@ -109,6 +109,7 @@ let openEl = $state();
 let editingPath = $state(false);
 let newing = $state(false);
 let newEl;
+let selDir = $state(null);
 let openDirs = $state({});
 let showDiff = $state(false);
 let preview = $state(false);
@@ -500,9 +501,12 @@ async function newBoxKey(e) {
     treeDirs = [...new Set([...treeDirs, d])];
     reveal(d);
     openDirs[d] = true;
+    selDir = d;
+    scrollRow(d);
   } else {
     tree = [...new Set([...tree, path])];
     pick({ path });
+    scrollRow(path);
   }
   loadFiles();
 }
@@ -573,11 +577,13 @@ function selectWt(path) {
 
 function pick(f) {
   pendingLine = 0;
+  selDir = null;
   file = f.path;
   if (explore) reveal(f.path);
 }
 
 function toggleDir(path) {
+  selDir = path;
   if (openDirs[path]) return delete openDirs[path];
   openDirs[path] = true;
   if (treeDirs.includes(path) && !loadedDirs[path]) loadOpenDirs();
@@ -1766,15 +1772,16 @@ function confirmDiscard() {
                 ])}>{loose ? sel : selWt ? `${selWt.repo} · ${selWt.branch}` : "Open path… ⌘O"}</button>
         <span class="sp"></span>
       {/if}
-      <input class="filter" placeholder="Filter files" bind:value={fq}>
       {#if sel}
         {#if newing}
           <input class="filter open" placeholder="New file, or end with / for a folder"
                  bind:this={newEl} onkeydown={newBoxKey} onblur={() => (newing = false)}>
         {:else}
-          <button class="meta" title="new file or folder" onclick={startNew}>+</button>
+          <button class="btn max" title="New file or folder" aria-label="New file or folder"
+                  onclick={startNew}>＋</button>
         {/if}
       {/if}
+      <input class="filter" placeholder="Filter files" bind:value={fq}>
       {#if !loose}<div class="seg">
         <button class:on={!explore && base === "branch"} onclick={() => setBase("branch")}>Since branch point</button>
         <button class:on={!explore && base === "head"} onclick={() => setBase("head")}>Uncommitted</button>
@@ -1824,7 +1831,7 @@ function confirmDiscard() {
       {#snippet treeRow(r)}
         {@const [dir, name] = fq ? splitPath(r.path) : ["", r.path.split("/").pop()]}
         {@const f = byPath.get(r.path)}
-        <div class="f tr" class:sel={file === r.path} class:ign={isIgnoredPath(r.path, treeIgnored)} role="button" tabindex="0" data-path={r.path}
+        <div class="f tr" class:sel={r.dir ? selDir === r.path : file === r.path} class:ign={isIgnoredPath(r.path, treeIgnored)} role="button" tabindex="0" data-path={r.path}
              style:padding-left="{0.625 + r.depth * 0.875}rem"
              onclick={() => r.dir ? toggleDir(r.path) : pick(r)}
              onkeydown={(e) => e.key === "Enter" ? (r.dir ? toggleDir(r.path) : pick(r)) : menuKey(e, fileItems(r))}
