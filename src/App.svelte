@@ -108,7 +108,7 @@ let treeOf = $state(null);
 let openEl = $state();
 let editingPath = $state(false);
 let newing = $state(false);
-let renameFrom = $state(null);
+let renaming = $state(null);
 let newEl;
 let selDir = $state(null);
 let openDirs = $state({});
@@ -482,48 +482,62 @@ async function editPath() {
   openEl.select();
 }
 
-async function startNew(from = null, e) {
-  e?.stopPropagation();
-  renameFrom = from;
+async function startNew() {
   newing = true;
   await tick();
-  newEl.value = from ?? (file ? file.replace(/[^/]*$/, "") : "");
+  newEl.value = file ? file.replace(/[^/]*$/, "") : "";
   newEl.focus();
-  if (from) newEl.setSelectionRange(from.lastIndexOf("/") + 1, from.length);
 }
 
 async function newBoxKey(e) {
   if (e.key === "Escape") return newEl.blur();
   if (e.key !== "Enter") return;
   const path = newEl.value.trim().replace(/^\/+/, "");
-  const from = renameFrom;
-  if (!path || path === from) return;
-  const ok = from
-    ? await act("rename", { wt: sel, from, to: path }, "new")
-    : await act("new", { wt: sel, path }, "new");
-  if (!ok) return;
+  if (!path || !await act("new", { wt: sel, path }, "new")) return;
   newing = false;
-  const dir = from
-    ? treeDirs.includes(from) || tree.some((q) => q.startsWith(from + "/"))
-    : path.endsWith("/");
-  if (from) {
-    dropPath(from);
-    if (explore) await loadTree();
-  }
+  land(path.replace(/\/$/, ""), path.endsWith("/"));
+}
+
+function startRename(f, e) {
+  e?.stopPropagation();
+  renaming = f.path;
+}
+
+function renameField(el) {
+  el.focus();
+  const dot = el.value.lastIndexOf(".");
+  el.setSelectionRange(0, dot > 0 ? dot : el.value.length);
+}
+
+async function renameKey(e, from) {
+  e.stopPropagation();
+  if (e.key === "Escape") return (renaming = null);
+  if (e.key !== "Enter") return;
+  const name = e.target.value.trim();
+  const to = from.replace(/[^/]*$/, "") + name;
+  renaming = null;
+  if (!name || to === from) return;
+  const dir = treeDirs.includes(from) ||
+    tree.some((q) => q.startsWith(from + "/"));
+  if (!await act("rename", { wt: sel, from, to }, "rename")) return;
+  dropPath(from);
+  if (explore) await loadTree();
+  land(to, dir);
+}
+
+function land(path, dir) {
   if (dir) {
     // ponytail: git can't list an empty dir, so it shows only until the next
     // tree load; it sticks once a file lands in it
-    const d = path.replace(/\/$/, "");
-    treeDirs = [...new Set([...treeDirs, d])];
-    reveal(d);
-    openDirs[d] = true;
-    selDir = d;
-    scrollRow(d);
+    treeDirs = [...new Set([...treeDirs, path])];
+    reveal(path);
+    openDirs[path] = true;
+    selDir = path;
   } else {
     tree = [...new Set([...tree, path])];
     pick({ path });
-    scrollRow(path);
   }
+  scrollRow(path);
   loadFiles();
 }
 
@@ -1259,7 +1273,7 @@ function fileItems(f, mode) {
       fn: (e) => discardArm(f, e),
     },
     "-",
-    { label: "Rename…", fn: (e) => startNew(f.path, e) },
+    { label: "Rename", fn: (e) => startRename(f, e) },
     {
       label: "Delete",
       danger: true,
@@ -1812,11 +1826,11 @@ async function confirmDiscard() {
       {#if sel}
         {#if newing}
           <input class="filter open"
-                 placeholder={renameFrom ? "New path" : "New file, or end with / for a folder"}
+                 placeholder="New file, or end with / for a folder"
                  bind:this={newEl} onkeydown={newBoxKey} onblur={() => (newing = false)}>
         {:else}
           <button class="btn max" title="New file or folder" aria-label="New file or folder"
-                  onclick={() => startNew()}>＋</button>
+                  onclick={startNew}>＋</button>
         {/if}
       {/if}
       <input class="filter" placeholder="Filter files" bind:value={fq}>
@@ -1839,6 +1853,13 @@ async function confirmDiscard() {
       </div>
     {/if}
     <div class="body">
+      {#snippet rowName(path, name)}
+        {#if renaming === path}
+          <input class="ren" value={name} use:renameField
+                 onkeydown={(e) => renameKey(e, path)} onblur={() => (renaming = null)}
+                 onclick={(e) => e.stopPropagation()}>
+        {:else}{name}{/if}
+      {/snippet}
       {#snippet fileRow(f, mode)}
         {@const [dir, name] = splitPath(f.path)}
         <div class="f" class:sel={file === f.path} role="button" tabindex="0"
@@ -1855,7 +1876,7 @@ async function confirmDiscard() {
                   onkeydown={(e) => e.key === "Enter" && op(mode === "staged" ? "unstage" : "stage", { path: f.path }, e)}></span>
           {/if}
           <span class="st {f.status}">{f.status === "U" ? "?" : f.status}</span>
-          <span class="p"><span class="dir">{dir}</span>{name}</span>
+          <span class="p"><span class="dir">{dir}</span>{@render rowName(f.path, name)}</span>
           <span class="acts">
             {#if mode === "staged"}
               <button onclick={(e) => op("unstage", { path: f.path }, e)}>Unstage</button>
@@ -1871,13 +1892,13 @@ async function confirmDiscard() {
       {#snippet treeRow(r)}
         {@const [dir, name] = fq ? splitPath(r.path) : ["", r.path.split("/").pop()]}
         {@const f = byPath.get(r.path)}
-        <div class="f tr" class:sel={r.dir ? selDir === r.path : file === r.path} class:ign={isIgnoredPath(r.path, treeIgnored)} role="button" tabindex="0" data-path={r.path}
+        <div class="f tr" class:sel={r.dir ? selDir === r.path : !selDir && file === r.path} class:ign={isIgnoredPath(r.path, treeIgnored)} role="button" tabindex="0" data-path={r.path}
              style:padding-left="{0.625 + r.depth * 0.875}rem"
              onclick={() => r.dir ? toggleDir(r.path) : pick(r)}
              onkeydown={(e) => e.key === "Enter" ? (r.dir ? toggleDir(r.path) : pick(r)) : menuKey(e, fileItems(r))}
              oncontextmenu={(e) => openMenu(e, fileItems(r))}>
           <span class="car">{r.dir ? (openDirs[r.path] ? "▼" : "▶") : ""}</span>
-          <span class="p" title={r.path}><span class="dir">{dir}</span>{name}{r.dir ? "/" : ""}</span>
+          <span class="p" title={r.path}><span class="dir">{dir}</span>{@render rowName(r.path, name)}{r.dir && renaming !== r.path ? "/" : ""}</span>
           {#if f}
             <span class="st {f.status}">{f.status === "U" ? "?" : f.status}</span>
           {:else if r.dir && changedDirs.has(r.path)}
@@ -2669,6 +2690,16 @@ input.filter {
 }
 input.filter::placeholder {
   color: var(--dimmer);
+}
+.f .p input.ren {
+  font: inherit;
+  color: var(--fg);
+  background: var(--input);
+  border: 1px solid var(--acc);
+  border-radius: 0.25rem;
+  padding: 0 0.25rem;
+  width: 60%;
+  outline: none;
 }
 input.filter.open {
   flex: 1;
