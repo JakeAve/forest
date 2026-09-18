@@ -8,37 +8,38 @@ import {
   originValidationResponse,
 } from "@modelcontextprotocol/server";
 import { z } from "zod";
-import { basename, dirname, join, relative, resolve } from "@std/path";
-import { matchPath, matchWt } from "./src/filter.js";
-import { mergeInclude, parseThemeText, resolveTheme } from "./src/theme.js";
+import { dirname, join, relative, resolve } from "@std/path";
+import { matchWt } from "./src/filter.js";
+import { resolveTheme } from "./src/theme.js";
 import {
   backoffOver,
   classifyPath,
   coerceSettings,
   diffSnapshots,
-  type FileRow,
-  type Files,
   fillCommand,
   hotBackoff,
   type HotState,
   isLocalRequest,
-  MAX_PREVIEW,
   normPath,
   ownerWorktree,
   parseDiffHunks,
   parseGrep,
-  parseIgnored,
   parseOpenInput,
-  parseStatus,
   pool,
-  previewSkip,
   qbool,
   qnum,
   rateWindow,
   selectWt,
-  TREE_CAP,
 } from "./parse.ts";
 import { createExec } from "./exec.ts";
+import { createFiles } from "./files.ts";
+import { createLog } from "./log.ts";
+import {
+  guardThemeName,
+  loadVsCodeTheme,
+  scanVsCodeThemes,
+  vscodeExtDirs,
+} from "./themes.ts";
 import { createRepo, REPO_JOBS } from "./repo.ts";
 import { createPrs } from "./prs.ts";
 import { createPorts } from "./ports.ts";
@@ -46,7 +47,7 @@ import { createSse, enc } from "./sse.ts";
 import { createStore } from "./store.ts";
 import { DEFAULTS, loadSettings, saveSettings } from "./settings.ts";
 import { bumpMax, MAX_FIELDS, newStats, statsLine } from "./stats.ts";
-import type { Repo, Tree, WtRow } from "./types.ts";
+import type { Repo, WtRow } from "./types.ts";
 
 const HOME = Deno.env.get("HOME")!;
 const SETTINGS_PATH = join(HOME, ".forest", "settings.json");
@@ -54,49 +55,6 @@ const SETTINGS = await loadSettings(SETTINGS_PATH);
 const ROOT = SETTINGS.root.replace(/^~/, HOME);
 const LAYOUT_PATH = join(HOME, ".forest", "layout.json");
 const THEMES_DIR = join(HOME, ".forest", "themes");
-const VSCODE_EXT_DIRS = [
-  ...[".vscode", ".vscode-insiders", ".vscode-oss", ".cursor"].map((d) =>
-    join(HOME, d, "extensions")
-  ),
-  ...[
-    "Visual Studio Code",
-    "Visual Studio Code - Insiders",
-    "VSCodium",
-    "Cursor",
-  ]
-    .map((a) => `/Applications/${a}.app/Contents/Resources/app/extensions`),
-];
-
-const readJson = (p: string) =>
-  Deno.readTextFile(p).then(parseThemeText).catch(() => null);
-
-async function scanVsCodeThemes(): Promise<{ name: string; path: string }[]> {
-  const found = new Map<string, string>();
-  for (const root of VSCODE_EXT_DIRS) {
-    const dirs = await Array.fromAsync(Deno.readDir(root)).catch(() => []);
-    for (const d of dirs.sort((a, b) => a.name.localeCompare(b.name))) {
-      const dir = join(root, d.name);
-      const pkg = await readJson(join(dir, "package.json"));
-      const themes = pkg?.contributes?.themes;
-      if (!Array.isArray(themes)) continue;
-      const nls = await readJson(join(dir, "package.nls.json")) ?? {};
-      for (const t of themes) {
-        const label = String(t.label ?? t.id ?? basename(t.path, ".json"))
-          .replace(/^%(.+)%$/, (_, k) => nls[k] ?? k)
-          .replace(/[^\w .()+-]/g, " ").trim();
-        found.set(label, join(dir, t.path));
-      }
-    }
-  }
-  return [...found].map(([name, path]) => ({ name, path }))
-    .sort((a, b) => a.name.localeCompare(b.name));
-}
-
-async function loadVsCodeTheme(path: string): Promise<unknown> {
-  const t = parseThemeText(await Deno.readTextFile(path));
-  if (typeof t.include !== "string") return t;
-  return mergeInclude(await loadVsCodeTheme(join(dirname(path), t.include)), t);
-}
 const stats = newStats();
 const sh = createExec(stats);
 const { exec, git, tryGit, gitIn } = sh;
@@ -123,195 +81,13 @@ const { byPath: repoByPath, known: knownWorktrees, repoPaths } = store;
 
 // ---- files & diff ----
 
-function guardWt(wt: string | null): string {
-  if (!wt || !knownWorktrees.has(wt)) {
-    throw new Error(`unknown worktree: ${wt ?? "(none given)"}`);
-  }
-  return wt;
-}
-
-const looseRoots = new Set<string>();
-const isLoose = (wt: string) => !knownWorktrees.has(wt) && looseRoots.has(wt);
-
-function guardRoot(
-  wt: string | null,
-  req: Request,
-  info: Deno.ServeHandlerInfo,
-): string {
-  if (wt && isLoose(wt)) {
-    const host = (info.remoteAddr as Deno.NetAddr).hostname;
-    if (!isLocalRequest(host, req.headers.get("host"))) {
-      throw new Error("Forest only opens paths for this machine");
-    }
-    return wt;
-  }
-  return guardWt(wt);
-}
-
-function guardThemeName(n: unknown): string {
-  const s = String(n ?? "");
-  if (!/^[\w .()+-]+$/.test(s) || s.includes("..")) {
-    throw new Error("bad theme name");
-  }
-  return s;
-}
-function guardPath(p: string | null): string {
-  if (!p || p.includes("..") || p.startsWith("/")) throw new Error("bad path");
-  return p;
-}
-
-const resolveBase = (wt: string, mode: string) =>
-  mode === "head"
-    ? Promise.resolve("HEAD")
-    : repo.mergeBase(wt, knownWorktrees.get(wt));
-
-async function listFiles(
-  wt: string,
-  mode: string,
-  q?: string,
-): Promise<Files> {
-  const base = await resolveBase(wt, mode);
-  const [nameStatus, numstat, statusZ] = await Promise.all([
-    tryGit(wt, "diff", "--no-renames", "--name-status", "-z", base),
-    tryGit(wt, "diff", "--no-renames", "--numstat", "-z", base),
-    tryGit(wt, "status", "--porcelain=v2", "-z", "--untracked-files=all"),
-  ]);
-  const status = new Map<string, string>();
-  const nsToks = (nameStatus ?? "").split("\0").filter(Boolean);
-  for (let i = 0; i + 1 < nsToks.length; i += 2) {
-    status.set(nsToks[i + 1], nsToks[i][0]);
-  }
-
-  const st = parseStatus(statusZ ?? "");
-  const xy = new Map(st.entries.map((e) => [e.path, e.xy]));
-
-  const files: FileRow[] = [];
-  const flags = (path: string) => {
-    const s = xy.get(path) ?? "..";
-    return {
-      staged: s !== "??" && s[0] !== ".",
-      unstaged: s === "??" || s[1] !== ".",
-    };
-  };
-  const numToks = (numstat ?? "").split("\0").filter(Boolean);
-  for (const t of numToks) {
-    const [added, removed, path] = t.split("\t");
-    files.push({
-      path,
-      status: status.get(path) ?? "M",
-      added: Number(added) || 0,
-      removed: Number(removed) || 0,
-      ...flags(path),
-    });
-  }
-  for (const p of st.untracked) {
-    const text = await Deno.readTextFile(join(wt, p)).catch(() => "");
-    const lines = text.split("\n").length - (text.endsWith("\n") ? 1 : 0);
-    files.push({ path: p, status: "U", added: lines, removed: 0, ...flags(p) });
-  }
-  files.sort((a, b) => a.path.localeCompare(b.path));
-  return { base, files: q ? files.filter((f) => matchPath(q, f.path)) : files };
-}
-
-async function fileContents(wt: string, path: string, mode: string) {
-  const p = join(wt, path);
-  const size = (await Deno.stat(p).catch(() => null))?.size ?? 0;
-  const bytes = size > MAX_PREVIEW
-    ? new Uint8Array()
-    : await Deno.readFile(p).catch(() => null);
-  const skip = bytes && previewSkip(size, bytes);
-  if (skip) return { base: null, work: null, skip };
-  const work = bytes && new TextDecoder().decode(bytes);
-  if (isLoose(wt)) return { base: null, work };
-  const base = await resolveBase(wt, mode);
-  return { base: await tryGit(wt, "show", `${base}:${path}`), work };
-}
-
-// ponytail: fixed name list, not per-ecosystem detection; add names as they turn up
-const DEP_DIRS = new Set([
-  "node_modules",
-  "bower_components",
-  "jspm_packages",
-  ".yarn",
-  ".pnpm-store",
-  ".next",
-  ".nuxt",
-  ".turbo",
-  ".parcel-cache",
-  ".venv",
-  "venv",
-  "__pycache__",
-  "site-packages",
-  ".tox",
-  ".pytest_cache",
-  ".mypy_cache",
-  ".ruff_cache",
-  ".gradle",
-  "target",
-  "vendor",
-  "Pods",
-  ".terraform",
-]);
-const depExcludes = [...DEP_DIRS].flatMap((d) => ["-x", d]);
-
-async function listTree(wt: string): Promise<Tree> {
-  const ls = (...args: string[]) =>
-    tryGit(wt, "ls-files", "-z", ...args).then((o) =>
-      (o ?? "").split("\0").filter(Boolean)
-    );
-  const [listed, ignoredRaw] = await Promise.all([
-    ls("--cached", "--others", "--exclude-standard", ...depExcludes),
-    ls(
-      "--others",
-      "--ignored",
-      "--exclude-standard",
-      "--directory",
-      ...depExcludes,
-    ),
-  ]);
-  const ignored = parseIgnored(ignoredRaw);
-  return {
-    files: [
-      ...new Set([...listed.filter((p) => !p.endsWith("/")), ...ignored.files]),
-    ],
-    dirs: [
-      ...listed.filter((p) => p.endsWith("/")).map((p) => p.slice(0, -1)),
-      ...ignored.dirs,
-    ],
-    ignored: [...ignored.files, ...ignored.dirs],
-  };
-}
-
-async function listDir(root: string, dir: string): Promise<Tree> {
-  const files: string[] = [];
-  const dirs: string[] = [];
-  for await (const e of Deno.readDir(join(root, dir))) {
-    const p = `${dir}/${e.name}`;
-    if (e.isDirectory && e.name !== ".git") dirs.push(p);
-    else if (e.isFile) files.push(p);
-  }
-  return { files, dirs, ignored: [] };
-}
-
-async function walkTree(root: string): Promise<Tree> {
-  const files: string[] = [];
-  const dirs: string[] = [];
-  const queue = [""];
-  for (let i = 0; i < queue.length && files.length < TREE_CAP; i++) {
-    try {
-      for await (const e of Deno.readDir(join(root, queue[i]))) {
-        const rel = queue[i] ? `${queue[i]}/${e.name}` : e.name;
-        if (e.isDirectory && DEP_DIRS.has(e.name)) dirs.push(rel);
-        else if (e.isDirectory && e.name !== ".git") queue.push(rel);
-        else if (e.isFile) files.push(rel);
-        if (files.length >= TREE_CAP) break;
-      }
-    } catch {
-      continue;
-    }
-  }
-  return { files, dirs, ignored: dirs };
-}
+const files = createFiles({
+  sh,
+  known: store.known,
+  mergeBase: repo.mergeBase,
+  home: HOME,
+});
+const { guardWt, guardRoot, guardPath, isLoose, looseRoots } = files;
 
 let booted = false;
 
@@ -374,7 +150,7 @@ function recordDivergences(truth: Map<string, Repo>) {
       stats.divergencesTotal++;
       const k = DIVERGENCE_STAT[d.field as keyof typeof DIVERGENCE_STAT];
       if (k) stats[k]++;
-      logLine({ type: "divergence", ...d });
+      log.line({ type: "divergence", ...d });
     }
   } catch (e) {
     stats.errorsTotal++;
@@ -510,7 +286,7 @@ function enterStorm(rate: number) {
     `forest: storm mode, ${Math.round(rate)} events/s; top paths: ` +
       (top.map(([p, n]) => `${p} (${n})`).join(", ") || "none recorded"),
   );
-  logLine({
+  log.line({
     type: "storm",
     rate: Math.round(rate),
     top: top.map(([prefix, count]) => ({ prefix, count })),
@@ -796,47 +572,8 @@ const gauges = () => ({
   storm,
 });
 
-// One flat line a minute, plus one per notable event; `type` tells them apart.
-// Rotation keeps at most one previous generation, so history stays between
-// LOG_MAX_LINES and twice it and never grows without bound. A rename is O(1) —
-// a true one-in-one-out ring would rewrite the whole file on every append.
 const LOG_PATH = join(HOME, ".forest", "forest-log.jsonl");
-const LOG_MAX_LINES = 10_000;
-let logLines = -1; // unknown until the first write counts what is already there
-let logFailed = false;
-let logQueue: Promise<void> = Promise.resolve();
-
-function logLine(o: Record<string, unknown>) {
-  logQueue = logQueue.then(async () => {
-    try {
-      await Deno.mkdir(join(HOME, ".forest"), { recursive: true });
-      if (logLines < 0) {
-        logLines = await Deno.readTextFile(LOG_PATH)
-          .then((t) => t.split("\n").length - 1)
-          .catch(() => 0);
-      }
-      if (logLines >= LOG_MAX_LINES) {
-        // replaces any previous .1: exactly one generation is kept
-        await Deno.rename(LOG_PATH, LOG_PATH + ".1");
-        logLines = 0;
-        stats.logRotationsTotal++;
-      }
-      await Deno.writeTextFile(
-        LOG_PATH,
-        JSON.stringify({ t: new Date().toISOString(), ...o }) + "\n",
-        { append: true },
-      );
-      logLines++;
-      stats.logWritesTotal++;
-      logFailed = false;
-    } catch (e) {
-      stats.logFailTotal++;
-      // a failure is reported once per streak, not every minute
-      if (!logFailed) console.error("forest-log write failed:", e);
-      logFailed = true;
-    }
-  });
-}
+const log = createLog({ path: LOG_PATH, stats });
 
 // A 250ms timer that fires late means the loop was blocked. Machine-independent
 // stress signal: it moves when we are starved, whatever else the box is doing.
@@ -854,7 +591,7 @@ setInterval(() => {
 setInterval(sse.ping, 20_000);
 
 setInterval(() => {
-  logLine({ type: "stats", ...statsLine(stats, SETTINGS, gauges()) });
+  log.line({ type: "stats", ...statsLine(stats, SETTINGS, gauges()) });
   // statsLine() is synchronous and already spread above, so the window closes
   // here: every *Max on the next line describes only the coming minute.
   for (const k of MAX_FIELDS) stats[k] = 0;
@@ -873,7 +610,7 @@ let lastSafetySweep = Date.now();
   });
   // emitted the moment the UI has something to render, not on the 60s tick,
   // and partitioned so a slow start names its own culprit
-  logLine({
+  log.line({
     type: "startup",
     bootMs: Math.round(performance.now() - bootT0),
     gitMs: stats.gitMs,
@@ -910,7 +647,7 @@ let lastSafetySweep = Date.now();
               (top.map(([p, n]) => `${p} (${n})`).join(", ") ||
                 "none recorded"),
           );
-          logLine({
+          log.line({
             type: "stormOver",
             ms: now - stormStartedAt,
             top: top.map(([prefix, count]) => ({ prefix, count })),
@@ -1051,7 +788,7 @@ const tools: Record<string, Tool> = {
       base: z.enum(["branch", "head"]).optional(),
     },
     run: (a) =>
-      listFiles(
+      files.listFiles(
         resolveWt(String(a.wt)).path,
         String(a.base ?? "branch"),
         a.q as string | undefined,
@@ -1198,7 +935,7 @@ const server = Deno.serve({
       return json(names.sort());
     }
     if (url.pathname === "/api/vscode-themes") {
-      return json(await scanVsCodeThemes());
+      return json(await scanVsCodeThemes(vscodeExtDirs(HOME)));
     }
     if (url.pathname === "/api/theme") {
       const name = guardThemeName(url.searchParams.get("name"));
@@ -1208,11 +945,13 @@ const server = Deno.serve({
     }
     const mode = url.searchParams.get("base") === "head" ? "head" : "branch";
     if (url.pathname === "/api/files") {
-      return json(await listFiles(guardWt(url.searchParams.get("wt")), mode));
+      return json(
+        await files.listFiles(guardWt(url.searchParams.get("wt")), mode),
+      );
     }
     if (url.pathname === "/api/file") {
       return json(
-        await fileContents(
+        await files.fileContents(
           guardRoot(url.searchParams.get("wt"), req, info),
           guardPath(url.searchParams.get("path")),
           mode,
@@ -1273,9 +1012,9 @@ const server = Deno.serve({
     if (url.pathname === "/api/tree") {
       const wt = guardRoot(url.searchParams.get("wt"), req, info);
       const dir = url.searchParams.get("dir");
-      if (dir) return json(await listDir(wt, guardPath(dir)));
-      if (!isLoose(wt)) return json(await listTree(wt));
-      return json(await walkTree(wt));
+      if (dir) return json(await files.listDir(wt, guardPath(dir)));
+      if (!isLoose(wt)) return json(await files.listTree(wt));
+      return json(await files.walkTree(wt));
     }
     if (url.pathname === "/api/grep") {
       const wt = guardRoot(url.searchParams.get("wt"), req, info);
@@ -1462,9 +1201,9 @@ const server = Deno.serve({
         case "/api/theme-import": {
           let name = b.name, text = String(b.json);
           if (b.path) {
-            const hit = (await scanVsCodeThemes()).find((t) =>
-              t.path === b.path
-            );
+            const hit = (await scanVsCodeThemes(vscodeExtDirs(HOME))).find((
+              t,
+            ) => t.path === b.path);
             if (!hit) throw new Error("not an installed VS Code theme");
             const theme = await loadVsCodeTheme(hit.path);
             resolveTheme(theme);
@@ -1494,38 +1233,28 @@ const server = Deno.serve({
         case "/api/discard-hunk":
           await gitIn(wt, String(b.patch), "apply", "--reverse");
           break;
-        case "/api/new": {
-          const rel = guardPath(b.path);
-          const p = join(wt, rel);
-          if (rel.endsWith("/")) await Deno.mkdir(p, { recursive: true });
-          else {
-            await Deno.mkdir(dirname(p), { recursive: true });
-            await Deno.writeTextFile(p, "", { createNew: true });
-          }
+        case "/api/new":
+          await files.newEntry(wt, b.path);
           break;
-        }
-        case "/api/rename": {
-          const to = join(wt, guardPath(b.to));
-          if (await Deno.lstat(to).catch(() => null)) {
-            throw new Error(`${b.to} already exists`);
-          }
-          await Deno.mkdir(dirname(to), { recursive: true });
-          await Deno.rename(join(wt, guardPath(b.from)), to);
+        case "/api/rename":
+          await files.rename(wt, b.from, b.to);
           break;
-        }
         case "/api/delete":
-          await Deno.remove(join(wt, guardPath(b.path)), { recursive: true });
+          await files.remove(wt, b.path);
           break;
         case "/api/save": {
-          const p = join(wt, guardPath(b.path));
-          const cur = await Deno.readTextFile(p).catch(() => null);
-          if (cur !== b.expect) {
-            return new Response(JSON.stringify({ current: cur }), {
+          const r = await files.save(
+            wt,
+            b.path,
+            b.expect ?? null,
+            String(b.content),
+          );
+          if (r !== "ok") {
+            return new Response(JSON.stringify(r), {
               status: 409,
               headers: { "content-type": "application/json" },
             });
           }
-          await Deno.writeTextFile(p, String(b.content));
           break;
         }
         default:
