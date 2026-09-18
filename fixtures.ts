@@ -40,6 +40,25 @@ export function fakeExec(
   };
 }
 
+export const PORCELAIN_2WT = `worktree /r/forest
+HEAD aaaaaaa1
+branch refs/heads/main
+
+worktree /r/forest-feat
+HEAD bbbbbbb2
+branch refs/heads/feat
+`;
+
+export const STATUS_V2 = [
+  "1 M. N... 100644 100644 100644 aaa bbb src/a.ts",
+  "1 .M N... 100644 100644 100644 ccc ddd src/b.ts",
+  "? notes.md",
+].join("\0") + "\0";
+
+export const HEAD_LOG = "1700000000\nAdd the thing\nJake\n";
+
+export const FOR_EACH_REF_TRACK = "main [behind 1]\nfeat [gone]\n";
+
 export function pushable<T>(): AsyncIterable<T> & {
   push(v: T): void;
   end(): void;

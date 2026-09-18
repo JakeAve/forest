@@ -35,8 +35,6 @@ import {
   parseLsofPidPorts,
   parseOpenInput,
   parseStatus,
-  parseUpstreamTrack,
-  parseWorktreeList,
   pool,
   type PrCard,
   prCard,
@@ -45,13 +43,12 @@ import {
   qbool,
   qnum,
   rateWindow,
-  remoteWebUrl,
   reviewSince,
   selectWt,
-  statusCounts,
   TREE_CAP,
 } from "./parse.ts";
 import { createExec } from "./exec.ts";
+import { createRepo, REPO_JOBS } from "./repo.ts";
 import { DEFAULTS, loadSettings, saveSettings } from "./settings.ts";
 import { bumpMax, MAX_FIELDS, newStats, statsLine, timed } from "./stats.ts";
 import type {
@@ -117,262 +114,11 @@ async function loadVsCodeTheme(path: string): Promise<unknown> {
 const stats = newStats();
 const sh = createExec(stats);
 const { exec, git, tryGit, gitIn, lsof } = sh;
+const repo = createRepo({ sh, root: ROOT });
 
 // ponytail: fixed ceilings, not adaptive — ~128 `git` and 8 `gh` per sweep;
 // concurrent polls stack on top, so this is a per-sweep bound, not a system one.
-const REPO_JOBS = 8; // repos swept at once
-const WT_JOBS = 4; // worktrees per repo at once
 const PR_JOBS = 8; // `gh`: own knob, 7x `git`'s RSS per process
-
-const defaultRefByRepo = new Map<string, string>();
-
-async function mergeBase(wt: string): Promise<string> {
-  const ref = defaultRefByRepo.get(knownWorktrees.get(wt) ?? "") ??
-    "origin/HEAD";
-  return (await tryGit(wt, "merge-base", ref, "HEAD"))?.trim() ?? "HEAD";
-}
-
-const STATE_BY_GIT_PATH = [
-  "rebase",
-  "rebase",
-  "merge",
-  "cherry-pick",
-] as const;
-
-async function loadWorktree(
-  repoName: string,
-  wt: { path: string; head: string; branch: string },
-  isPrimary: boolean,
-  primaryBranch: string,
-  pushed: Set<string>,
-  gone: Set<string>,
-  defaultRef: string | null,
-): Promise<Worktree> {
-  const [statusZ, ab, headLog, upstream, abMain, statePaths] = await Promise
-    .all([
-      tryGit(
-        wt.path,
-        "status",
-        "--porcelain=v2",
-        "-z",
-        "--untracked-files=all",
-      ),
-      tryGit(
-        wt.path,
-        "rev-list",
-        "--left-right",
-        "--count",
-        "@{upstream}...HEAD",
-      ),
-      tryGit(wt.path, "log", "-1", "--format=%ct%n%s%n%an"),
-      tryGit(
-        wt.path,
-        "rev-parse",
-        "--abbrev-ref",
-        "--symbolic-full-name",
-        "@{upstream}",
-      ),
-      defaultRef
-        ? tryGit(
-          wt.path,
-          "rev-list",
-          "--left-right",
-          "--count",
-          `${defaultRef}...HEAD`,
-        )
-        : Promise.resolve(null),
-      tryGit(
-        wt.path,
-        "rev-parse",
-        "--git-path",
-        "rebase-merge",
-        "--git-path",
-        "rebase-apply",
-        "--git-path",
-        "MERGE_HEAD",
-        "--git-path",
-        "CHERRY_PICK_HEAD",
-      ),
-    ]);
-  // upstream set to the primary branch means "branched off it", not "pushed as it"
-  const tracked = upstream?.trim().split("/").slice(1).join("/") || null;
-  const remote = tracked && tracked !== primaryBranch
-    ? tracked
-    : pushed.has(wt.branch)
-    ? wt.branch
-    : null;
-  const st = parseStatus(statusZ ?? "");
-  const { dirty, untracked } = st;
-  const counts = statusCounts(st.entries);
-  const [behind, ahead] = ab ? ab.trim().split("\t").map(Number) : [null, null];
-  const [behindMain, aheadMain] = abMain
-    ? abMain.trim().split("\t").map(Number)
-    : [null, null];
-  const [ct, subject, author] = (headLog ?? "").split("\n");
-
-  let state: Worktree["state"] = wt.branch === "(detached)" ? "detached" : null;
-  const lines = (statePaths ?? "").split("\n");
-  const hits = await Promise.all(
-    STATE_BY_GIT_PATH.map((_, i) =>
-      lines[i]
-        ? Deno.stat(resolve(wt.path, lines[i])).then(() => true).catch(() =>
-          false
-        )
-        : false
-    ),
-  );
-  const hit = hits.indexOf(true);
-  if (hit >= 0) state = STATE_BY_GIT_PATH[hit];
-
-  let lastActivity = Number(ct ?? 0) * 1000;
-  const changed = await tryGit(wt.path, "diff", "--name-only", "-z", "HEAD");
-  const paths = [...(changed ?? "").split("\0").filter(Boolean), ...untracked];
-  for (const p of paths) {
-    const st = await Deno.stat(join(wt.path, p)).catch(() => null);
-    if (st?.mtime && st.mtime.getTime() > lastActivity) {
-      lastActivity = st.mtime.getTime();
-    }
-  }
-  return {
-    repo: repoName,
-    path: wt.path,
-    branch: wt.branch,
-    head: wt.head,
-    ahead,
-    behind,
-    aheadMain,
-    behindMain,
-    gone: gone.has(wt.branch),
-    state,
-    dirty,
-    staged: counts.staged,
-    modified: counts.modified,
-    untracked: counts.untracked,
-    subject: subject ?? "",
-    author: author ?? "",
-    lastActivity,
-    isPrimary,
-    remote,
-    ports: [],
-    procs: [],
-    pr: null,
-  };
-}
-
-async function repoDirs(): Promise<{ name: string; path: string }[]> {
-  const candidates: { name: string; path: string }[] = [];
-  for await (const e of Deno.readDir(ROOT)) {
-    if (!e.isDirectory) continue;
-    const p = join(ROOT, e.name);
-    const hasGit = await Deno.stat(join(p, ".git")).then(() => true).catch(() =>
-      false
-    );
-    if (hasGit) candidates.push({ name: e.name, path: p });
-  }
-  return candidates;
-}
-
-// what every worktree of one repo needs, read once: the worktree list, the
-// branches that exist on origin, the upstreams that are gone, the default ref
-async function repoFacts(path: string) {
-  const [porcelain, refs, track, headRef] = await Promise.all([
-    tryGit(path, "worktree", "list", "--porcelain"),
-    tryGit(path, "for-each-ref", "--format=%(refname:short)", "refs/remotes"),
-    tryGit(
-      path,
-      "for-each-ref",
-      "--format=%(refname:short) %(upstream:track)",
-      "refs/heads",
-    ),
-    tryGit(path, "symbolic-ref", "refs/remotes/origin/HEAD"),
-  ]);
-  const defaultRef = headRef?.trim() || null;
-  if (defaultRef) defaultRefByRepo.set(path, defaultRef);
-  else defaultRefByRepo.delete(path);
-  return {
-    list: porcelain ? parseWorktreeList(porcelain) : null,
-    // ponytail: assumes the remote is "origin"; widen if a second remote ever matters
-    pushed: new Set(
-      (refs ?? "").split("\n").filter((r) => r.startsWith("origin/")).map((r) =>
-        r.slice(7)
-      ),
-    ),
-    gone: parseUpstreamTrack(track ?? ""),
-    defaultRef,
-  };
-}
-
-// the unit the watcher invalidates: everything the snapshot knows about one repo
-// Recompute only the named worktrees of one repo, reusing the repo-level data
-// every worktree needs. That is repoFacts' 4 git calls plus loadWorktree's 5
-// each, against computeRepo's 5 + 5 per *every* worktree — on a 29-worktree
-// repo, 9 calls instead of 150.
-//
-// Returns null when the worktree list itself moved, which means a worktree was
-// added or removed and every isPrimary/primaryBranch answer may have changed:
-// only computeRepo can reconcile that, so the caller falls back to it. The
-// cheap path detecting when it is not enough is what keeps this safe.
-async function recomputeWorktrees(
-  repo: Repo,
-  want: Set<string>,
-): Promise<Repo | null> {
-  const { list, pushed, gone, defaultRef } = await repoFacts(repo.path);
-  if (!list) return null;
-  if (
-    list.length !== repo.worktrees.length ||
-    list.some((w, i) => w.path !== repo.worktrees[i].path)
-  ) {
-    return null;
-  }
-  const targets = list.map((w, i) => ({ w, i })).filter(({ w }) =>
-    want.has(w.path)
-  );
-  if (!targets.length) return repo;
-  const fresh = await pool(
-    WT_JOBS,
-    targets,
-    ({ w, i }) =>
-      loadWorktree(
-        repo.name,
-        w,
-        i === 0,
-        list[0].branch,
-        pushed,
-        gone,
-        defaultRef,
-      ),
-  );
-  const byPath = new Map(fresh.map((w) => [w.path, w]));
-  return {
-    ...repo,
-    worktrees: repo.worktrees.map((w) => byPath.get(w.path) ?? w),
-  };
-}
-
-async function computeRepo(name: string, path: string): Promise<Repo | null> {
-  const [facts, originUrl] = await Promise.all([
-    repoFacts(path),
-    tryGit(path, "remote", "get-url", "origin"),
-  ]);
-  const { list, pushed, gone, defaultRef } = facts;
-  if (!list) return null;
-  // a linked worktree parked at the root is not a repo: its main repo already
-  // lists it, and listing it twice gives the client duplicate keys
-  if (list[0].path !== path) return null;
-  const worktrees = await pool(
-    WT_JOBS,
-    list,
-    (wt, i) =>
-      loadWorktree(name, wt, i === 0, list[0].branch, pushed, gone, defaultRef),
-  );
-  return {
-    name,
-    path,
-    webUrl: originUrl ? remoteWebUrl(originUrl) : null,
-    defaultBranch: defaultRef?.replace("refs/remotes/origin/", "") ?? null,
-    worktrees,
-  };
-}
 
 // ---- listening dev servers ----
 
@@ -725,7 +471,9 @@ function guardPath(p: string | null): string {
 }
 
 const resolveBase = (wt: string, mode: string) =>
-  mode === "head" ? Promise.resolve("HEAD") : mergeBase(wt);
+  mode === "head"
+    ? Promise.resolve("HEAD")
+    : repo.mergeBase(wt, knownWorktrees.get(wt));
 
 async function listFiles(
   wt: string,
@@ -1053,14 +801,14 @@ function sweepAll(): Promise<void> {
     // knows about them and simply has not caught up yet
     touched = new Set([...dirty].map((wt) => knownWorktrees.get(wt) ?? wt));
     const t0 = performance.now();
-    const dirs = await repoDirs();
+    const dirs = await repo.repoDirs();
     if (!booted) setStatus({ phase: "repos", done: 0, total: dirs.length });
     let done = 0;
     const repos = await pool(
       REPO_JOBS,
       dirs,
       async (d) => {
-        const r = await computeRepo(d.name, d.path);
+        const r = await repo.computeRepo(d.name, d.path);
         // Boot only: land each repo as it resolves so the list fills in rather
         // than appearing all at once. knownWorktrees is rebuilt from a partial
         // map here, so an early event may classify as unknown and force one
@@ -1312,10 +1060,10 @@ async function drain() {
         if (!known) return;
         const rt0 = performance.now();
         const fresh = await (async () => {
-          const partial = await recomputeWorktrees(known, wts);
+          const partial = await repo.recomputeWorktrees(known, wts);
           // null means the worktree list moved: only a full recompute can say
           // what the repo looks like now
-          return partial ?? await computeRepo(known.name, path);
+          return partial ?? await repo.computeRepo(known.name, path);
         })().catch((e) => {
           stats.errorsTotal++;
           console.error(e);
@@ -1324,7 +1072,7 @@ async function drain() {
         // computeRepo returns null for a transient git failure too, so only a
         // vanished .git is proof the repo is gone; otherwise keep what we had
         if (fresh) repoByPath.set(path, fresh);
-        else if (!await Deno.stat(join(path, ".git")).catch(() => null)) {
+        else if (!await repo.exists(path)) {
           repoByPath.delete(path);
         }
         stats.watchRecomputesTotal++;
