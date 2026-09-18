@@ -107,6 +107,8 @@ let loadedDirs = $state({});
 let treeOf = $state(null);
 let openEl = $state();
 let editingPath = $state(false);
+let newing = $state(false);
+let newEl;
 let openDirs = $state({});
 let showDiff = $state(false);
 let preview = $state(false);
@@ -476,6 +478,33 @@ async function editPath() {
   openEl.value = sel ?? "";
   openEl.focus();
   openEl.select();
+}
+
+async function startNew() {
+  newing = true;
+  await tick();
+  newEl.value = file ? file.replace(/[^/]*$/, "") : "";
+  newEl.focus();
+}
+
+async function newBoxKey(e) {
+  if (e.key === "Escape") return newEl.blur();
+  if (e.key !== "Enter") return;
+  const path = newEl.value.trim().replace(/^\/+/, "");
+  if (!path || !await act("new", { wt: sel, path }, "new")) return;
+  newing = false;
+  if (path.endsWith("/")) {
+    // ponytail: git can't list an empty dir, so it shows only until the next
+    // tree load; it sticks once a file lands in it
+    const d = path.slice(0, -1);
+    treeDirs = [...new Set([...treeDirs, d])];
+    reveal(d);
+    openDirs[d] = true;
+  } else {
+    tree = [...new Set([...tree, path])];
+    pick({ path });
+  }
+  loadFiles();
 }
 
 async function openBoxKey(e) {
@@ -1738,6 +1767,14 @@ function confirmDiscard() {
         <span class="sp"></span>
       {/if}
       <input class="filter" placeholder="Filter files" bind:value={fq}>
+      {#if sel}
+        {#if newing}
+          <input class="filter open" placeholder="New file, or end with / for a folder"
+                 bind:this={newEl} onkeydown={newBoxKey} onblur={() => (newing = false)}>
+        {:else}
+          <button class="meta" title="new file or folder" onclick={startNew}>+</button>
+        {/if}
+      {/if}
       {#if !loose}<div class="seg">
         <button class:on={!explore && base === "branch"} onclick={() => setBase("branch")}>Since branch point</button>
         <button class:on={!explore && base === "head"} onclick={() => setBase("head")}>Uncommitted</button>

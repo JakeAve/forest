@@ -2273,7 +2273,7 @@ const server = Deno.serve({
         url.pathname === "/api/kill-pid";
       const wt = noWt
         ? ""
-        : url.pathname === "/api/save"
+        : url.pathname === "/api/save" || url.pathname === "/api/new"
         ? guardRoot(b.wt ?? null, req, info)
         : guardWt(b.wt ?? null);
       switch (url.pathname) {
@@ -2446,6 +2446,16 @@ const server = Deno.serve({
         case "/api/discard-hunk":
           await gitIn(wt, String(b.patch), "apply", "--reverse");
           break;
+        case "/api/new": {
+          const rel = guardPath(b.path);
+          const p = join(wt, rel);
+          if (rel.endsWith("/")) await Deno.mkdir(p, { recursive: true });
+          else {
+            await Deno.mkdir(dirname(p), { recursive: true });
+            await Deno.writeTextFile(p, "", { createNew: true });
+          }
+          break;
+        }
         case "/api/save": {
           const p = join(wt, guardPath(b.path));
           const cur = await Deno.readTextFile(p).catch(() => null);
