@@ -215,7 +215,10 @@ deno task setup   # wire .githooks (check + test on commit and push)
 
 Parsing is deliberately split out of `main.ts` into `parse.ts`, `src/theme.js`,
 and `src/filter.js` — that's the part with edge cases worth testing, and it's
-testable without spawning git.
+testable without spawning git. The rest of the server is split into per-system
+modules (`exec`, `repo`, `prs`, `ports`, `store`, `sse`, `watcher`, `files`,
+`themes`, `log`, `tools`, `routes`, `stats`, `settings`, `types`), each with its
+own `<module>_test.ts`.
 
 ## Desktop app
 
