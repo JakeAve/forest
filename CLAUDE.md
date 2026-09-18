@@ -1,7 +1,10 @@
 # forest
 
-Git worktree dashboard: Deno server (`main.ts`) + Svelte frontend (`src/`). See
-README.md for setup and the agent API.
+Git worktree dashboard: Deno server, `boot.ts` (wires the module graph, starts
+nothing) and `main.ts` (starts it) plus `exec`, `repo`, `prs`, `ports`, `store`,
+`sse`, `watcher`, `files`, `themes`, `log`, `tools`, `routes`, `stats`,
+`settings`, `types`, and a Svelte frontend in `src/`. See README.md for setup
+and the agent API.
 
 ## Commands
 
@@ -19,8 +22,11 @@ deno task setup                # git hooks run check + test on commit/push
 - `parse.ts` is imported by both Deno and the Vite bundle. Any package it
   imports must be in both `deno.json` imports and `package.json`, pinned to the
   same version; no `@std/*` or `jsr:` imports there.
-- Put logic with edge cases in `parse.ts`, `src/theme.js` or `src/filter.js` so
-  it's testable without spawning git; `main.ts` stays glue.
+- Logic with edge cases goes in `parse.ts`, `src/theme.js` or `src/filter.js` so
+  it's testable without spawning git. IO-driven logic goes in its system module
+  and takes its IO as deps (`Shell` from `exec.ts`, the store, the clock) so
+  it's testable with `fakeExec` from `fixtures.ts` and `FakeTime`. `main.ts` is
+  wiring only.
 - Filters (UI, palette, agent `q`) match through `fuzzy`/`rank` in
   `src/filter.js`. `selectWt` stays substring so a `wt` selector is precise.
 - Colors and CSS vars: follow the `theming` skill in `.claude/skills/`.
