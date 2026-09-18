@@ -59,6 +59,78 @@ export const HEAD_LOG = "1700000000\nAdd the thing\nJake\n";
 
 export const FOR_EACH_REF_TRACK = "main [behind 1]\nfeat [gone]\n";
 
+export const GH_PR_LIST = JSON.stringify([
+  {
+    number: 7,
+    url: "https://github.com/JakeAve/forest/pull/7",
+    headRefName: "feat",
+    state: "OPEN",
+    createdAt: "2026-09-01T00:00:00Z",
+    closedAt: null,
+    mergedAt: null,
+  },
+  {
+    number: 3,
+    url: "https://github.com/JakeAve/forest/pull/3",
+    headRefName: "old",
+    state: "MERGED",
+    createdAt: "2026-08-01T00:00:00Z",
+    closedAt: "2026-08-02T00:00:00Z",
+    mergedAt: "2026-08-02T00:00:00Z",
+  },
+]);
+
+export const GH_PR_VIEW = JSON.stringify({
+  title: "Add the thing",
+  isDraft: false,
+  baseRefName: "main",
+  reviewDecision: "APPROVED",
+  mergeable: "MERGEABLE",
+  mergeStateStatus: "CLEAN",
+  autoMergeRequest: null,
+  statusCheckRollup: [{
+    name: "test",
+    status: "COMPLETED",
+    conclusion: "SUCCESS",
+    startedAt: "2026-09-02T00:00:00Z",
+    completedAt: "2026-09-02T00:05:00Z",
+  }],
+  reviews: [{
+    author: { login: "octo" },
+    state: "APPROVED",
+    submittedAt: "2026-09-03T00:00:00Z",
+    url: "https://github.com/JakeAve/forest/pull/7#r1",
+    body: "lgtm",
+  }],
+});
+
+export const GH_CARD = JSON.stringify({
+  author: { login: "jake" },
+  createdAt: "2026-09-01T00:00:00Z",
+  updatedAt: "2026-09-03T00:00:00Z",
+  additions: 10,
+  deletions: 2,
+  changedFiles: 3,
+  headRefName: "feat",
+  mergeStateStatus: "CLEAN",
+  baseRef: { compare: { aheadBy: 4, behindBy: 1 } },
+  reviewRequests: { nodes: [{ requestedReviewer: { login: "bot" } }] },
+  reviews: {
+    nodes: [{
+      author: { login: "octo" },
+      state: "APPROVED",
+      submittedAt: "2026-09-03T00:00:00Z",
+      url: "https://github.com/JakeAve/forest/pull/7#r1",
+      body: "lgtm",
+    }],
+  },
+  reviewThreads: { nodes: [] },
+  comments: { nodes: [] },
+  commits: {
+    nodes: [{ commit: { statusCheckRollup: { contexts: { nodes: [] } } } }],
+  },
+});
+
 export function pushable<T>(): AsyncIterable<T> & {
   push(v: T): void;
   end(): void;
