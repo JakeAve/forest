@@ -109,6 +109,7 @@ let openEl = $state();
 let editingPath = $state(false);
 let newing = $state(false);
 let renaming = $state(null);
+let headRename = $state(false);
 let newEl;
 let selDir = $state(null);
 let openDirs = $state({});
@@ -498,24 +499,29 @@ async function newBoxKey(e) {
   land(path.replace(/\/$/, ""), path.endsWith("/"));
 }
 
-function startRename(f, e) {
+function startRename(f, e, head = false) {
   e?.stopPropagation();
-  renaming = f.path;
+  if (diffDirty && (file === f.path || file?.startsWith(f.path + "/"))) {
+    return errBanner("Unsaved edits — save or undo them before renaming.");
+  }
+  if (head) headRename = true;
+  else renaming = f.path;
 }
 
 function renameField(el) {
   el.focus();
+  const start = el.value.lastIndexOf("/") + 1;
   const dot = el.value.lastIndexOf(".");
-  el.setSelectionRange(0, dot > 0 ? dot : el.value.length);
+  el.setSelectionRange(start, dot > start ? dot : el.value.length);
 }
 
-async function renameKey(e, from) {
+async function renameKey(e, from, base = from.replace(/[^/]*$/, "")) {
   e.stopPropagation();
-  if (e.key === "Escape") return (renaming = null);
+  if (e.key === "Escape") return (renaming = headRename = null);
   if (e.key !== "Enter") return;
-  const name = e.target.value.trim();
-  const to = from.replace(/[^/]*$/, "") + name;
-  renaming = null;
+  const name = e.target.value.trim().replace(/^\/+/, "");
+  const to = base + name;
+  renaming = headRename = null;
   if (!name || to === from) return;
   const dir = treeDirs.includes(from) ||
     tree.some((q) => q.startsWith(from + "/"));
@@ -1957,7 +1963,15 @@ async function confirmDiscard() {
   <div class="band sourceband" class:maxed={max === 3}>
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div class="bhead" oncontextmenu={(e) => file && openMenu(e, fileItems({ path: file }))}>
-      <b>{file ?? "Source"}</b><span class="sp"></span>
+      {#if headRename}
+        <input class="ren" value={file} use:renameField
+               onkeydown={(e) => renameKey(e, file, "")} onblur={() => (headRename = false)}>
+      {:else if file}
+        <button class="nm" title="Rename" onclick={(e) => startRename({ path: file }, e, true)}>{file}</button>
+      {:else}
+        <b>Source</b>
+      {/if}
+      <span class="sp"></span>
       {#if explore && selFile}
         <div class="seg">
           <button class:on={!showDiff} onclick={() => (showDiff = false)}>View</button>
@@ -2691,15 +2705,38 @@ input.filter {
 input.filter::placeholder {
   color: var(--dimmer);
 }
-.f .p input.ren {
-  font: inherit;
+input.ren {
   color: var(--fg);
   background: var(--input);
   border: 1px solid var(--acc);
   border-radius: 0.25rem;
   padding: 0 0.25rem;
-  width: 60%;
   outline: none;
+}
+.f .p input.ren {
+  font: inherit;
+  width: 60%;
+}
+.bhead input.ren {
+  font: 600 0.875rem var(--sans);
+  flex: 1;
+  min-width: 0;
+}
+.bhead .nm {
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 0.25rem;
+  color: var(--fg);
+  font: 600 0.875rem var(--sans);
+  padding: 0 0.25rem;
+  margin-left: -0.3125rem;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: text;
+}
+.bhead .nm:hover {
+  border-color: var(--line);
 }
 input.filter.open {
   flex: 1;
