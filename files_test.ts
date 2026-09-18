@@ -296,6 +296,19 @@ Deno.test("save returns current on a mismatch and writes on a match", async () =
   });
 });
 
+Deno.test("save with no expect returns current even for a missing file", async () => {
+  await withTmp(async (dir) => {
+    const { files } = make({}, []);
+    assertEquals(await files.save(dir, "gone.txt", undefined, "new"), {
+      current: null,
+    });
+    assertEquals(
+      await Deno.stat(join(dir, "gone.txt")).catch(() => null),
+      null,
+    );
+  });
+});
+
 Deno.test("every mutation rejects a path with ..", async () => {
   await withTmp(async (dir) => {
     const { files } = make({}, []);

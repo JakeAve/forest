@@ -36,16 +36,17 @@ export function createExec(stats: Stats): Shell {
       const p = new Deno.Command(cmd[0], {
         args: cmd.slice(1),
         cwd,
-        stdin: stdin === undefined ? "null" : "piped",
+        stdin: stdin === undefined ? "inherit" : "piped",
         stdout: "piped",
         stderr: "piped",
       }).spawn();
-      if (stdin !== undefined) {
+      const wrote = stdin === undefined ? null : (async () => {
         const w = p.stdin.getWriter();
         await w.write(new TextEncoder().encode(stdin));
         await w.close();
-      }
+      })().catch(() => {});
       const out = await p.output();
+      await wrote;
       if (!out.success) {
         throw new Error(
           dec.decode(out.stderr).trim() || dec.decode(out.stdout).trim(),

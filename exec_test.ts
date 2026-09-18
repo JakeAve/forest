@@ -41,3 +41,13 @@ Deno.test("lsof never throws", async () => {
   const sh = createExec(newStats());
   assertEquals(await sh.lsof("--definitely-not-a-flag"), "");
 });
+
+Deno.test("exec surfaces the child's stderr when it exits before reading stdin", async () => {
+  const sh = createExec(newStats());
+  const e = await assertRejects(
+    () =>
+      sh.exec(".", ["sh", "-c", "echo nope >&2; exit 3"], "x".repeat(1 << 20)),
+    Error,
+  );
+  assertStringIncludes(e.message, "nope");
+});

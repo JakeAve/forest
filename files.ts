@@ -39,7 +39,7 @@ export type FilesApi = {
   save(
     root: string,
     rel: string,
-    expect: string | null,
+    expect: unknown,
     content: string,
   ): Promise<"ok" | { current: string | null }>;
 };
@@ -276,7 +276,7 @@ export function createFiles(deps: {
   async function save(
     root: string,
     rel: string,
-    expect: string | null,
+    expect: unknown,
     content: string,
   ): Promise<"ok" | { current: string | null }> {
     const p = join(root, guardPath(rel));

@@ -321,6 +321,7 @@ export function createRoutes(deps: {
             }
             break;
           case "/api/update-branch": {
+            const repo = knownWorktrees.get(wt)!;
             const n = Number(b.number);
             if (!Number.isInteger(n) || n <= 0) {
               throw new Error("bad pr number");
@@ -332,11 +333,12 @@ export function createRoutes(deps: {
               "PUT",
               `repos/{owner}/{repo}/pulls/${n}/update-branch`,
             ]);
-            await prs.refreshOnePr(knownWorktrees.get(wt)!, n).catch(() => {});
-            prs.refreshPrSoon(knownWorktrees.get(wt)!, n);
+            await prs.refreshOnePr(repo, n).catch(() => {});
+            prs.refreshPrSoon(repo, n);
             break;
           }
           case "/api/auto-merge": {
+            const repo = knownWorktrees.get(wt)!;
             const n = Number(b.number);
             if (!Number.isInteger(n) || n <= 0) {
               throw new Error("bad pr number");
@@ -347,8 +349,8 @@ export function createRoutes(deps: {
                 ? ["gh", "pr", "merge", String(n), "--auto", "--squash"]
                 : ["gh", "pr", "merge", String(n), "--disable-auto"],
             );
-            await prs.refreshOnePr(knownWorktrees.get(wt)!, n).catch(() => {});
-            prs.refreshPrSoon(knownWorktrees.get(wt)!, n);
+            await prs.refreshOnePr(repo, n).catch(() => {});
+            prs.refreshPrSoon(repo, n);
             // the merge landed on the remote, not locally — fetch so the
             // ahead/behind-vs-base afterMutation() recomputes below isn't
             // reading last sweep's now-stale refs.
@@ -382,6 +384,7 @@ export function createRoutes(deps: {
             break;
           }
           case "/api/pr-state": {
+            const repo = knownWorktrees.get(wt)!;
             const n = Number(b.number);
             if (!Number.isInteger(n) || n <= 0) {
               throw new Error("bad pr number");
@@ -399,8 +402,8 @@ export function createRoutes(deps: {
               : null;
             if (!args) throw new Error("bad pr action");
             await exec(wt, ["gh", "pr", ...args]);
-            await prs.refreshOnePr(knownWorktrees.get(wt)!, n).catch(() => {});
-            prs.refreshPrSoon(knownWorktrees.get(wt)!, n);
+            await prs.refreshOnePr(repo, n).catch(() => {});
+            prs.refreshPrSoon(repo, n);
             break;
           }
           case "/api/wt-remove": {
@@ -510,7 +513,7 @@ export function createRoutes(deps: {
             const r = await files.save(
               wt,
               b.path,
-              b.expect ?? null,
+              b.expect,
               String(b.content),
             );
             if (r !== "ok") {
