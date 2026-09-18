@@ -1,9 +1,10 @@
 # forest
 
-Git worktree dashboard: Deno server, `main.ts` (wiring only) plus `exec`,
-`repo`, `prs`, `ports`, `store`, `sse`, `watcher`, `files`, `themes`, `log`,
-`tools`, `routes`, `stats`, `settings`, `types`, and a Svelte frontend in
-`src/`. See README.md for setup and the agent API.
+Git worktree dashboard: Deno server, `boot.ts` (wires the module graph, starts
+nothing) and `main.ts` (starts it) plus `exec`, `repo`, `prs`, `ports`, `store`,
+`sse`, `watcher`, `files`, `themes`, `log`, `tools`, `routes`, `stats`,
+`settings`, `types`, and a Svelte frontend in `src/`. See README.md for setup
+and the agent API.
 
 ## Commands
 
