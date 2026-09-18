@@ -1,4 +1,3 @@
-import process from "node:process"; // cpuUsage(): self CPU, see stats above
 import { serveDir } from "@std/http/file-server";
 import {
   createMcpHandler,
@@ -49,40 +48,26 @@ import {
   remoteWebUrl,
   reviewSince,
   selectWt,
-  settingsOverrides,
   statusCounts,
   TREE_CAP,
 } from "./parse.ts";
+import { createExec } from "./exec.ts";
+import { DEFAULTS, loadSettings, saveSettings } from "./settings.ts";
+import { bumpMax, MAX_FIELDS, newStats, statsLine, timed } from "./stats.ts";
+import type {
+  Pr,
+  PrDetail,
+  Procs,
+  PrSlim,
+  Repo,
+  Tree,
+  Worktree,
+  WtRow,
+} from "./types.ts";
 
 const HOME = Deno.env.get("HOME")!;
-const DEFAULTS = {
-  host: "127.0.0.1",
-  port: 38471,
-  root: "~/Repos",
-  pollMs: 5000,
-  prPollMs: 60000, // a repo with an open PR: only that state can still change
-  prIdleMs: 300000, // a repo without one: catches PRs opened outside this machine
-  watch: true,
-  watchDebounceMs: 300,
-  watchMaxWaitMs: 2000,
-  watchSweepMs: 300000,
-  watchHotThreshold: 10,
-  watchBackoffMaxMs: 30000,
-  watchStormRate: 2000,
-  recentCount: 10,
-  agoRefreshMs: 30000,
-  toastMs: 7000,
-  collapseMargin: 3,
-  collapseMinSize: 5,
-  launchers: {} as Record<string, string>,
-};
 const SETTINGS_PATH = join(HOME, ".forest", "settings.json");
-const SETTINGS: typeof DEFAULTS = {
-  ...DEFAULTS,
-  ...(await Deno.readTextFile(SETTINGS_PATH).then(JSON.parse).catch(
-    () => ({}),
-  )),
-};
+const SETTINGS = await loadSettings(SETTINGS_PATH);
 const ROOT = SETTINGS.root.replace(/^~/, HOME);
 const LAYOUT_PATH = join(HOME, ".forest", "layout.json");
 const THEMES_DIR = join(HOME, ".forest", "themes");
@@ -129,213 +114,15 @@ async function loadVsCodeTheme(path: string): Promise<unknown> {
   if (typeof t.include !== "string") return t;
   return mergeInclude(await loadVsCodeTheme(join(dirname(path), t.include)), t);
 }
-const dec = new TextDecoder();
-
-// ---- baseline metrics ----
-// Cumulative since start. Diff two log lines to get a rate.
-// *Total fields are cumulative since startedAt — diff two lines for a rate.
-// Everything else is a gauge, true only at the instant the line was written.
-const stats = {
-  startedAt: Date.now(),
-  pollsTotal: 0,
-  pollMsTotal: 0, // divide by pollsTotal for a mean over any window
-  pollMs: 0,
-  // ponytail: cpu*MsTotal is RUSAGE_SELF — this process only. The git and gh
-  // children are the bulk of the machine cost and land in subprocessMsTotal as
-  // wall time instead. Read the two together; neither alone is "CPU used".
-  cpuUserMsTotal: 0,
-  cpuSystemMsTotal: 0,
-  subprocessesTotal: 0,
-  gitTotal: 0,
-  ghTotal: 0,
-  otherTotal: 0,
-  subprocessMsTotal: 0, // summed wall time across the three spawn chokepoints
-  subprocessInflight: 0,
-  // the three phases of a poll, so a slow one names its own culprit
-  gitMs: 0,
-  gitMsTotal: 0,
-  portsMs: 0,
-  portsMsTotal: 0,
-  prsMs: 0, // 0 on polls where prPollMs rate-limits the call away
-  prsMsTotal: 0,
-  // swallowed per-repo failures: a repo can vanish from the snapshot without
-  // errorsTotal moving. Never zero — a repo with no upstream fails every poll.
-  // Watch the rate, not the value.
-  gitFailTotal: 0,
-  ghFailTotal: 0,
-  errorsTotal: 0,
-  broadcastsTotal: 0,
-  // event-loop lag: the honest "is it struggling" number. A 250ms timer that
-  // fires late means the loop was blocked, whatever the cause.
-  lagSamplesTotal: 0,
-  lagMsTotal: 0,
-  logWritesTotal: 0,
-  logFailTotal: 0,
-  logRotationsTotal: 0,
-  pollMsMax: 0,
-  gitMsMax: 0,
-  recomputeMsMax: 0,
-  drainMsMax: 0,
-  lagMsMax: 0,
-  subprocessPeak: 0, // high-water concurrent children
-  // ---- watcher ----
-  watchEventsTotal: 0, // one per event *path*, not per FsEvent
-  watchIgnoredTotal: 0,
-  watchRefsTotal: 0,
-  watchIndexTotal: 0,
-  watchWorktreeTotal: 0,
-  watchUnknownTotal: 0,
-  watchRecomputesTotal: 0, // single repos recomputed from an event
-  watchRootRescansTotal: 0, // full sweeps forced by an unknown path
-  watchDebounceCollapsedTotal: 0, // marks that landed on an already-dirty repo
-  watchRootCollapsedTotal: 0, // root rescans that landed on an already-dirty root
-  watcherRestartsTotal: 0,
-  // the watch path's own cost, so the per-worktree recompute can be measured
-  // rather than just counted: pairs with watchRecomputesTotal, and drains are
-  // the watch-path analogue of a poll
-  recomputeMsTotal: 0,
-  drainsTotal: 0,
-  drainMsTotal: 0,
-  // ---- backoff + storm: the safety valve ----
-  watchBackoffEntriesTotal: 0, // repos that went hot
-  watchBackoffExitsTotal: 0, // ...and later went quiet again
-  watchStormEntriesTotal: 0,
-  watchStormMsTotal: 0, // time spent degraded to plain polling
-  // ---- safety net + divergence ----
-  // sweepsTotal counts every full sweep, whatever fired it (timer, mutating
-  // POST, root rescan). This counts only the timed safety-net ones, so
-  // divergences-per-sweep has a denominator that means something.
-  watchSafetySweepsTotal: 0,
-  divergencesTotal: 0,
-  // a divergence check skipped WHOLESALE, which now only happens for a root
-  // rescan: a repo may have appeared or vanished, which is not per-repo
-  divergenceChecksSkippedTotal: 0,
-  // per-repo exclusion instead. A sweep spans seconds, so a repo touched
-  // anywhere in that window cannot be judged; the other 120 still are.
-  divergenceReposCheckedTotal: 0,
-  divergenceReposExcludedTotal: 0,
-  divergenceBranchTotal: 0,
-  divergenceHeadTotal: 0,
-  divergenceAheadTotal: 0,
-  divergenceBehindTotal: 0,
-  divergenceDirtyTotal: 0,
-  divergenceLastActivityTotal: 0,
-  divergenceRemoteTotal: 0,
-  divergenceWorktreeAddedTotal: 0,
-  divergenceWorktreeRemovedTotal: 0,
-  divergenceRepoAddedTotal: 0,
-  divergenceRepoRemovedTotal: 0,
-  snapshotBytes: 0, // last snapshot that changed
-  repos: 0,
-  worktrees: 0,
-  heapBytes: 0,
-  load1: 0, // machine-wide: separates "the box was busy" from "we were busy"
-};
-const MAX_FIELDS = [
-  "pollMsMax",
-  "gitMsMax",
-  "recomputeMsMax",
-  "drainMsMax",
-  "lagMsMax",
-  "subprocessPeak",
-] as const;
-const bumpMax = (k: typeof MAX_FIELDS[number], v: number) => {
-  if (v > stats[k]) stats[k] = v;
-};
-
-const spawned = (bin: string) => {
-  stats.subprocessesTotal++;
-  if (bin === "git") stats.gitTotal++;
-  else if (bin === "gh") stats.ghTotal++;
-  else stats.otherTotal++;
-  const t0 = performance.now();
-  bumpMax("subprocessPeak", ++stats.subprocessInflight);
-  return () => {
-    stats.subprocessInflight--;
-    stats.subprocessMsTotal += performance.now() - t0;
-  };
-};
-
-async function exec(cwd: string, cmd: string[]): Promise<string> {
-  const done = spawned(cmd[0]);
-  const out = await new Deno.Command(cmd[0], {
-    args: cmd.slice(1),
-    cwd,
-    stdout: "piped",
-    stderr: "piped",
-  }).output().finally(done);
-  if (!out.success) {
-    throw new Error(
-      dec.decode(out.stderr).trim() || dec.decode(out.stdout).trim(),
-    );
-  }
-  return dec.decode(out.stdout);
-}
-const git = (cwd: string, ...args: string[]) => exec(cwd, ["git", ...args]);
-// read-only calls only: the flag keeps polling from rewriting .git/index
-const tryGit = (cwd: string, ...args: string[]) =>
-  git(cwd, "--no-optional-locks", ...args).catch(() => {
-    stats.gitFailTotal++;
-    return null;
-  });
+const stats = newStats();
+const sh = createExec(stats);
+const { exec, git, tryGit, gitIn, lsof } = sh;
 
 // ponytail: fixed ceilings, not adaptive — ~128 `git` and 8 `gh` per sweep;
 // concurrent polls stack on top, so this is a per-sweep bound, not a system one.
 const REPO_JOBS = 8; // repos swept at once
 const WT_JOBS = 4; // worktrees per repo at once
 const PR_JOBS = 8; // `gh`: own knob, 7x `git`'s RSS per process
-
-async function gitIn(cwd: string, stdin: string, ...args: string[]) {
-  const done = spawned("git");
-  try {
-    const p = new Deno.Command("git", {
-      args,
-      cwd,
-      stdin: "piped",
-      stdout: "piped",
-      stderr: "piped",
-    }).spawn();
-    const w = p.stdin.getWriter();
-    await w.write(new TextEncoder().encode(stdin));
-    await w.close();
-    const out = await p.output();
-    if (!out.success) throw new Error(dec.decode(out.stderr).trim());
-  } finally {
-    done();
-  }
-}
-
-type Worktree = {
-  repo: string;
-  path: string;
-  branch: string;
-  head: string;
-  ahead: number | null;
-  behind: number | null;
-  aheadMain: number | null;
-  behindMain: number | null;
-  gone: boolean;
-  state: "rebase" | "merge" | "cherry-pick" | "detached" | null;
-  dirty: number;
-  staged: number;
-  modified: number;
-  untracked: number;
-  subject: string;
-  author: string;
-  lastActivity: number;
-  isPrimary: boolean;
-  remote: string | null;
-  ports: number[];
-  procs: { port: number; pid: number; command: string }[];
-  pr: Pr | null;
-};
-type Repo = {
-  name: string;
-  path: string;
-  webUrl: string | null;
-  defaultBranch: string | null;
-  worktrees: Worktree[];
-};
 
 const defaultRefByRepo = new Map<string, string>();
 
@@ -589,47 +376,16 @@ async function computeRepo(name: string, path: string): Promise<Repo | null> {
 
 // ---- listening dev servers ----
 
-async function lsof(...args: string[]): Promise<string> {
-  const done = spawned("lsof");
-  const out = await new Deno.Command("lsof", {
-    args,
-    stdout: "piped",
-    stderr: "null",
-  })
-    .output().catch(() => null).finally(done);
-  return out ? dec.decode(out.stdout) : "";
-}
-
 // GLOBAL and timed: one lsof for the whole machine, PID -> cwd -> worktree.
 // It cannot be attributed to one repo, so it can never be recomputed per repo;
 // it gets its own cadence and is merged into the snapshot by publish().
-let procsByCwdCache = new Map<
-  string,
-  { port: number; pid: number; command: string }[]
->();
-
-// `timed` records one phase of a poll. The three partition it, so a slow poll
-// says which stage was slow instead of needing to be reproduced.
-async function timed<T>(
-  key: "gitMs" | "portsMs",
-  p: Promise<T>,
-): Promise<T> {
-  const t0 = performance.now();
-  try {
-    return await p;
-  } finally {
-    stats[key] = Math.round(performance.now() - t0);
-    stats[`${key}Total`] += stats[key];
-  }
-}
+let procsByCwdCache = new Map<string, Procs>();
 
 async function refreshPorts() {
-  procsByCwdCache = await timed("portsMs", listeningPorts());
+  procsByCwdCache = await timed(stats, "portsMs", listeningPorts());
 }
 
-async function listeningPorts(): Promise<
-  Map<string, { port: number; pid: number; command: string }[]>
-> {
+async function listeningPorts(): Promise<Map<string, Procs>> {
   const net = await lsof("-nP", "-iTCP", "-sTCP:LISTEN", "-Fpcn");
   const byPid = parseLsofPidPorts(net);
   if (!byPid.size) return new Map();
@@ -647,30 +403,6 @@ async function listeningPorts(): Promise<
 
 // ---- open pull requests ----
 
-type Pr = {
-  number: number;
-  url: string;
-  state: "OPEN" | "MERGED" | "CLOSED";
-  // GitHub's own createdAt/closedAt/mergedAt for the current state.
-  stateSince: number;
-  title: string;
-  isDraft: boolean;
-  baseRefName: string;
-  reviewDecision: "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED" | "";
-  mergeable: "MERGEABLE" | "CONFLICTING" | "UNKNOWN";
-  mergeState: string; // GitHub mergeStateStatus
-  autoMerge: boolean;
-  ci: { state: "pass" | "fail" | "pending" | null; failing: string[] };
-  // GitHub's own check-run/review timestamps for the current ci.state /
-  // reviewDecision; falls back to when Forest first observed it if GitHub
-  // has no matching timestamp (e.g. a state with no reviews yet).
-  ciSince: number | null;
-  reviewSince: number | null;
-  approvals: number;
-  card: PrCard | null; // hover card detail, from CARD_QUERY
-  detailAt: number | null;
-};
-type PrSlim = Pick<Pr, "number" | "url" | "state" | "stateSince">;
 const prsByRepo = new Map<string, Map<string, PrSlim>>();
 const prDetail = new Map<
   string,
@@ -702,7 +434,6 @@ const prFor = (
     : null;
 };
 
-type PrDetail = Omit<Pr, "number" | "url" | "state" | "stateSince">;
 const PR_VIEW_FIELDS =
   "title,isDraft,baseRefName,reviewDecision,mergeable,mergeStateStatus,autoMergeRequest,statusCheckRollup,reviews";
 
@@ -1058,8 +789,6 @@ async function fileContents(wt: string, path: string, mode: string) {
   return { base: await tryGit(wt, "show", `${base}:${path}`), work };
 }
 
-type Tree = { files: string[]; dirs: string[]; ignored: string[] };
-
 // ponytail: fixed name list, not per-ecosystem detection; add names as they turn up
 const DEP_DIRS = new Set([
   "node_modules",
@@ -1354,7 +1083,7 @@ function sweepAll(): Promise<void> {
     for (const [k, v] of next) repoByPath.set(k, v);
     stats.gitMs = Math.round(performance.now() - t0);
     stats.gitMsTotal += stats.gitMs;
-    bumpMax("gitMsMax", stats.gitMs);
+    bumpMax(stats, "gitMsMax", stats.gitMs);
   })().finally(() => {
     sweeping = null;
   });
@@ -1383,7 +1112,7 @@ async function poll() {
   stats.pollsTotal++;
   stats.pollMs = Math.round(performance.now() - t0);
   stats.pollMsTotal += stats.pollMs;
-  bumpMax("pollMsMax", stats.pollMs);
+  bumpMax(stats, "pollMsMax", stats.pollMs);
 }
 
 // ---- watcher: invalidate, never compute ----
@@ -1391,7 +1120,8 @@ async function poll() {
 // storm mode is exactly "stop being a watcher": events are dropped and the
 // timed loop polls everything on pollMs, which is what Forest did before this
 // branch. Degrading to the old behaviour is the whole point of the valve.
-const mode = () => SETTINGS.watch && watcherUp && !storm ? "watch" : "poll";
+const mode = (): "watch" | "poll" =>
+  SETTINGS.watch && watcherUp && !storm ? "watch" : "poll";
 let watcherUp = false;
 const dirty = new Set<string>(); // repo paths
 
@@ -1600,7 +1330,7 @@ async function drain() {
         stats.watchRecomputesTotal++;
         const rms = performance.now() - rt0;
         stats.recomputeMsTotal += rms;
-        bumpMax("recomputeMsMax", rms);
+        bumpMax(stats, "recomputeMsMax", rms);
         for (const wt of wts) hotEntry(wt).win.add(Date.now());
       });
       if (run.length) publish();
@@ -1610,7 +1340,7 @@ async function drain() {
     const dms = performance.now() - dt0;
     stats.drainsTotal++;
     stats.drainMsTotal += dms;
-    bumpMax("drainMsMax", dms);
+    bumpMax(stats, "drainMsMax", dms);
     // inside the finally: a throw that skipped this would leave deferred repos
     // dirty with no timer — never recomputed, and never judged either.
     if (dirty.size || rootDirty) schedule();
@@ -1709,43 +1439,14 @@ async function watchLoop() {
   }
 }
 
-const statsLine = () => {
-  const cpu = process.cpuUsage(); // cumulative µs since start, self only
-  const mem = Deno.memoryUsage();
-  stats.cpuUserMsTotal = Math.round(cpu.user / 1000);
-  stats.cpuSystemMsTotal = Math.round(cpu.system / 1000);
-  stats.heapBytes = mem.heapUsed;
-  stats.load1 = Math.round(Deno.loadavg()[0] * 100) / 100;
-  return {
-    t: new Date().toISOString(),
-    uptimeMs: Date.now() - stats.startedAt,
-    ...stats,
-    // accumulated as a float for precision, emitted rounded: sub-ms children
-    // still sum correctly and the log stays readable through jq
-    subprocessMsTotal: Math.round(stats.subprocessMsTotal),
-    lagMsTotal: Math.round(stats.lagMsTotal),
-    lagMsMax: Math.round(stats.lagMsMax),
-    recomputeMsTotal: Math.round(stats.recomputeMsTotal),
-    drainMsTotal: Math.round(stats.drainMsTotal),
-    recomputeMsMax: Math.round(stats.recomputeMsMax),
-    drainMsMax: Math.round(stats.drainMsMax),
-    rss: mem.rss,
-    clients: clients.size,
-    pollMsSetting: SETTINGS.pollMs,
-    mode: mode(),
-    watchDebounceMs: SETTINGS.watchDebounceMs,
-    watchMaxWaitMs: SETTINGS.watchMaxWaitMs,
-    watchSweepMs: SETTINGS.watchSweepMs,
-    watchHotThreshold: SETTINGS.watchHotThreshold,
-    watchBackoffMaxMs: SETTINGS.watchBackoffMaxMs,
-    watchStormRate: SETTINGS.watchStormRate,
-    watchDirty: dirty.size,
-    // renamed from hotRepos: backoff is keyed per worktree now, so the old name
-    hotWts: [...hot.values()].filter((h) => h.st).length, // in backoff now
-    watchEventRate: Math.round(eventRate(Date.now())),
-    storm,
-  };
-};
+const gauges = () => ({
+  clients: clients.size,
+  mode: mode(),
+  watchDirty: dirty.size,
+  hotWts: [...hot.values()].filter((h) => h.st).length,
+  watchEventRate: Math.round(eventRate(Date.now())),
+  storm,
+});
 
 // One flat line a minute, plus one per notable event; `type` tells them apart.
 // Rotation keeps at most one previous generation, so history stays between
@@ -1799,11 +1500,11 @@ setInterval(() => {
   lagLast = now;
   stats.lagSamplesTotal++;
   stats.lagMsTotal += lag;
-  bumpMax("lagMsMax", lag);
+  bumpMax(stats, "lagMsMax", lag);
 }, LAG_MS);
 
 setInterval(() => {
-  logLine({ type: "stats", ...statsLine() });
+  logLine({ type: "stats", ...statsLine(stats, SETTINGS, gauges()) });
   // statsLine() is synchronous and already spread above, so the window closes
   // here: every *Max on the next line describes only the coming minute.
   for (const k of MAX_FIELDS) stats[k] = 0;
@@ -1919,8 +1620,6 @@ type Tool = {
 class ToolError extends Error {
   candidates?: unknown[];
 }
-
-type WtRow = Worktree & { webUrl: string | null; defaultBranch: string | null };
 
 function wtRows(): WtRow[] {
   return [...repoByPath.values()]
@@ -2094,7 +1793,9 @@ const server = Deno.serve({
         },
       });
     }
-    if (url.pathname === "/api/stats") return json(statsLine());
+    if (url.pathname === "/api/stats") {
+      return json(statsLine(stats, SETTINGS, gauges()));
+    }
     if (url.pathname === "/mcp") {
       return hostHeaderValidationResponse(req, [
         ...localhostAllowedHostnames(),
@@ -2120,11 +1821,7 @@ const server = Deno.serve({
     if (url.pathname === "/api/settings") {
       if (req.method === "PUT") {
         Object.assign(SETTINGS, coerceSettings(DEFAULTS, await req.json()));
-        await Deno.mkdir(join(HOME, ".forest"), { recursive: true });
-        await Deno.writeTextFile(
-          SETTINGS_PATH,
-          JSON.stringify(settingsOverrides(DEFAULTS, SETTINGS), null, 2) + "\n",
-        );
+        await saveSettings(SETTINGS_PATH, SETTINGS);
         return json({ ...SETTINGS, desktop: !!BW });
       }
       return json({ ...SETTINGS, desktop: !!BW });
