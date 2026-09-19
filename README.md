@@ -36,7 +36,7 @@ A leading `~` is expanded. The path is scanned one level deep: every immediate
 subdirectory containing a `.git` counts as a repo.
 
 Settings marked "restart" in the [table below](#settings) need one; everything
-else applies live. `watch` is the one setting the ⚙ panel can't toggle — edit
+else applies live. `watch` is the one setting the settings panel can't toggle — edit
 the file.
 
 ## What it shows
