@@ -243,3 +243,9 @@ Opened from Finder or the Dock, an app gets launchd's bare PATH rather than your
 shell's, so the desktop build reads PATH from your login shell (`$SHELL -il`) at
 startup; `gh`, launchers, and repo git hooks then find the same tools a terminal
 would.
+
+`deno desktop` moves the first server onto a random port that only the window
+uses, so the app starts a second one on `port` as well: the browser UI, the
+agent API and `/mcp` answer at the usual address while the app is open. If a
+terminal Forest already has that port, the window still works and those go to
+the terminal one.

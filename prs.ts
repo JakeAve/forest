@@ -327,6 +327,11 @@ export function createPrs(
       if (!ghFailed.has(repo)) ghNextAt.set(repo, now + PR_PUSH_MS);
     },
     expire: (repo) => void ghNextAt.delete(repo),
-    prError: (repo) => ghFailed.get(repo) ?? null,
+    // A remote GitHub can't find (deleted, renamed, no access) just has no PRs;
+    // that's the repo's state, not gh being broken, so it stays off the notice.
+    prError: (repo) => {
+      const e = ghFailed.get(repo) ?? null;
+      return e && /Could not resolve to a Repository/.test(e) ? null : e;
+    },
   };
 }

@@ -42,6 +42,19 @@ Deno.test("lsof never throws", async () => {
   assertEquals(await sh.lsof("--definitely-not-a-flag"), "");
 });
 
+Deno.test("lsof missing from PATH returns empty and settles inflight", async () => {
+  const stats = newStats();
+  const sh = createExec(stats);
+  const path = Deno.env.get("PATH")!;
+  Deno.env.set("PATH", "/nonexistent");
+  try {
+    assertEquals(await sh.lsof("-v"), "");
+  } finally {
+    Deno.env.set("PATH", path);
+  }
+  assertEquals(stats.subprocessInflight, 0);
+});
+
 Deno.test("exec surfaces the child's stderr when it exits before reading stdin", async () => {
   const sh = createExec(newStats());
   const e = await assertRejects(

@@ -74,13 +74,19 @@ export function createExec(stats: Stats): Shell {
     },
     lsof: async (...args) => {
       const done = spawned("lsof");
-      const out = await new Deno.Command("lsof", {
-        args,
-        stdout: "piped",
-        stderr: "null",
-      })
-        .output().catch(() => null).finally(done);
-      return out ? dec.decode(out.stdout) : "";
+      try {
+        // try, not .catch(): a missing binary throws before output() returns
+        const out = await new Deno.Command("lsof", {
+          args,
+          stdout: "piped",
+          stderr: "null",
+        }).output();
+        return dec.decode(out.stdout);
+      } catch {
+        return "";
+      } finally {
+        done();
+      }
     },
   };
 }

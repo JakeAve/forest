@@ -60,6 +60,27 @@ const boom = () => {
   throw new Error("gh: no auth");
 };
 
+Deno.test("a repo GitHub can't find backs off but reports no error", async () => {
+  using _time = new FakeTime();
+  const orig = console.error;
+  console.error = () => {};
+  try {
+    const { prs, stats } = make({
+      [LIST]: () => {
+        throw new Error(
+          "GraphQL: Could not resolve to a Repository with the name 'a/b'. (repository)",
+        );
+      },
+    });
+    const r = mkRepo();
+    await prs.refreshPrs([r]);
+    await prs.refreshPrs([r]);
+    assertEquals([stats.ghFailTotal, prs.prError(REPO)], [1, null]);
+  } finally {
+    console.error = orig;
+  }
+});
+
 Deno.test("a repo without webUrl is never queried", async () => {
   const { prs, calls } = make({});
   await prs.refreshPrs([mkRepo({ webUrl: null })]);

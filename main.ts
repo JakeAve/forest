@@ -63,6 +63,15 @@ const server = Deno.serve({
 }, routes);
 
 if (BW) {
+  // deno desktop rebinds the first Deno.serve to a random port only the window
+  // uses. A second one keeps settings.port, so the browser UI, /api/t and /mcp
+  // still answer where agents expect. If a terminal Forest already holds the
+  // port, those go to it and this window still works.
+  try {
+    Deno.serve({ hostname: SETTINGS.host, port: SETTINGS.port }, routes);
+  } catch (e) {
+    console.warn(`port ${SETTINGS.port} unavailable:`, (e as Error).message);
+  }
   new BW({
     url: `http://localhost:${(server.addr as Deno.NetAddr).port}/`,
     title: "forest",

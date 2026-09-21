@@ -6,7 +6,7 @@
     "test": "deno test -A",
     "start": "npm install --silent && npx vite build --logLevel error && deno run -A main.ts",
     "serve": "deno run --watch -A main.ts",
-    "desktop": "npx vite build && deno desktop -A --icon icons/forest.icns --include dist --output Forest.app main.ts",
+    "desktop": "npx vite build && deno desktop -A --icon icons/forest.icns --include dist --output Forest main.ts",
     "pre-commit": "deno task check && deno task test",
     "pre-push": "deno task check && deno task test"
   },
