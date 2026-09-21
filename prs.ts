@@ -58,7 +58,7 @@ export type PrsApi = {
   prFor(repo: string, w: Worktree): Pr | null;
   pushSoon(repo: string, now: number): void;
   expire(repo: string): void;
-  isFailed(repo: string): boolean;
+  prError(repo: string): string | null;
 };
 
 export function createPrs(
@@ -76,7 +76,13 @@ export function createPrs(
   // repo without one is checked on the idle floor: enough to notice a PR opened in
   // a browser, cheap enough to leave running all day.
   const ghNextAt = new Map<string, number>();
-  const ghFailed = new Set<string>(); // reported once per repo, not once per call
+  // repo path -> why gh failed; logged once per repo, not once per call, and
+  // published so the UI can say PR badges are off instead of just lacking them.
+  const ghFailed = new Map<string, string>();
+  const ghError = (e: Error) =>
+    e instanceof Deno.errors.NotFound
+      ? "gh not found on PATH"
+      : e.message.split("\n")[0];
 
   const prFor = (repo: string, w: Worktree): Pr | null => {
     const prs = prsByRepo.get(repo);
@@ -166,7 +172,7 @@ export function createPrs(
         stats.ghFailTotal++;
         const first = !ghFailed.has(r.path);
         if (first) {
-          ghFailed.add(r.path);
+          ghFailed.set(r.path, ghError(e));
           console.error(`gh pr list failed in ${r.name}:`, e.message);
         }
         ghNextAt.set(r.path, Date.now() + GH_RETRY_MS[first ? 0 : 1]);
@@ -236,7 +242,7 @@ export function createPrs(
         stats.ghFailTotal++;
         const first = !ghFailed.has(repo);
         if (first) {
-          ghFailed.add(repo);
+          ghFailed.set(repo, ghError(e));
           console.error(`gh pr view failed in ${repo}:`, e.message);
         }
         ghNextAt.set(repo, Date.now() + GH_RETRY_MS[first ? 0 : 1]);
@@ -321,6 +327,6 @@ export function createPrs(
       if (!ghFailed.has(repo)) ghNextAt.set(repo, now + PR_PUSH_MS);
     },
     expire: (repo) => void ghNextAt.delete(repo),
-    isFailed: (repo) => ghFailed.has(repo),
+    prError: (repo) => ghFailed.get(repo) ?? null,
   };
 }

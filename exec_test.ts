@@ -1,5 +1,5 @@
 import { assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
-import { createExec } from "./exec.ts";
+import { createExec, loginPath, markedPath } from "./exec.ts";
 import { newStats } from "./stats.ts";
 
 Deno.test("exec returns stdout and counts otherTotal", async () => {
@@ -50,4 +50,20 @@ Deno.test("exec surfaces the child's stderr when it exits before reading stdin",
     Error,
   );
   assertStringIncludes(e.message, "nope");
+});
+
+Deno.test("markedPath ignores rc-file chatter around the marked value", () => {
+  assertEquals(
+    markedPath(
+      "Welcome!\n__forest_path__/opt/homebrew/bin:/usr/bin__forest_path__\nbye",
+    ),
+    "/opt/homebrew/bin:/usr/bin",
+  );
+  assertEquals(markedPath("no markers"), null);
+  assertEquals(markedPath("__forest_path____forest_path__"), null);
+});
+
+Deno.test("loginPath reads PATH from a login shell", async () => {
+  assertStringIncludes((await loginPath("/bin/sh"))!, "/usr/bin");
+  assertEquals(await loginPath("/no/such/shell"), null);
 });

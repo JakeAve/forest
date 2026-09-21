@@ -1,8 +1,14 @@
 import { join } from "@std/path";
 import { boot } from "./boot.ts";
+import { loginPath } from "./exec.ts";
 import { BW } from "./routes.ts";
 import { loadSettings } from "./settings.ts";
 import { bumpMax, MAX_FIELDS, statsLine } from "./stats.ts";
+
+if (BW) {
+  const path = await loginPath();
+  if (path) Deno.env.set("PATH", path);
+}
 
 const HOME = Deno.env.get("HOME")!;
 const SETTINGS = await loadSettings(join(HOME, ".forest", "settings.json"));

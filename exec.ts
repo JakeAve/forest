@@ -84,3 +84,32 @@ export function createExec(stats: Stats): Shell {
     },
   };
 }
+
+// A .app opened from Finder or the Dock inherits launchd's PATH
+// (/usr/bin:/bin:/usr/sbin:/sbin), not the shell's, so gh, launchers and repo
+// git hooks can't find Homebrew/nvm/deno tools. Ask the login shell instead,
+// the way editors do. Markers fence the value from rc-file chatter; a hung rc
+// file is cut off rather than holding up startup.
+const MARK = "__forest_path__";
+
+export function markedPath(out: string): string | null {
+  return out.match(new RegExp(`${MARK}(.*?)${MARK}`, "s"))?.[1] || null;
+}
+
+export async function loginPath(
+  shell = Deno.env.get("SHELL") || "/bin/zsh",
+): Promise<string | null> {
+  try {
+    // try, not .catch(): a missing binary throws before output() returns
+    const out = await new Deno.Command(shell, {
+      args: ["-ilc", `printf '${MARK}%s${MARK}' "$PATH"`],
+      stdin: "null",
+      stdout: "piped",
+      stderr: "null",
+      signal: AbortSignal.timeout(5_000),
+    }).output();
+    return markedPath(dec.decode(out.stdout));
+  } catch {
+    return null;
+  }
+}

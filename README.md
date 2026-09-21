@@ -13,8 +13,8 @@ Deno server + Svelte frontend. No database, no config to write by hand.
 
 macOS only for now (it reads `lsof` and macOS app paths). Needs Deno 2, Node
 20.19+ (for Vite 7), and git. PR badges also need the `gh` CLI, authenticated
-(`gh auth login`) — without it, Forest logs a warning and runs with PR badges
-off.
+(`gh auth login`) — without it, Forest runs with PR badges off and says why in a
+notice under the title bar.
 
 ```sh
 git clone https://github.com/JakeAve/forest.git && cd forest
@@ -238,3 +238,8 @@ deno task desktop   # builds Forest.app via `deno desktop`
 
 Same server, wrapped in a native window with a transparent titlebar. Cmd +/-/0
 zoom only in that build.
+
+Opened from Finder or the Dock, an app gets launchd's bare PATH rather than your
+shell's, so the desktop build reads PATH from your login shell (`$SHELL -il`) at
+startup; `gh`, launchers, and repo git hooks then find the same tools a terminal
+would.

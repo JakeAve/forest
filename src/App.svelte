@@ -128,6 +128,24 @@ let diffRef = $state();
 let diffDirty = $state(false);
 let diffTick = $state(0);
 let banner = $state(null);
+let prOffHidden = $state("");
+// gh failures (missing, signed out, no access) would otherwise just look like a
+// repo with no PRs. Dismissing hides this text; a different failure shows again.
+const prOff = $derived.by(() => {
+  const bad = repos.filter((r) => r.prError);
+  if (!bad.length) return null;
+  const all = bad.length === repos.filter((r) => r.webUrl).length;
+  const where = all
+    ? ""
+    : bad.length > 3
+    ? ` in ${bad.length} repos`
+    : ` in ${bad.map((r) => r.name).join(", ")}`;
+  const why = [...new Set(bad.map((r) => r.prError))].join("; ");
+  return {
+    text: `PR badges off${where}: ${why}`,
+    detail: bad.map((r) => `${r.name}: ${r.prError}`).join("\n"),
+  };
+});
 let discarding = $state(null);
 let touched = $state({});
 let now = $state(Date.now());
@@ -1594,6 +1612,13 @@ async function confirmDiscard() {
       {#each banner.actions as a (a.label)}
         <button class="btn" class:p={a.primary} onclick={a.fn}>{a.label}</button>
       {/each}
+    </div>
+  {/if}
+
+  {#if prOff && prOff.text !== prOffHidden}
+    <div class="banner warn" role="status" title={prOff.detail}>
+      <span>{prOff.text}</span><span class="sp"></span>
+      <button class="btn" onclick={() => (prOffHidden = prOff.text)}>Dismiss</button>
     </div>
   {/if}
 

@@ -39,6 +39,7 @@ export function boot(opts: {
   const store = createStore({
     prFor: (r, w) => prs.prFor(r, w),
     autoRebase: (wt) => autoRebase.status(wt),
+    prError: (r) => prs.prError(r),
     procs: () => ports.current(),
     onSnapshot: (j) => sse.broadcast(j),
     stats,

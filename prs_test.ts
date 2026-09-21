@@ -75,10 +75,10 @@ Deno.test("gh failure schedules retry at 10 min, then 1 h, and logs once", async
     const { prs, stats } = make({ [LIST]: boom });
     const r = mkRepo();
     await prs.refreshPrs([r]);
-    assertEquals([stats.ghFailTotal, errs.length, prs.isFailed(REPO)], [
+    assertEquals([stats.ghFailTotal, errs.length, prs.prError(REPO)], [
       1,
       1,
-      true,
+      "gh: no auth",
     ]);
 
     await time.tickAsync(599_000);
@@ -111,12 +111,12 @@ Deno.test("a later success clears the failed flag and returns to prPollMs", asyn
     });
     const r = mkRepo();
     await prs.refreshPrs([r]);
-    assertEquals(prs.isFailed(REPO), true);
+    assertEquals(prs.prError(REPO), "gh: no auth");
 
     await time.tickAsync(600_001);
     fail = false;
     await prs.refreshPrs([r]);
-    assertEquals(prs.isFailed(REPO), false);
+    assertEquals(prs.prError(REPO), null);
 
     const n = lists();
     await time.tickAsync(DEFAULTS.prPollMs - 1_000);
@@ -264,7 +264,7 @@ Deno.test("pushSoon is ignored for a failed repo", async () => {
 
     await time.tickAsync(600_001);
     await prs.refreshPrs([r]);
-    assertEquals(prs.isFailed(REPO), false);
+    assertEquals(prs.prError(REPO), null);
     const m = lists();
     prs.pushSoon(REPO, Date.now());
     await time.tickAsync(10_001);

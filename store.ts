@@ -16,9 +16,10 @@ export type StoreApi = {
 // map is the source of truth; the snapshot is derived from it, so a partial
 // recompute only has to replace one entry.
 export function createStore(
-  { prFor, autoRebase, procs, onSnapshot, stats }: {
+  { prFor, autoRebase, prError = () => null, procs, onSnapshot, stats }: {
     prFor: (repo: string, w: Worktree) => Pr | null;
     autoRebase?: (wt: string) => AutoRebase | null;
+    prError?: (repo: string) => string | null;
     procs: () => Map<string, Procs>;
     onSnapshot: (json: string) => void;
     stats: Stats;
@@ -46,6 +47,7 @@ export function createStore(
       const wtByPath = new Map<string, Worktree>();
       for (const r of repos) {
         repoPaths.set(r.name, r.path);
+        r.prError = prError(r.path);
         for (const w of r.worktrees) {
           known.set(w.path, r.path);
           wtByPath.set(w.path, w);
