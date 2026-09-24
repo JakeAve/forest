@@ -7,7 +7,7 @@ import { bumpMax, MAX_FIELDS, statsLine } from "./stats.ts";
 const HOME = Deno.env.get("HOME")!;
 const SETTINGS = await loadSettings(join(HOME, ".forest", "settings.json"));
 const DIST_DIR = join(import.meta.dirname!, "dist");
-const { root, stats, sse, log, watcher, routes } = boot({
+const { root, stats, sse, log, watcher, autoRebase, routes } = boot({
   settings: SETTINGS,
   home: HOME,
   distDir: DIST_DIR,
@@ -27,6 +27,14 @@ setInterval(() => {
 }, LAG_MS);
 
 setInterval(sse.ping, 20_000);
+
+await autoRebase.load();
+setInterval(() => {
+  autoRebase.tick().catch((e) => {
+    stats.errorsTotal++;
+    console.error(e);
+  });
+}, SETTINGS.autoRebaseMs);
 
 setInterval(() => {
   log.line({

@@ -36,8 +36,8 @@ A leading `~` is expanded. The path is scanned one level deep: every immediate
 subdirectory containing a `.git` counts as a repo.
 
 Settings marked "restart" in the [table below](#settings) need one; everything
-else applies live. `watch` is the one setting the settings panel can't toggle — edit
-the file.
+else applies live. `watch` is the one setting the settings panel can't toggle —
+edit the file.
 
 ## What it shows
 
@@ -53,9 +53,18 @@ finds `discount-codes`), or narrow to dirty-only / running-only.
 
 Right-click a worktree to open it, copy its path or branch, view or create its
 PR, push, rebase onto `origin/HEAD`, update the branch, enable auto-merge, mark
-a PR draft or ready, close it, kill a process listening in it, or remove the
-worktree. Select several to copy or remove them together. Right-click a repo for
-new worktree.
+a PR draft or ready, close it, kill a process listening in it, turn on
+auto-rebase, or remove the worktree. Select several to copy or remove them
+together. Right-click a repo for new worktree.
+
+Auto-rebase keeps a worktree current with `origin/HEAD` on a timer
+(`autoRebaseMs`). A branch with an open PR is updated on GitHub, the same
+merge-from-base as the card's update-branch button, and fast-forwarded locally
+once that lands; any other branch is rebased locally and never pushed. A dirty
+worktree, one mid-rebase or -merge, or one with unpushed commits is left alone
+for that tick. A failed attempt shows as a red ↻ on the row with the error as
+its tooltip, and isn't retried until `origin/HEAD` moves again. The set of
+worktrees lives in `~/.forest/autorebase.json`.
 
 Selecting a worktree lists its changed files, either since the branch point
 (merge-base with `origin/HEAD`) or just uncommitted. Selecting a file opens a
@@ -155,6 +164,7 @@ are written.
 | `pollMs`            | `5000`      | rescan tick; with `watch` on, ports and PRs only                 |
 | `prPollMs`          | `60000`     | PR refresh for a repo with an open PR                            |
 | `prIdleMs`          | `300000`    | PR refresh for a repo without one                                |
+| `autoRebaseMs`      | `300000`    | how often auto-rebase worktrees follow `origin/HEAD`             |
 | `watch`             | `true`      | recompute on file events instead of polling (restart to turn on) |
 | `watchDebounceMs`   | `300`       | quiet time after an event before recomputing                     |
 | `watchMaxWaitMs`    | `2000`      | longest a steady event stream defers a recompute                 |

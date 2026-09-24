@@ -63,6 +63,7 @@ export function worktree(over: Partial<Worktree> = {}): Worktree {
     ports: [],
     procs: [],
     pr: null,
+    autoRebase: null,
     ...over,
   };
 }

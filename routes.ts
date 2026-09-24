@@ -29,6 +29,7 @@ import {
 import type { PrsApi } from "./prs.ts";
 import { enc, type SseApi } from "./sse.ts";
 import type { WatcherApi } from "./watcher.ts";
+import type { AutoRebaseApi } from "./autorebase.ts";
 import type { StoreApi } from "./store.ts";
 import { DEFAULTS, saveSettings, type Settings } from "./settings.ts";
 import { type Stats, statsLine } from "./stats.ts";
@@ -58,6 +59,7 @@ export function createRoutes(deps: {
   ports: { current(): Map<string, Procs> };
   files: FilesApi;
   watcher: WatcherApi;
+  autoRebase: AutoRebaseApi;
   sse: SseApi;
   stats: Stats;
   tools: ReturnType<typeof createTools>;
@@ -75,6 +77,7 @@ export function createRoutes(deps: {
     ports,
     files,
     watcher,
+    autoRebase,
     sse,
     stats,
     desktop,
@@ -309,32 +312,18 @@ export function createRoutes(deps: {
         switch (url.pathname) {
           case "/api/rebase":
             await git(wt, "fetch", "origin");
-            try {
-              await git(wt, "rebase", "origin/HEAD");
-            } catch (e) {
-              await git(wt, "rebase", "--abort").catch(() => {});
-              throw new Error(
-                `rebase failed — aborted, use a terminal. ${
-                  (e as Error).message
-                }`,
-              );
-            }
+            await autoRebase.rebase(wt);
             break;
+          case "/api/auto-rebase":
+            await autoRebase.set(wt, !!b.enable);
+            return json({ ok: true });
           case "/api/update-branch": {
             const repo = knownWorktrees.get(wt)!;
             const n = Number(b.number);
             if (!Number.isInteger(n) || n <= 0) {
               throw new Error("bad pr number");
             }
-            await exec(wt, [
-              "gh",
-              "api",
-              "-X",
-              "PUT",
-              `repos/{owner}/{repo}/pulls/${n}/update-branch`,
-            ]);
-            await prs.refreshOnePr(repo, n).catch(() => {});
-            prs.refreshPrSoon(repo, n);
+            await autoRebase.updateBranch(wt, repo, n);
             break;
           }
           case "/api/auto-merge": {

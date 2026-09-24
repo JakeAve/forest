@@ -169,6 +169,7 @@ export function createRepo(
       ports: [],
       procs: [],
       pr: null,
+      autoRebase: null,
     };
   }
 

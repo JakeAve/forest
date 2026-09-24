@@ -1,6 +1,6 @@
 import { ownerWorktree } from "./parse.ts";
 import type { Stats } from "./stats.ts";
-import type { Pr, Procs, Repo, Worktree } from "./types.ts";
+import type { AutoRebase, Pr, Procs, Repo, Worktree } from "./types.ts";
 
 export type StoreApi = {
   byPath: Map<string, Repo>;
@@ -16,8 +16,9 @@ export type StoreApi = {
 // map is the source of truth; the snapshot is derived from it, so a partial
 // recompute only has to replace one entry.
 export function createStore(
-  { prFor, procs, onSnapshot, stats }: {
+  { prFor, autoRebase, procs, onSnapshot, stats }: {
     prFor: (repo: string, w: Worktree) => Pr | null;
+    autoRebase?: (wt: string) => AutoRebase | null;
     procs: () => Map<string, Procs>;
     onSnapshot: (json: string) => void;
     stats: Stats;
@@ -49,6 +50,7 @@ export function createStore(
           known.set(w.path, r.path);
           wtByPath.set(w.path, w);
           w.pr = prFor(r.path, w);
+          w.autoRebase = autoRebase?.(w.path) ?? null;
           w.ports = []; // recomputed from scratch: publish() runs on live objects
           w.procs = [];
         }

@@ -25,7 +25,10 @@ export type Worktree = {
   ports: number[];
   procs: Procs;
   pr: Pr | null;
+  autoRebase: AutoRebase | null;
 };
+
+export type AutoRebase = { on: true; error: string | null };
 
 export type Repo = {
   name: string;

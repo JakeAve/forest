@@ -829,6 +829,8 @@ async function op(ep, body, e) {
 const rebase = (w, e) => act("rebase", { wt: w.path }, "rb:" + w.path, e);
 const updateBranch = (w, e) =>
   act("update-branch", { wt: w.path, number: w.pr.number }, "ub:" + w.path, e);
+const toggleAutoRebase = (w, e) =>
+  act("auto-rebase", { wt: w.path, enable: !w.autoRebase }, "ar:" + w.path, e);
 const toggleAutoMerge = (w, e) =>
   act(
     "auto-merge",
@@ -1075,6 +1077,8 @@ const VERDICT = {
 
 const AM_ICON =
   '<path d="M1.896 4.559a6.25 6.25 0 0 1 8.839 0 .75.75 0 0 1-1.06 1.061 4.75 4.75 0 1 0 0 6.717L13.03 8.98l-1.553-1.554A.25.25 0 0 1 11.654 7h4.096a.25.25 0 0 1 .25.25v4.096a.25.25 0 0 1-.427.177l-1.482-1.482-3.356 3.356a6.25 6.25 0 0 1-8.839-8.838Z" fill="currentColor" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"/>';
+const AR_ICON =
+  '<path d="M1.705 8.005a.75.75 0 0 1 .834.656 5.5 5.5 0 0 0 9.592 2.97l-1.204-1.204a.25.25 0 0 1 .177-.427h3.646a.25.25 0 0 1 .25.25v3.646a.25.25 0 0 1-.427.177l-1.38-1.38A7.002 7.002 0 0 1 1.05 8.84a.75.75 0 0 1 .656-.834ZM8 2.5a5.487 5.487 0 0 0-4.131 1.869l1.204 1.204A.25.25 0 0 1 4.896 6H1.25A.25.25 0 0 1 1 5.75V2.104a.25.25 0 0 1 .427-.177l1.38 1.38A7.002 7.002 0 0 1 14.95 7.16a.75.75 0 0 1-1.49.178A5.5 5.5 0 0 0 8 2.5Z" fill="currentColor" stroke="currentColor" stroke-width="0.6" stroke-linejoin="round"/>';
 const GLYPH = {
   conflict:
     '<path d="M8.87 1.5a1 1 0 0 0-1.74 0L.75 12.5A1 1 0 0 0 1.62 14h12.76a1 1 0 0 0 .87-1.5ZM7 6h2v3.5H7Zm1 6.25a1.1 1.1 0 1 1 0-2.2 1.1 1.1 0 0 1 0 2.2Z" fill="currentColor" fill-rule="evenodd"/>',
@@ -1183,6 +1187,10 @@ function wtItems(w, solo = false) {
     !many && w.pr?.state === "OPEN" && {
       label: w.pr.autoMerge ? "Disable auto-merge" : "Enable auto-merge",
       fn: (e) => toggleAutoMerge(w, e),
+    },
+    !many && !w.isPrimary && {
+      label: w.autoRebase ? "Disable auto-rebase" : "Enable auto-rebase",
+      fn: (e) => toggleAutoRebase(w, e),
     },
     ...(many ? [] : prActions(w).map((a) => ({
       label: a.confirm ? `${a.menu}…` : a.menu,
@@ -1782,8 +1790,11 @@ async function confirmDiscard() {
                  .filter(Boolean).join(": ")}
                onpointerenter={(e) => showCard(w, e)} onpointerleave={() => hideCard()}
                onfocus={(e) => showCard(w, e)} onblur={() => hideCard()}
-               onclick={(e) => e.stopPropagation()}>{#if w.pr.autoMerge}<svg class="g am" viewBox="0 0 16 16">{@html AM_ICON}</svg>{/if}#{w.pr.number}{#if s.glyph}<svg class="g" viewBox="0 0 16 16">{@html GLYPH[s.glyph]}</svg>{/if}</a>
+               onclick={(e) => e.stopPropagation()}>{#if w.pr.autoMerge}<svg class="g am" viewBox="0 0 16 16">{@html AM_ICON}</svg>{/if}{#if w.autoRebase}<svg class="g ar" class:err={w.autoRebase.error} viewBox="0 0 16 16">{@html AR_ICON}</svg>{/if}#{w.pr.number}{#if s.glyph}<svg class="g" viewBox="0 0 16 16">{@html GLYPH[s.glyph]}</svg>{/if}</a>
             <span class="prt {s.tone}" title="{s.sinceLabel} for {ago(s.since)}">{ago(s.since)}</span>
+          {:else if w.autoRebase}
+            <span class="port ar" class:err={w.autoRebase.error}
+                  title={w.autoRebase.error ?? "auto-rebase on"}><svg class="g ar" viewBox="0 0 16 16">{@html AR_ICON}</svg></span>
           {/if}
         </span>
         <span class="ports">
@@ -2093,6 +2104,14 @@ async function confirmDiscard() {
                    onchange={(e) => toggleAutoMerge(w, e)}>
             <span class="cbx" class:on={p.autoMerge}></span>Auto-merge (squash)
           </label>
+          <label class="r">
+            <input type="checkbox" class="cbxin" checked={!!w.autoRebase} disabled={busy["ar:" + w.path]}
+                   onchange={(e) => toggleAutoRebase(w, e)}>
+            <span class="cbx" class:on={!!w.autoRebase}></span>Auto-rebase
+          </label>
+          {#if w.autoRebase?.error}
+            <div class="r bad">{w.autoRebase.error}</div>
+          {/if}
         </section>
       {/if}
       {#if c}
@@ -2940,6 +2959,19 @@ select.theme {
 }
 .wt .ab.behind {
   color: var(--warn);
+}
+.port.ar {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 0.3rem;
+}
+.port.ar .g {
+  width: 10px;
+  height: 10px;
+}
+.g.ar.err,
+.port.ar.err {
+  color: var(--danger);
 }
 .wt .ago {
   font: 0.6875rem var(--mono);
