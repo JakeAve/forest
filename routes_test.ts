@@ -5,6 +5,7 @@ import { createFiles } from "./files.ts";
 import { createSse } from "./sse.ts";
 import { createStore } from "./store.ts";
 import { createTools } from "./tools.ts";
+import { createAutoRebase } from "./autorebase.ts";
 import { createRoutes } from "./routes.ts";
 import { DEFAULTS } from "./settings.ts";
 import { newStats } from "./stats.ts";
@@ -94,6 +95,14 @@ const make = (opts?: {
     ports: { current: () => new Map() },
     files,
     watcher,
+    autoRebase: createAutoRebase({
+      sh,
+      store,
+      prs,
+      path: "/tmp/forest-test/autorebase.json",
+      afterMutation: () => {},
+      log: () => {},
+    }),
     sse,
     stats,
     tools,

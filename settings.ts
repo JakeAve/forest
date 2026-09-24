@@ -8,6 +8,7 @@ export const DEFAULTS = {
   pollMs: 5000,
   prPollMs: 60000, // a repo with an open PR: only that state can still change
   prIdleMs: 300000, // a repo without one: catches PRs opened outside this machine
+  autoRebaseMs: 300000, // how often opted-in worktrees follow origin/HEAD
   watch: true,
   watchDebounceMs: 300,
   watchMaxWaitMs: 2000,

@@ -7,6 +7,7 @@ import { createPrs } from "./prs.ts";
 import { createPorts } from "./ports.ts";
 import { createSse } from "./sse.ts";
 import { createWatcher } from "./watcher.ts";
+import { createAutoRebase } from "./autorebase.ts";
 import { createStore } from "./store.ts";
 import { createTools } from "./tools.ts";
 import { BW, createRoutes } from "./routes.ts";
@@ -37,6 +38,7 @@ export function boot(opts: {
   });
   const store = createStore({
     prFor: (r, w) => prs.prFor(r, w),
+    autoRebase: (wt) => autoRebase.status(wt),
     procs: () => ports.current(),
     onSnapshot: (j) => sse.broadcast(j),
     stats,
@@ -59,6 +61,14 @@ export function boot(opts: {
     log: (o) => log.line(o),
     watchFs: opts.watchFs ?? ((r) => Deno.watchFs(r, { recursive: true })),
   });
+  const autoRebase = createAutoRebase({
+    sh,
+    store,
+    prs,
+    path: join(dir, "autorebase.json"),
+    afterMutation: () => watcher.afterMutation(),
+    log: (o) => log.line(o),
+  });
   const tools = createTools({ store, files, settings, home });
   const routes = createRoutes({
     settings,
@@ -74,10 +84,11 @@ export function boot(opts: {
     ports,
     files,
     watcher,
+    autoRebase,
     sse,
     stats,
     tools,
     desktop: !!BW,
   });
-  return { root, stats, sse, log, watcher, routes };
+  return { root, stats, sse, log, watcher, autoRebase, routes };
 }
