@@ -1188,6 +1188,7 @@ function wtItems(w, solo = false) {
     },
     !many && !w.isPrimary && {
       label: w.autoRebase ? "Disable auto-rebase" : "Enable auto-rebase",
+      kbd: w === selWt && kbdOf("auto-rebase"),
       fn: (e) => toggleAutoRebase(w, e),
     },
     ...(many ? [] : prActions(w).map((a) => ({
@@ -1397,6 +1398,25 @@ let palTree = $state({ of: null, files: [], dirs: [] });
 
 const desktop = () => settings?.desktop;
 const hasFile = () => sel && file;
+const navWts = $derived([
+  ...new Map(
+    [
+      ...pinnedWts,
+      ...recentWts,
+      ...(allClosed ? [] : shownWts.filter((w) => !closed[w.repo])),
+    ].map((w) => [w.path, w]),
+  ).values(),
+]);
+function goWt(w) {
+  selectWt(w.path);
+  scrollRow(w.path);
+}
+function stepWt(d) {
+  const i = navWts.findIndex((w) => w.path === sel);
+  goWt(navWts[Math.max(0, Math.min(navWts.length - 1, i < 0 ? 0 : i + d))]);
+}
+const liveWt = () => !loose && selWt;
+const toggleSettings = () => (dlg.open ? dlg.close() : dlg.showModal());
 const COMMANDS = [
   {
     id: "palette",
@@ -1411,6 +1431,52 @@ const COMMANDS = [
     run: () => (shortcutsOpen = !shortcutsOpen),
   },
   { id: "open-path", label: "Open path…", keys: "cmd+o", run: editPath },
+  { id: "settings", label: "Settings", keys: "cmd+comma", run: toggleSettings },
+  {
+    id: "next-wt",
+    label: "Next worktree",
+    section: "Worktrees",
+    keys: "j",
+    when: () => navWts.length,
+    run: () => stepWt(1),
+  },
+  {
+    id: "prev-wt",
+    label: "Previous worktree",
+    section: "Worktrees",
+    keys: "k",
+    when: () => navWts.length,
+    run: () => stepWt(-1),
+  },
+  ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => ({
+    id: `pinned-${n}`,
+    label: `Pinned worktree ${n}`,
+    section: "Worktrees",
+    keys: `ctrl+${n}`,
+    when: () => pinnedWts[n - 1],
+    run: () => goWt(pinnedWts[n - 1]),
+  })),
+  {
+    id: "auto-rebase",
+    get label() {
+      return liveWt()?.autoRebase
+        ? "Disable auto-rebase"
+        : "Enable auto-rebase";
+    },
+    section: "Worktrees",
+    keys: "alt+cmd+r",
+    when: () => liveWt() && !selWt.isPrimary && !busy["ar:" + selWt.path],
+    run: (e) => toggleAutoRebase(selWt, e),
+  },
+  ...["Worktrees", "Files", "Source"].map((name, i) => ({
+    id: `max-${name.toLowerCase()}`,
+    get label() {
+      return `${max === i + 1 ? "Restore" : "Maximize"} ${name}`;
+    },
+    section: "View",
+    keys: `alt+cmd+${i + 1}`,
+    run: () => toggleMax(i + 1),
+  })),
   {
     id: "copy-path",
     label: "Copy path (relative)",
@@ -1526,15 +1592,11 @@ const paletteItems = $derived.by(() => {
     ...[...allWts].sort((a, b) =>
       !!pinned[b.path] - !!pinned[a.path] || b.lastActivity - a.lastActivity
     ).map(wtItem),
-    ...(selWt && !loose ? asPalette(wtItems(selWt, true), selWt.branch) : []),
-    cmd("Settings", () => dlg.showModal()),
+    ...(selWt && !loose
+      ? asPalette(wtItems(selWt, true), selWt.branch)
+        .filter((i) => !COMMANDS.some((c) => c.label === i.label))
+      : []),
     ...LAYOUTS.map(([p, name]) => cmd(`${name} layout`, () => setPreset(p))),
-    ...["Worktrees", "Files", "Source"].map((name, i) =>
-      cmd(
-        `${max === i + 1 ? "Restore" : "Maximize"} ${name}`,
-        () => toggleMax(i + 1),
-      )
-    ),
     ...(loose ? [] : [
       cmd("Since branch point", () => setBase("branch")),
       cmd("Uncommitted", () => setBase("head")),
@@ -1654,7 +1716,7 @@ async function confirmDiscard() {
           <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d={d}/></svg></button>
       {/each}
     </div>
-    <button class="circ" title="Settings" aria-label="Settings" onclick={() => dlg.showModal()}>
+    <button class="circ" title="Settings {kbdOf('settings') ?? ''}" aria-label="Settings" onclick={() => dlg.showModal()}>
       <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/></svg></button>
   </div>
 
