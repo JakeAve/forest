@@ -22,6 +22,7 @@ export const DEFAULTS = {
   collapseMargin: 3,
   collapseMinSize: 5,
   launchers: {} as Record<string, string>,
+  keys: {} as Record<string, string>,
 };
 
 export type Settings = typeof DEFAULTS;

@@ -178,6 +178,7 @@ are written.
 | `collapseMargin`    | `3`         | context lines kept around a hunk                                 |
 | `collapseMinSize`   | `5`         | shortest run of unchanged lines that collapses                   |
 | `launchers`         | `{}`        | per-repo worktree-creation commands                              |
+| `keys`              | `{}`        | keyboard shortcut overrides                                      |
 
 `host` defaults to loopback for a reason: setting it to `0.0.0.0` serves your
 repositories unauthenticated to everything on the LAN, including file contents
@@ -197,6 +198,20 @@ substituted; `*` is the fallback for repos without their own entry.
 
 ```json
 { "launchers": { "*": "./scripts/new-worktree.sh {slug}" } }
+```
+
+### Keyboard shortcuts
+
+Every command lives in `COMMANDS` in `src/App.svelte` with an id and default
+keys, and shows up in the palette and the settings dialog. Rebind one there by
+focusing it and pressing new keys (⌫ restores the default), or in
+`settings.json` by id. Keys are the physical key (`KeyboardEvent.code` without
+`Key`/`Digit`, lowercased) joined with `ctrl`, `alt`, `shift`, `cmd`; a comma
+separates alternatives. A rebound key that another command also uses goes to the
+rebound one.
+
+```json
+{ "keys": { "palette": "cmd+p", "zoom-in": "cmd+equal, shift+cmd+equal" } }
 ```
 
 ## Themes
