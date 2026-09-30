@@ -188,9 +188,9 @@ const media = $derived(
     : null,
 );
 const rawSrc = $derived(
-  `/api/raw?wt=${encodeURIComponent(sel ?? "")}&path=${
-    encodeURIComponent(file ?? "")
-  }`,
+  `/api/raw/${encodeURIComponent(file?.split("/").pop() ?? "")}?wt=${
+    encodeURIComponent(sel ?? "")
+  }&path=${encodeURIComponent(file ?? "")}`,
 );
 $effect(() => {
   void sel, void file;
