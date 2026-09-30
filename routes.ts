@@ -1,4 +1,4 @@
-import { serveDir } from "@std/http/file-server";
+import { serveDir, serveFile } from "@std/http/file-server";
 import {
   createMcpHandler,
   hostHeaderValidationResponse,
@@ -201,6 +201,17 @@ export function createRoutes(deps: {
             mode,
           ),
         );
+      }
+      if (url.pathname === "/api/raw") {
+        const res = await serveFile(
+          req,
+          join(
+            guardRoot(url.searchParams.get("wt"), req, info),
+            guardPath(url.searchParams.get("path")),
+          ),
+        );
+        res.headers.set("content-security-policy", "sandbox");
+        return res;
       }
       if (url.pathname === "/api/open") {
         const host = (info.remoteAddr as Deno.NetAddr).hostname;
