@@ -1717,7 +1717,7 @@ async function confirmDiscard() {
       {/each}
     </div>
     <button class="circ" title="Settings {kbdOf('settings') ?? ''}" aria-label="Settings" onclick={() => dlg.showModal()}>
-      <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/></svg></button>
+      <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg></button>
   </div>
 
   {#if banner}
@@ -2506,8 +2506,11 @@ dialog.settings {
   background: var(--bg2);
   color: var(--fg);
   padding: 0 0 0.875rem;
-  width: min(27.5rem, 92vw);
-  font: 0.75rem var(--sans);
+  width: min(32rem, 92vw);
+  font: 0.875rem var(--sans);
+}
+dialog.settings .btn {
+  font-size: 0.8125rem;
 }
 dialog.settings::backdrop {
   background: color-mix(in srgb, var(--bg) 65%, transparent);
@@ -2520,7 +2523,7 @@ dialog.settings::backdrop {
   padding: 0 0.75rem 0 1rem;
   border-bottom: 1px solid var(--line);
   margin-bottom: 0.25rem;
-  font-size: 0.875rem;
+  font-size: 1rem;
 }
 .sec {
   padding: 0.875rem 1rem 0.25rem;
@@ -2534,18 +2537,18 @@ dialog.settings::backdrop {
   padding: 0.1875rem 1rem;
 }
 .row label {
-  width: 8.125rem;
+  width: 9.5rem;
   color: var(--dim);
-  font: 0.6875rem var(--mono);
+  font: 0.8125rem var(--mono);
 }
 .row input {
   background: var(--input);
   border: 1px solid var(--line);
   border-radius: 0.375rem;
   color: var(--fg);
-  font: 0.6875rem var(--mono);
+  font: 0.8125rem var(--mono);
   padding: 0.1875rem 0.5rem;
-  width: 5.75rem;
+  width: 6.5rem;
   outline: none;
 }
 .row input:focus {
@@ -2555,12 +2558,12 @@ dialog.settings::backdrop {
   width: 100%;
 }
 .row input.lname {
-  width: 8.125rem;
+  width: 9.5rem;
 }
 .row input.mono,
 .hint.mono,
 .hint .mono {
-  font: 0.6875rem var(--mono);
+  font: 0.8125rem var(--mono);
 }
 .btn:disabled {
   opacity: .4;
@@ -2569,7 +2572,7 @@ dialog.settings::backdrop {
 .hint {
   padding: 0.125rem 1rem;
   color: var(--dimmer);
-  font-size: 0.6875rem;
+  font-size: 0.8125rem;
 }
 .row .hint {
   padding: 0;
@@ -2932,10 +2935,10 @@ select.theme {
   border: 1px solid var(--line);
   border-radius: 0.375rem;
   color: var(--fg);
-  font: 0.6875rem var(--sans);
+  font: 0.8125rem var(--sans);
   padding: 0.1875rem 0.375rem;
   outline: none;
-  max-width: 10rem;
+  max-width: 12rem;
 }
 
 .repo {
