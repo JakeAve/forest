@@ -202,7 +202,7 @@ export function createRoutes(deps: {
           ),
         );
       }
-      if (url.pathname === "/api/raw") {
+      if (url.pathname.startsWith("/api/raw/")) {
         const res = await serveFile(
           req,
           join(
