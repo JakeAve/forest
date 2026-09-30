@@ -175,13 +175,16 @@ const selFile = $derived(files.find((f) => f.path === file));
 const isHtml = $derived(/\.html?$/i.test(file ?? ""));
 const isMd = $derived(/\.(md|markdown)$/i.test(file ?? ""));
 const isSvg = $derived(/\.svg$/i.test(file ?? ""));
-const canPreview = $derived(isHtml || isMd || isSvg);
+const isPdf = $derived(/\.pdf$/i.test(file ?? ""));
+const canPreview = $derived(isHtml || isMd || isSvg || isPdf);
 const media = $derived(
   /\.(png|jpe?g|gif|webp|avif|ico|bmp)$/i.test(file ?? "") ||
     (preview && isSvg)
     ? "img"
     : /\.(mp4|webm|mov|m4v|ogv)$/i.test(file ?? "")
     ? "video"
+    : preview && isPdf
+    ? "pdf"
     : null,
 );
 const rawSrc = $derived(
@@ -256,7 +259,7 @@ function restoreRawView() {
 }
 
 $effect(() => {
-  if (!(preview && canPreview && sel && file) || isSvg) {
+  if (!(preview && canPreview && sel && file) || isSvg || isPdf) {
     return void (previewReady = false);
   }
   void diffTick, void theme;
@@ -2169,6 +2172,8 @@ async function confirmDiscard() {
       {:else if media === "video" && sel && file}
         <!-- svelte-ignore a11y_media_has_caption -->
         <video class="media" src={rawSrc} controls muted></video>
+      {:else if media === "pdf" && sel && file}
+        <iframe class="preview ready" title="Preview of {file}" src="{rawSrc}&t={diffTick}"></iframe>
       {:else if preview && canPreview && previewSrc}
         {#key previewSrc}
           <iframe class="preview" class:md={isMd} class:ready={previewReady} title="Preview of {file}"

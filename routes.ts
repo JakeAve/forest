@@ -210,7 +210,10 @@ export function createRoutes(deps: {
             guardPath(url.searchParams.get("path")),
           ),
         );
-        res.headers.set("content-security-policy", "sandbox");
+        // Chrome's PDF viewer refuses to render in a sandboxed document
+        if (!res.headers.get("content-type")?.startsWith("application/pdf")) {
+          res.headers.set("content-security-policy", "sandbox");
+        }
         return res;
       }
       if (url.pathname === "/api/open") {
