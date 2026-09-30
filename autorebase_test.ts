@@ -146,6 +146,17 @@ Deno.test("PR branch: update-branch when behind base, ff once the remote moves, 
   assertEquals(unpushed.calls(), []);
 });
 
+Deno.test("a merged PR turns auto-rebase off without touching git", async () => {
+  const t = make({ pr: { number: 7, state: "MERGED" } as Pr, dirty: 1 });
+  await t.api.set(WT, true);
+  await t.api.tick();
+  assertEquals(t.all(), []);
+  assertEquals(t.api.status(WT), null);
+  assertEquals(JSON.parse(await Deno.readTextFile(t.deps.path)), []);
+  assertEquals(t.store.published, 2);
+  assertEquals(t.logs, [{ type: "autoRebase", wt: WT, action: "off" }]);
+});
+
 Deno.test("set persists, prunes unknown paths and publishes; load restores", async () => {
   const t = make({});
   await t.api.set(WT, true);

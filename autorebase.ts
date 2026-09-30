@@ -17,7 +17,7 @@ export type AutoRebaseApi = {
 // is updated on GitHub (update-branch merges base into it) and fast-forwarded
 // locally once that lands; any other branch is rebased locally and never
 // pushed. A failure is remembered against the base sha it failed on, so a
-// conflict is retried only once base moves again.
+// conflict is retried only once base moves again. A merged PR switches it off.
 export function createAutoRebase(
   { sh, store, prs, path, afterMutation, log }: {
     sh: Pick<Shell, "git" | "exec">;
@@ -95,12 +95,20 @@ export function createAutoRebase(
   }
 
   async function tick() {
-    let changed = false, moved = false;
+    let changed = false, moved = false, dropped = false;
     const fetched = new Set<string>();
     for (const wt of on) {
       const repo = store.known.get(wt);
       const w = row(wt);
-      if (!repo || !w || w.isPrimary || w.state || w.dirty) continue;
+      if (!repo || !w) continue;
+      if (w.pr?.state === "MERGED") {
+        on.delete(wt);
+        failed.delete(wt);
+        dropped = true;
+        log({ type: "autoRebase", wt, action: "off" });
+        continue;
+      }
+      if (w.isPrimary || w.state || w.dirty) continue;
       let sha = "";
       try {
         if (!fetched.has(repo)) {
@@ -121,8 +129,9 @@ export function createAutoRebase(
         log({ type: "autoRebase", wt, error });
       }
     }
+    if (dropped) await save();
     if (moved) afterMutation();
-    else if (changed) store.publish();
+    else if (changed || dropped) store.publish();
   }
 
   return {

@@ -1186,7 +1186,7 @@ function wtItems(w, solo = false) {
       label: w.pr.autoMerge ? "Disable auto-merge" : "Enable auto-merge",
       fn: (e) => toggleAutoMerge(w, e),
     },
-    !many && !w.isPrimary && {
+    !many && !w.isPrimary && (w.autoRebase || w.pr?.state !== "MERGED") && {
       label: w.autoRebase ? "Disable auto-rebase" : "Enable auto-rebase",
       kbd: w === selWt && kbdOf("auto-rebase"),
       fn: (e) => toggleAutoRebase(w, e),
@@ -1465,7 +1465,9 @@ const COMMANDS = [
     },
     section: "Worktrees",
     keys: "alt+cmd+r",
-    when: () => liveWt() && !selWt.isPrimary && !busy["ar:" + selWt.path],
+    when: () =>
+      liveWt() && !selWt.isPrimary && !busy["ar:" + selWt.path] &&
+      (selWt.autoRebase || selWt.pr?.state !== "MERGED"),
     run: (e) => toggleAutoRebase(selWt, e),
   },
   ...["Worktrees", "Files", "Source"].map((name, i) => ({
