@@ -202,13 +202,14 @@ substituted; `*` is the fallback for repos without their own entry.
 
 ### Keyboard shortcuts
 
-Every command lives in `COMMANDS` in `src/App.svelte` with an id and default
-keys, and shows up in the palette and the settings dialog. Rebind one there by
-focusing it and pressing new keys (⌫ restores the default), or in
-`settings.json` by id. Keys are the physical key (`KeyboardEvent.code` without
-`Key`/`Digit`, lowercased) joined with `ctrl`, `alt`, `shift`, `cmd`; a comma
-separates alternatives. A rebound key that another command also uses goes to the
-rebound one.
+Every command lives in `COMMANDS` in `src/App.svelte` with an id, a `section`,
+and default keys, and shows up in the palette and the shortcuts overlay (`?` or
+⌘/, also linked from settings). Click a shortcut there and press new keys to
+rebind it (⎋ cancels, ⌫ restores the default), or set it in `settings.json` by
+id. Keys are the physical key (`KeyboardEvent.code` without `Key`/`Digit`,
+lowercased) joined with `ctrl`, `alt`, `shift`, `cmd`; a comma separates
+alternatives. A rebound key that another command also uses goes to the rebound
+one.
 
 ```json
 { "keys": { "palette": "cmd+p", "zoom-in": "cmd+equal, shift+cmd+equal" } }

@@ -51,10 +51,41 @@ export function norm(s) {
   return [...MODS.filter((m) => parts.includes(m)), key].join("+");
 }
 
-export const label = (c) =>
-  c.split("+").map((p) =>
+const SHIFTED = {
+  1: "!",
+  2: "@",
+  3: "#",
+  4: "$",
+  5: "%",
+  6: "^",
+  7: "&",
+  8: "*",
+  9: "(",
+  0: ")",
+  minus: "_",
+  equal: "+",
+  bracketleft: "{",
+  bracketright: "}",
+  backslash: "|",
+  semicolon: ":",
+  quote: '"',
+  comma: "<",
+  period: ">",
+  slash: "?",
+  backquote: "~",
+};
+
+export function label(c) {
+  const parts = c.split("+");
+  const key = parts.at(-1);
+  if (parts.includes("shift") && SHIFTED[key]) {
+    parts.splice(parts.indexOf("shift"), 1);
+    parts[parts.length - 1] = SHIFTED[key];
+  }
+  return parts.map((p) =>
     GLYPH[p] ?? p.replace(/^numpad(\d)$/, "$1").toUpperCase()
   ).join("");
+}
 
 export function resolve(commands, overrides = {}) {
   const own = (id) => Object.hasOwn(overrides, id);

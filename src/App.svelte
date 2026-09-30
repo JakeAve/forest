@@ -2,6 +2,7 @@
 import { tick, untrack } from "svelte";
 import Source from "./Source.svelte";
 import Palette from "./Palette.svelte";
+import Shortcuts from "./Shortcuts.svelte";
 import { matchPath, matchWt, pathText, rank, wtText } from "./filter.js";
 import {
   ancestorDirs,
@@ -1403,10 +1404,17 @@ const COMMANDS = [
     keys: "cmd+k, cmd+p",
     run: () => (paletteOpen = !paletteOpen),
   },
+  {
+    id: "shortcuts",
+    label: "Keyboard shortcuts",
+    keys: "shift+slash, cmd+slash",
+    run: () => (shortcutsOpen = !shortcutsOpen),
+  },
   { id: "open-path", label: "Open path…", keys: "cmd+o", run: editPath },
   {
     id: "copy-path",
     label: "Copy path (relative)",
+    section: "Files",
     keys: "alt+shift+cmd+c",
     when: hasFile,
     run: (e) => copy(e, file, "kbd"),
@@ -1414,6 +1422,7 @@ const COMMANDS = [
   {
     id: "copy-path-abs",
     label: "Copy path (absolute)",
+    section: "Files",
     keys: "alt+cmd+c",
     when: hasFile,
     run: (e) => copy(e, `${sel}/${file}`, "kbd"),
@@ -1421,6 +1430,7 @@ const COMMANDS = [
   {
     id: "zoom-in",
     label: "Zoom in",
+    section: "View",
     keys: "cmd+equal, shift+cmd+equal, cmd+numpadadd",
     when: desktop,
     run: () => zoomBy(0.1),
@@ -1428,6 +1438,7 @@ const COMMANDS = [
   {
     id: "zoom-out",
     label: "Zoom out",
+    section: "View",
     keys: "cmd+minus, cmd+numpadsubtract",
     when: desktop,
     run: () => zoomBy(-0.1),
@@ -1435,6 +1446,7 @@ const COMMANDS = [
   {
     id: "zoom-reset",
     label: "Reset zoom",
+    section: "View",
     keys: "cmd+0, cmd+numpad0",
     when: desktop,
     run: () => zoomBy(0),
@@ -1455,14 +1467,10 @@ function runKey(e) {
   c.run(e);
 }
 
-function bindKey(e, id) {
-  if (e.key === "Tab") return;
-  e.preventDefault();
-  const k = combo(e);
-  if (k === "escape") return e.target.blur();
-  if (!k) return;
+let shortcutsOpen = $state(false);
+function bindKey(id, k) {
   const { [id]: _, ...rest } = settings.keys;
-  settings.keys = k === "backspace" ? rest : { ...rest, [id]: k };
+  settings.keys = k ? { ...rest, [id]: k } : rest;
   saveSettings();
 }
 
@@ -2295,6 +2303,8 @@ async function confirmDiscard() {
 </div>
 
 <Palette items={paletteItems} bind:open={paletteOpen} />
+<Shortcuts commands={COMMANDS} {keymap} onbind={bindKey}
+  bind:open={shortcutsOpen} />
 
 <dialog class="settings" bind:this={dlg}>
   <div class="shead"><b>Settings</b><span class="sp"></span>
@@ -2362,15 +2372,10 @@ async function confirmDiscard() {
   <div class="hint mono">{"{slug} {repo} {path} {root}"}</div>
 
   <div class="sec">Keyboard shortcuts</div>
-  {#each COMMANDS as c (c.id)}
-    <div class="row">
-      <label for="k-{c.id}">{c.label}</label>
-      <input id="k-{c.id}" class="wide mono" type="text" readonly placeholder="None"
-             value={[...new Set(keymap.byId[c.id].map(keyLabel))].join(" ")}
-             onkeydown={(e) => bindKey(e, c.id)}>
-    </div>
-  {/each}
-  <div class="hint">Focus a shortcut and press new keys; ⌫ restores the default.</div>
+  <div class="row">
+    <button class="btn" onclick={() => (dlg.close(), (shortcutsOpen = true))}>
+      View and rebind…{#if kbdOf("shortcuts")}<kbd>{kbdOf("shortcuts")}</kbd>{/if}</button>
+  </div>
 </dialog>
 
 <style>
@@ -2402,6 +2407,11 @@ async function confirmDiscard() {
 }
 .omni:hover {
   border-color: var(--dimmer);
+}
+.btn kbd {
+  margin-left: 0.5rem;
+  color: var(--dim);
+  font: 0.6875rem var(--mono);
 }
 .omni kbd {
   margin-left: auto;

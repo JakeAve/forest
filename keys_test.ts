@@ -34,6 +34,9 @@ Deno.test("label: mac glyphs", () => {
   assertEquals(label("f10"), "F10");
   assertEquals(label("cmd+numpadadd"), "⌘+");
   assertEquals(label("cmd+numpad0"), "⌘0");
+  assertEquals(label("shift+slash"), "?");
+  assertEquals(label("shift+cmd+equal"), "⌘+");
+  assertEquals(label("shift+cmd+c"), "⇧⌘C");
 });
 
 const C = [
