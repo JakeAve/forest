@@ -15,6 +15,7 @@ import {
   trimSeps,
 } from "../parse.ts";
 import { parseThemeText, resolveTheme } from "./theme.js";
+import { combo, label as keyLabel, resolve } from "./keys.js";
 import { marked } from "marked";
 
 let settings = $state(null);
@@ -24,17 +25,7 @@ let zoom = $state(1);
 $effect(() => {
   document.documentElement.style.fontSize = zoom === 1 ? "" : `${zoom * 100}%`;
 });
-function zoomKey(e) {
-  if (!settings?.desktop || !e.metaKey) return;
-  const d = e.key === "-"
-    ? -0.1
-    : e.key === "=" || e.key === "+"
-    ? 0.1
-    : e.key === "0"
-    ? 0
-    : null;
-  if (d === null) return;
-  e.preventDefault();
+function zoomBy(d) {
   zoom = d ? Math.round(Math.min(2, Math.max(0.6, zoom + d)) * 10) / 10 : 1;
   saveLayout();
 }
@@ -487,12 +478,6 @@ async function openPath(text) {
   return true;
 }
 
-function openKey(e) {
-  if (!e.metaKey || e.key !== "o") return;
-  e.preventDefault();
-  editPath();
-}
-
 async function editPath() {
   editingPath = true;
   await tick();
@@ -663,12 +648,6 @@ function setBase(b) {
   pendingLine = 0;
   base = b;
   if (sel) loadFiles();
-}
-
-function copyKey(e) {
-  if (!e.metaKey || !e.altKey || e.code !== "KeyC" || !sel || !file) return;
-  e.preventDefault();
-  copy(e, e.shiftKey ? file : `${sel}/${file}`, "kbd");
 }
 
 function toggleAllShown() {
@@ -1282,12 +1261,12 @@ function fileItems(f, mode) {
   return [
     {
       label: "Copy path (relative)",
-      kbd: file === f.path && "⌥⇧⌘C",
+      kbd: file === f.path && kbdOf("copy-path"),
       fn: (e) => copy(e, f.path, f.path + ":r"),
     },
     {
       label: "Copy path (absolute)",
-      kbd: file === f.path && "⌥⌘C",
+      kbd: file === f.path && kbdOf("copy-path-abs"),
       fn: (e) => copy(e, sel + "/" + f.path, f.path + ":a"),
     },
     "-",
@@ -1415,12 +1394,76 @@ async function grep(v) {
 }
 let palTree = $state({ of: null, files: [], dirs: [] });
 
-function paletteKey(e) {
-  if (!e.metaKey || e.altKey || e.shiftKey || !["k", "p"].includes(e.key)) {
-    return;
-  }
+const desktop = () => settings?.desktop;
+const hasFile = () => sel && file;
+const COMMANDS = [
+  {
+    id: "palette",
+    label: "Command palette",
+    keys: "cmd+k, cmd+p",
+    run: () => (paletteOpen = !paletteOpen),
+  },
+  { id: "open-path", label: "Open path…", keys: "cmd+o", run: editPath },
+  {
+    id: "copy-path",
+    label: "Copy path (relative)",
+    keys: "alt+shift+cmd+c",
+    when: hasFile,
+    run: (e) => copy(e, file, "kbd"),
+  },
+  {
+    id: "copy-path-abs",
+    label: "Copy path (absolute)",
+    keys: "alt+cmd+c",
+    when: hasFile,
+    run: (e) => copy(e, `${sel}/${file}`, "kbd"),
+  },
+  {
+    id: "zoom-in",
+    label: "Zoom in",
+    keys: "cmd+equal, shift+cmd+equal, cmd+numpadadd",
+    when: desktop,
+    run: () => zoomBy(0.1),
+  },
+  {
+    id: "zoom-out",
+    label: "Zoom out",
+    keys: "cmd+minus, cmd+numpadsubtract",
+    when: desktop,
+    run: () => zoomBy(-0.1),
+  },
+  {
+    id: "zoom-reset",
+    label: "Reset zoom",
+    keys: "cmd+0, cmd+numpad0",
+    when: desktop,
+    run: () => zoomBy(0),
+  },
+];
+const keymap = $derived(resolve(COMMANDS, settings?.keys));
+const kbdOf = (id) => keymap.byId[id]?.[0] && keyLabel(keymap.byId[id][0]);
+
+function runKey(e) {
+  const k = !e.defaultPrevented && !e.isComposing && combo(e);
+  const c = k && COMMANDS.find((c) => c.id === keymap.byCombo.get(k));
+  if (!c || (c.when && !c.when())) return;
+  if (
+    !/ctrl|alt|cmd/.test(k) &&
+    e.target.closest?.("input, textarea, select, [contenteditable]")
+  ) return;
   e.preventDefault();
-  paletteOpen = !paletteOpen;
+  c.run(e);
+}
+
+function bindKey(e, id) {
+  if (e.key === "Tab") return;
+  e.preventDefault();
+  const k = combo(e);
+  if (k === "escape") return e.target.blur();
+  if (!k) return;
+  const { [id]: _, ...rest } = settings.keys;
+  settings.keys = k === "backspace" ? rest : { ...rest, [id]: k };
+  saveSettings();
 }
 
 $effect(() => {
@@ -1535,7 +1578,8 @@ const paletteItems = $derived.by(() => {
       : []),
     cmd("Dirty only", () => (dirtyOnly = !dirtyOnly)),
     cmd("Running only", () => (runningOnly = !runningOnly)),
-    cmd("Open path…", editPath, "⌘O"),
+    ...COMMANDS.filter((c) => c.id !== "palette" && (!c.when || c.when()))
+      .map((c) => cmd(c.label, c.run, kbdOf(c.id))),
     {
       ...cmd("Theme…", () => dlg.showModal()),
       sub: () =>
@@ -1579,7 +1623,7 @@ async function confirmDiscard() {
 </script>
 
 <svelte:window
-  onkeydown={(e) => (zoomKey(e), copyKey(e), openKey(e), paletteKey(e))}
+  onkeydown={runKey}
 />
 
 <div class="app" class:desktop={settings?.desktop}>
@@ -1593,7 +1637,7 @@ async function confirmDiscard() {
     <span class="sp"></span>
     <button class="omni" onclick={() => (paletteOpen = true)}>
       <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/></svg>
-      Search worktrees, files, commands<kbd>⌘K</kbd></button>
+      Search worktrees, files, commands{#if kbdOf("palette")}<kbd>{kbdOf("palette")}</kbd>{/if}</button>
     <span class="sp"></span>
     <div class="seg layouts" role="group" aria-label="Layout">
       {#each LAYOUTS as [p, name, d] (p)}
@@ -1855,14 +1899,14 @@ async function confirmDiscard() {
         <input class="filter open" placeholder="Open path…" bind:this={openEl}
                onkeydown={openBoxKey} onblur={() => (editingPath = false)}>
       {:else}
-        <button class="meta pth" title="open a path… ⌘O" onclick={editPath}
+        <button class="meta pth" title="open a path… {kbdOf('open-path') ?? ''}" onclick={editPath}
                 oncontextmenu={(e) => sel && openMenu(e, [
                   {
                     label: "Copy path (relative)",
                     fn: (e) => copy(e, selWt ? relWt(repoOf(selWt), selWt) : sel, "ctx"),
                   },
                   { label: "Copy path (absolute)", fn: (e) => copy(e, sel, "ctx") },
-                ])}>{loose ? sel : selWt ? `${selWt.repo} · ${selWt.branch}` : "Open path… ⌘O"}</button>
+                ])}>{loose ? sel : selWt ? `${selWt.repo} · ${selWt.branch}` : `Open path… ${kbdOf("open-path") ?? ""}`}</button>
         <span class="sp"></span>
       {/if}
       {#if sel}
@@ -2316,6 +2360,17 @@ async function confirmDiscard() {
     any repo without its own entry; empty removes it.
   </div>
   <div class="hint mono">{"{slug} {repo} {path} {root}"}</div>
+
+  <div class="sec">Keyboard shortcuts</div>
+  {#each COMMANDS as c (c.id)}
+    <div class="row">
+      <label for="k-{c.id}">{c.label}</label>
+      <input id="k-{c.id}" class="wide mono" type="text" readonly placeholder="None"
+             value={[...new Set(keymap.byId[c.id].map(keyLabel))].join(" ")}
+             onkeydown={(e) => bindKey(e, c.id)}>
+    </div>
+  {/each}
+  <div class="hint">Focus a shortcut and press new keys; ⌫ restores the default.</div>
 </dialog>
 
 <style>
