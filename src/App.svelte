@@ -174,7 +174,21 @@ const selWt = $derived(
 const selFile = $derived(files.find((f) => f.path === file));
 const isHtml = $derived(/\.html?$/i.test(file ?? ""));
 const isMd = $derived(/\.(md|markdown)$/i.test(file ?? ""));
-const canPreview = $derived(isHtml || isMd);
+const isSvg = $derived(/\.svg$/i.test(file ?? ""));
+const canPreview = $derived(isHtml || isMd || isSvg);
+const media = $derived(
+  /\.(png|jpe?g|gif|webp|avif|ico|bmp)$/i.test(file ?? "") ||
+    (preview && isSvg)
+    ? "img"
+    : /\.(mp4|webm|mov|m4v|ogv)$/i.test(file ?? "")
+    ? "video"
+    : null,
+);
+const rawSrc = $derived(
+  `/api/raw?wt=${encodeURIComponent(sel ?? "")}&path=${
+    encodeURIComponent(file ?? "")
+  }`,
+);
 $effect(() => {
   void sel, void file;
   previewSrc = "";
@@ -242,7 +256,7 @@ function restoreRawView() {
 }
 
 $effect(() => {
-  if (!(preview && canPreview && sel && file)) {
+  if (!(preview && canPreview && sel && file) || isSvg) {
     return void (previewReady = false);
   }
   void diffTick, void theme;
@@ -2148,7 +2162,12 @@ async function confirmDiscard() {
       {@render maxBtn(3)}
     </div>
     <div class="body" bind:this={srcBodyEl}>
-      {#if preview && canPreview && previewSrc}
+      {#if media === "img" && sel && file}
+        <img class="media" src="{rawSrc}&t={diffTick}" alt={file}>
+      {:else if media === "video" && sel && file}
+        <!-- svelte-ignore a11y_media_has_caption -->
+        <video class="media" src={rawSrc} controls muted></video>
+      {:else if preview && canPreview && previewSrc}
         {#key previewSrc}
           <iframe class="preview" class:md={isMd} class:ready={previewReady} title="Preview of {file}"
                   sandbox="allow-scripts" srcdoc={previewSrc}
@@ -2764,6 +2783,15 @@ dialog.settings::backdrop {
 }
 .preview.ready {
   opacity: 1;
+}
+.media {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  margin: auto;
+  object-fit: contain;
+  background: repeating-conic-gradient(var(--bg2) 0 25%, var(--bg3) 0 50%) 0 0 /
+    16px 16px;
 }
 .sourceband .body {
   margin: 0 0.5rem 0.5rem;
