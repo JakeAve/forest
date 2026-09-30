@@ -183,6 +183,8 @@ const media = $derived(
     ? "img"
     : /\.(mp4|webm|mov|m4v|ogv)$/i.test(file ?? "")
     ? "video"
+    : /\.(mp3|wav|ogg|oga|m4a|aac|flac|opus)$/i.test(file ?? "")
+    ? "audio"
     : preview && isPdf
     ? "pdf"
     : null,
@@ -2172,6 +2174,8 @@ async function confirmDiscard() {
       {:else if media === "video" && sel && file}
         <!-- svelte-ignore a11y_media_has_caption -->
         <video class="media" src={rawSrc} controls muted></video>
+      {:else if media === "audio" && sel && file}
+        <audio class="audio" src={rawSrc} controls></audio>
       {:else if media === "pdf" && sel && file}
         <iframe class="preview ready" title="Preview of {file}" src="{rawSrc}&t={diffTick}"></iframe>
       {:else if preview && canPreview && previewSrc}
@@ -2790,6 +2794,11 @@ dialog.settings::backdrop {
 }
 .preview.ready {
   opacity: 1;
+}
+.audio {
+  display: block;
+  width: min(100%, 32rem);
+  margin: 1rem auto;
 }
 .media {
   display: block;
