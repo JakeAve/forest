@@ -1,5 +1,5 @@
 import { assert, assertEquals, assertThrows } from "@std/assert";
-import type { DiffWorktree } from "./parse.ts";
+import type { DiffWorktree, PrCard } from "./parse.ts";
 import {
   ancestorDirs,
   approvals,
@@ -1409,6 +1409,35 @@ Deno.test("edges: ci-failed fires again when a new check fails", () => {
   assertEquals(kinds(prSnap(pr()), prSnap(fail(["a"]))), ["ci-failed"]);
   assertEquals(kinds(prSnap(fail(["a"])), prSnap(fail(["a"]))), []);
   assertEquals(kinds(prSnap(fail(["a"])), prSnap(fail(["b", "a"]))), [
+    "ci-failed",
+  ]);
+});
+
+Deno.test("edges: optional failing checks fire ci-failed-optional", () => {
+  const check = (name: string, required: boolean) => ({
+    name,
+    bucket: "fail" as const,
+    required,
+    url: "",
+    startedAt: null,
+    completedAt: null,
+  });
+  const card = {
+    ...prCard(JSON.parse(GH_CARD)),
+    comments: [],
+    threads: [],
+    checks: [check("lint", false), check("test", true)],
+  };
+  const fail = (failing: string[], c: PrCard | null = card) =>
+    pr({ card: c, ci: { state: "fail", failing } });
+  assertEquals(kinds(prSnap(pr({ card })), prSnap(fail(["lint"]))), [
+    "ci-failed-optional",
+  ]);
+  assertEquals(kinds(prSnap(pr({ card })), prSnap(fail(["test", "lint"]))), [
+    "ci-failed",
+    "ci-failed-optional",
+  ]);
+  assertEquals(kinds(prSnap(pr()), prSnap(fail(["lint"], null))), [
     "ci-failed",
   ]);
 });

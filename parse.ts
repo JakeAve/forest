@@ -1154,6 +1154,7 @@ export function byteChar(b: number): string {
 
 export type Kind =
   | "ci-failed"
+  | "ci-failed-optional"
   | "changes-requested"
   | "new-comment"
   | "conflict"
@@ -1190,7 +1191,16 @@ export const KINDS: Record<
   Kind,
   { group: "act" | "move" | "life" | "clean"; label: string; hint?: string }
 > = {
-  "ci-failed": { group: "act", label: "CI failed" },
+  "ci-failed": {
+    group: "act",
+    label: "Required check failed",
+    hint: "Checks with no card yet count as required",
+  },
+  "ci-failed-optional": {
+    group: "act",
+    label: "Optional check failed",
+    hint: "Repos without branch protection report every check as optional",
+  },
   "changes-requested": { group: "act", label: "Changes requested" },
   "new-comment": { group: "act", label: "New comment" },
   "conflict": { group: "act", label: "Merge conflict" },
@@ -1379,8 +1389,14 @@ export function facts(
       const open = pr.state === "OPEN";
       const approved = pr.reviewDecision === "APPROVED";
       if (pr.ci.state === "fail") {
+        const optional = new Set(
+          pr.card?.checks.filter((c) => !c.required).map((c) => c.name),
+        );
         for (const n of pr.ci.failing.length ? pr.ci.failing : [null]) {
-          add("ci-failed", ps, true, n, n ?? pr.title);
+          const k = n !== null && optional.has(n)
+            ? "ci-failed-optional"
+            : "ci-failed";
+          add(k, ps, true, n, n ?? pr.title);
         }
       }
       add("changes-requested", ps, pr.reviewDecision === "CHANGES_REQUESTED");
