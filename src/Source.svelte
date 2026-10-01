@@ -77,6 +77,7 @@ let note = $state(null);
 let sentinel;
 let stream = null;
 const CHUNK = 1 << 20;
+let loading = $state(true);
 let usedLine = 0;
 let builtWt = null;
 let builtPath = null;
@@ -453,10 +454,13 @@ $effect(() => {
   stream = null;
   skip = null;
   let stale = false;
+  loading = true;
   Promise.all([fetchData(), loadLang(path)]).then(([d, l]) => {
     if (stale) return;
     lang = l;
     build(d);
+  }).finally(() => {
+    if (!stale) loading = false;
   });
   return () => {
     stale = true;
@@ -482,16 +486,43 @@ $effect(() => () => {
 });
 </script>
 
+{#if loading}<div
+  class="loading late"><span><i class="spin"></i>Loading…</span></div>{/if}
 {#if skip}
   {#key path}<Hex src="{rawUrl(wt, path)}&t={tick}" note={skip} />{/key}
 {/if}
 {#if note && !skip}<div class="note">{note}</div>{/if}
-<div class="wrap" class:dirtyhide={dirty} hidden={!!skip} bind:this={el}></div>
+<div class="wrap" class:dirtyhide={dirty} class:stale={loading}
+  hidden={!!skip} bind:this={el}></div>
 <div bind:this={sentinel}></div>
 
 <style>
 .wrap {
   min-height: 100%;
+}
+.wrap.stale {
+  opacity: 0.5;
+  transition: opacity 0s 150ms;
+}
+.loading {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  height: 0;
+  display: flex;
+  justify-content: center;
+}
+.loading span {
+  margin-top: 1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.3rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg2);
+  color: var(--dim);
+  font: 0.75rem var(--sans);
 }
 .note {
   padding: 0.5rem 1rem;

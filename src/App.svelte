@@ -101,6 +101,7 @@ function saveLayout() {
 let repos = $state([]);
 let sel = $state(null);
 let files = $state([]);
+let filesOf = $state(null);
 let file = $state(null);
 let base = $state("branch");
 let explore = $state(false);
@@ -175,7 +176,7 @@ let cardT;
 const cardWt = $derived(card && allWts.find((w) => w.path === card.path));
 let restored = false;
 const initialParams = new URLSearchParams(location.search);
-let restoring = $state(initialParams.has("path"));
+let restoring = $state(initialParams.has("path") || initialParams.has("wt"));
 let markBooted;
 const booted = new Promise((r) => (markBooted = r));
 fetch("/api/themes").then((r) => r.json()).then((t) => (themes = t));
@@ -417,6 +418,7 @@ async function restoreUrl() {
     }
     return;
   }
+  restoring = false;
   const wt = initialParams.get("wt");
   if (!wt || !repos.flatMap((r) => r.worktrees).some((w) => w.path === wt)) {
     return;
@@ -455,15 +457,19 @@ $effect(() => {
 });
 
 async function loadFiles() {
+  const wt = sel;
   if (loose) {
     files = [];
+    filesOf = wt;
     return;
   }
   const res = await fetch(
-    `/api/files?wt=${encodeURIComponent(sel)}&base=${base}`,
+    `/api/files?wt=${encodeURIComponent(wt)}&base=${base}`,
   );
   const data = await res.json();
+  if (sel !== wt) return;
   files = data.files;
+  filesOf = wt;
   if (!explore && !files.some((f) => f.path === file)) {
     file = files[0]?.path ?? null;
   }
@@ -1785,6 +1791,7 @@ async function confirmDiscard() {
   {/if}
 
   {#if ready}
+  {#snippet loadingRow()}<div class="empty late"><span class="spin"></span> Loading…</div>{/snippet}
   {#snippet maxBtn(n)}
     <button class="btn max" class:on={max === n} title={max === n ? "Restore panes" : "Full screen"}
             aria-label={max === n ? "Restore panes" : "Full screen"}
@@ -2113,9 +2120,11 @@ async function confirmDiscard() {
         </div>
       {/snippet}
       {#if !sel}
-        <div class="empty">Select a worktree</div>
+        {#if restoring}{@render loadingRow()}{:else}<div class="empty">Select a worktree</div>{/if}
       {:else if explore}
-        {#if loose && !tree.length && treeOf === sel}
+        {#if treeOf !== sel}
+          {@render loadingRow()}
+        {:else if loose && !tree.length}
           <div class="empty">Empty folder</div>
         {:else if fq && !treeMatches.length}
           <div class="empty">No matches</div>
@@ -2128,6 +2137,8 @@ async function confirmDiscard() {
             <div class="empty">Showing the first {TREE_CAP} files, narrow the path</div>
           {/if}
         {/if}
+      {:else if filesOf !== sel}
+        {@render loadingRow()}
       {:else if !files.length}
         <div class="empty">No changes</div>
       {:else if !shownFiles.length}
@@ -2213,6 +2224,7 @@ async function confirmDiscard() {
       {:else if mode === "preview" && mediaType === "pdf" && sel && file}
         <iframe class="preview ready" title="Preview of {file}" src="{rawSrc}&t={diffTick}"></iframe>
       {:else if mode === "preview" && previewSrc}
+        {#if !previewReady}{@render loadingRow()}{/if}
         {#key previewSrc}
           <iframe class="preview" class:md={isMd} class:ready={previewReady} title="Preview of {file}"
                   sandbox="allow-scripts" srcdoc={previewSrc}
@@ -2230,6 +2242,8 @@ async function confirmDiscard() {
               onsaved={loadFiles}
               onready={restoreRawView}
               onbinary={(b) => (srcBinary = b)} />
+      {:else if restoring}
+        {@render loadingRow()}
       {:else}
         <div class="empty">Select a file</div>
       {/if}
@@ -2844,6 +2858,9 @@ dialog.settings::backdrop {
   background: repeating-conic-gradient(var(--bg2) 0 25%, var(--bg3) 0 50%) 0 0 /
     16px 16px;
 }
+.preview:not(.ready) {
+  height: 0;
+}
 .sourceband .body {
   margin: 0 0.5rem 0.5rem;
   padding: 0;
@@ -3312,27 +3329,6 @@ select.theme {
   padding: 0.35rem 0.6rem;
   color: var(--dim);
   font: 0.75rem var(--sans);
-}
-
-.boot .spin {
-  width: 0.7rem;
-  height: 0.7rem;
-  border: 2px solid var(--dimmer);
-  border-top-color: var(--acc);
-  border-radius: 50%;
-  animation: spin 0.7s linear infinite;
-}
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .boot .spin {
-    animation: none;
-  }
 }
 
 .sechd {

@@ -192,3 +192,34 @@ body {
   color: var(--danger);
   border-color: var(--danger);
 }
+
+.spin {
+  display: inline-block;
+  width: 0.7rem;
+  height: 0.7rem;
+  vertical-align: -0.1em;
+  border: 2px solid var(--dimmer);
+  border-top-color: var(--acc);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .spin {
+    animation: none;
+  }
+}
+
+/* loading states that usually resolve fast stay hidden for their first moment */
+.late {
+  animation: late 0s 150ms both;
+}
+@keyframes late {
+  from {
+    visibility: hidden;
+  }
+}
