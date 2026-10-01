@@ -1473,3 +1473,61 @@ Deno.test("snoozeKey is kind and worktree", () => {
     "gh-error:/r/forest",
   );
 });
+
+Deno.test("edges: switching to a branch with a merged PR is silent", () => {
+  const at = (branch: string, p: Pr | null, over = {}) => [
+    repo({
+      prListed: true,
+      worktrees: [
+        worktree({ path: W, branch, lastActivity: CTX.now, pr: p, ...over }),
+      ],
+    }),
+  ];
+  const busy = { ports: [3000], behind: 2, behindMain: 3 };
+  assertEquals(
+    kinds(
+      at("feat", pr()),
+      at("old", pr({ number: 9, state: "MERGED" }), busy),
+    ),
+    ["branch-switched"],
+  );
+  assertEquals(kinds(at("feat", pr()), at("old", null, busy)), [
+    "branch-switched",
+  ]);
+});
+
+Deno.test("edges: diverged after local rebase does not fire pushed-to-branch", () => {
+  const wt = (ahead: number, behind: number) => [
+    repo({
+      worktrees: [
+        worktree({ path: W, ahead, behind, lastActivity: CTX.now }),
+      ],
+    }),
+  ];
+  assertEquals(kinds(wt(1, 0), wt(1, 2)), []);
+  assertEquals(kinds(wt(0, 0), wt(0, 2)), ["pushed-to-branch"]);
+});
+
+Deno.test("edges: a new reply in an existing thread fires new-comment", () => {
+  const base = prCard(JSON.parse(GH_CARD));
+  const card = (replies: number, lastBy: string) => ({
+    ...base,
+    comments: [],
+    threads: [{
+      path: "a.ts",
+      line: 1,
+      login: "octo",
+      body: "hi",
+      tag: "",
+      url: "t1",
+      at: 1,
+      replies,
+      lastBy,
+      resolved: false,
+    }],
+  });
+  const at = (replies: number, lastBy = "octo") =>
+    prSnap(pr({ card: card(replies, lastBy) }));
+  assertEquals(kinds(at(0), at(1)), ["new-comment"]);
+  assertEquals(kinds(at(1), at(2, base.author)), []);
+});

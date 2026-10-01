@@ -34,6 +34,7 @@ function setup(
     return sh.exec(cwd, cmd, stdin);
   };
   const emitted: string[] = [];
+  const logs: Record<string, unknown>[] = [];
   const settings = { ...structuredClone(DEFAULTS), ...over };
   let t = 1_000_000;
   const n = createNotify({
@@ -43,10 +44,11 @@ function setup(
     inbox,
     now: () => t,
     os: true,
-    log: () => {},
+    log: (o) => logs.push(o),
   });
   return {
     n,
+    logs,
     sh,
     argv,
     emitted,
@@ -186,6 +188,25 @@ test("notify: inbox trims to notifyMax", async (mk) => {
     ["/r/c", true],
     ["/r/b", true],
   ]);
+});
+
+test("notify: a throwing cycle is logged, not thrown", (mk) => {
+  const { n, logs, settings } = mk();
+  Object.assign(settings, { notify: null, notifyMuted: null });
+  n.observe(snap({ path: "/r/forest" }));
+  n.observe(snap({ path: "/r/forest" }, { path: "/r/a" }));
+  n.observe("{");
+  Object.defineProperty(settings, "notifyCiStuckMin", {
+    get() {
+      throw new Error("boom");
+    },
+  });
+  n.tick();
+  assertEquals(logs.map((l) => l.error), [
+    logs[0].error,
+    "Error: boom",
+  ]);
+  assertEquals(logs.map((l) => l.type), ["notify-error", "notify-error"]);
 });
 
 Deno.test("notify: only the InboxStore interface is used", async (t) => {

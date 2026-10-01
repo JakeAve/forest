@@ -86,7 +86,7 @@ export function createNotify(
     );
 
   const deliver = (d: Draft) => {
-    const v = settings.notify[d.kind];
+    const v = settings.notify?.[d.kind];
     return DELIVER.has(v) ? v : "off";
   };
 
@@ -116,6 +116,14 @@ export function createNotify(
   }
 
   function cycle() {
+    try {
+      run();
+    } catch (e) {
+      log({ type: "notify-error", error: String(e) });
+    }
+  }
+
+  function run() {
     const next = facts(last, {
       now: now(),
       ciStuckMin: settings.notifyCiStuckMin,
@@ -123,7 +131,9 @@ export function createNotify(
       staleDirtyDays: settings.notifyStaleDirtyDays,
       unpushedHours: settings.notifyUnpushedHours,
     });
-    const muted = new Set(settings.notifyMuted);
+    const muted = new Set(
+      Array.isArray(settings.notifyMuted) ? settings.notifyMuted : [],
+    );
     const at = now();
     const kept: Ev[] = edges(prev, next)
       .filter((d) =>
@@ -155,7 +165,11 @@ export function createNotify(
       for (const z of s.snoozes) snoozed.add(z.key);
     },
     observe(json) {
-      last = JSON.parse(json);
+      try {
+        last = JSON.parse(json);
+      } catch (e) {
+        return log({ type: "notify-error", error: String(e) });
+      }
       cycle();
     },
     tick: cycle,

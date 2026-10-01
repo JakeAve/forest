@@ -1309,7 +1309,7 @@ export function facts(
           url,
         });
       };
-      const ws = `wt:${w.path}`;
+      const ws = `wt:${w.path}:${w.branch}`;
       known.add(ws);
       add("wt-added", rs, true, null, w.branch);
       add("wt-removed", rs, true, null, w.branch);
@@ -1331,7 +1331,13 @@ export function facts(
         null,
         `${w.state} in progress`,
       );
-      add("pushed-to-branch", ws, (w.behind ?? 0) > 0, null, `${w.behind} new`);
+      add(
+        "pushed-to-branch",
+        ws,
+        (w.behind ?? 0) > 0 && (w.ahead ?? 0) === 0,
+        null,
+        `${w.behind} new`,
+      );
       add("branch-gone", ws, w.gone, null, w.branch);
       for (const p of w.ports) add("server-died", ws, true, p, `port ${p}`);
       add(
@@ -1349,7 +1355,7 @@ export function facts(
         `${w.ahead} unpushed commits`,
       );
       if (!r.prListed) continue;
-      const ls = `prs:${w.path}`;
+      const ls = `prs:${w.path}:${w.branch}`;
       known.add(ls);
       if (!pr) {
         add("behind-base", ws, (w.behindMain ?? 0) > 0, w.behindMain);
@@ -1406,7 +1412,17 @@ export function facts(
       if (!card) continue;
       const cs = `card:${w.path}#${pr.number}`;
       known.add(cs);
-      for (const c of [...card.threads, ...card.comments]) {
+      for (const c of card.threads) {
+        add(
+          "new-comment",
+          cs,
+          c.url && c.lastBy !== card.author,
+          `${c.url}#${c.replies}`,
+          `${c.login}: ${c.body}`,
+          c.url,
+        );
+      }
+      for (const c of card.comments) {
         add(
           "new-comment",
           cs,
