@@ -53,3 +53,11 @@ Deno.test("setStatus merges fields and emits an event: status frame", () => {
     'event: status\ndata: {"phase":"repos","done":1,"total":3}\n\n',
   );
 });
+
+Deno.test("emit writes a named event frame", () => {
+  const sse = createSse();
+  const c = fakeClient();
+  sse.add(c.ctrl);
+  sse.emit("notify", '{"id":"1"}');
+  assertEquals(c.frames, ['event: notify\ndata: {"id":"1"}\n\n']);
+});
