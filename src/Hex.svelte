@@ -74,7 +74,9 @@ function over(e) {
 
 <div class="hexwrap">
   <div class="note">
-    {note || (size === null ? "" : fmtSize(size))}{#if hover >= 0}
+    {note || (size === null ? "" : fmtSize(size))}{#if size === null}
+      <span class="late"><span class="spin"></span> Loading…</span>
+    {/if}{#if hover >= 0}
       <span class="at">0x{hover.toString(16)} · {hover}</span>
     {/if}
   </div>
