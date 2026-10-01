@@ -89,7 +89,7 @@ test("notify: PR title with quotes reaches osascript as argv", (mk) => {
     "end run",
     "--",
     title,
-    "PR opened: forest-feat",
+    "PR opened: forest #7",
   ]]);
 });
 

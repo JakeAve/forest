@@ -1442,6 +1442,13 @@ Deno.test("edges: optional failing checks fire ci-failed-optional", () => {
   ]);
 });
 
+Deno.test("facts: titles name the repo and PR number", () => {
+  const titles = (p: Pr | null) =>
+    [...facts(prSnap(p), CTX).active.values()].map((d) => d.title);
+  assert(titles(pr()).includes("PR opened: forest #7"));
+  assert(titles(null).includes("Worktree added: forest · forest-feat"));
+});
+
 Deno.test("edges: a failing check recovering does not refire ci-failed", () => {
   const fail = (failing: string[]) => pr({ ci: { state: "fail", failing } });
   assertEquals(kinds(prSnap(fail(["a", "b"])), prSnap(fail(["a"]))), []);

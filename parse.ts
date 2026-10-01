@@ -1296,7 +1296,9 @@ export function facts(
     }
     for (const w of r.worktrees) {
       const pr = w.pr;
-      const name = w.path.slice(w.path.lastIndexOf("/") + 1);
+      const name = pr
+        ? `${r.name} #${pr.number}`
+        : `${r.name} · ${w.path.slice(w.path.lastIndexOf("/") + 1)}`;
       const add = (
         kind: Kind,
         scope: string,
