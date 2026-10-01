@@ -81,6 +81,23 @@ Deno.test("a repo GitHub can't find backs off but reports no error", async () =>
   }
 });
 
+Deno.test("listed is false until a PR list loads, and stays false on failure", async () => {
+  const orig = console.error;
+  console.error = () => {};
+  try {
+    const ok = make({ [LIST]: GH_PR_LIST, [VIEW(7)]: GH_PR_VIEW });
+    assertEquals(ok.prs.listed(REPO), false);
+    await ok.prs.refreshPrs([mkRepo()]);
+    assertEquals(ok.prs.listed(REPO), true);
+
+    const bad = make({ [LIST]: boom });
+    await bad.prs.refreshPrs([mkRepo()]);
+    assertEquals(bad.prs.listed(REPO), false);
+  } finally {
+    console.error = orig;
+  }
+});
+
 Deno.test("a repo without webUrl is never queried", async () => {
   const { prs, calls } = make({});
   await prs.refreshPrs([mkRepo({ webUrl: null })]);

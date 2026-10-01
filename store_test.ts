@@ -14,11 +14,13 @@ const mkRepo = (name: string, wts: string[]): Repo =>
 const make = (opts?: {
   prFor?: (repo: string, w: Worktree) => Pr | null;
   procs?: Map<string, Procs>;
+  prListed?: (repo: string) => boolean;
 }) => {
   const sent: string[] = [];
   const stats = newStats();
   const store = createStore({
     prFor: opts?.prFor ?? (() => null),
+    prListed: opts?.prListed,
     procs: () => opts?.procs ?? new Map(),
     onSnapshot: (j) => sent.push(j),
     stats,
@@ -73,6 +75,17 @@ Deno.test("publish attaches pr, procs sorted by port and unique ports per worktr
   assertEquals(w.pr, pr);
   assertEquals(w.procs.map((p) => p.port), [1901, 3000]);
   assertEquals(w.ports, [1901, 3000]);
+});
+
+Deno.test("store: publish sets prListed from prs", () => {
+  const { store } = make({ prListed: (r) => r === "/r/a" });
+  store.byPath.set("/r/a", mkRepo("a", ["/r/a"]));
+  store.byPath.set("/r/b", mkRepo("b", ["/r/b"]));
+  store.publish();
+  assertEquals(
+    [store.byPath.get("/r/a")!.prListed, store.byPath.get("/r/b")!.prListed],
+    [true, false],
+  );
 });
 
 Deno.test("a proc whose cwd is inside a nested worktree goes to the deepest owner", () => {
