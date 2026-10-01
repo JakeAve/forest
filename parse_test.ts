@@ -1413,6 +1413,17 @@ Deno.test("edges: ci-failed fires again when a new check fails", () => {
   ]);
 });
 
+Deno.test("edges: a failing check recovering does not refire ci-failed", () => {
+  const fail = (failing: string[]) => pr({ ci: { state: "fail", failing } });
+  assertEquals(kinds(prSnap(fail(["a", "b"])), prSnap(fail(["a"]))), []);
+});
+
+Deno.test("edges: dismissed approval does not refire approved", () => {
+  const ok = pr({ reviewDecision: "APPROVED", approvals: 2 });
+  assertEquals(kinds(prSnap(ok), prSnap({ ...ok, approvals: 1 })), []);
+  assertEquals(kinds(prSnap(pr()), prSnap(ok)), ["approved"]);
+});
+
 Deno.test("edges: falling kinds fire on loss, not on repo vanish", () => {
   const up = [repo({ worktrees: [worktree({ path: W, ports: [3000] })] })];
   assertEquals(kinds(up, [repo({ worktrees: [worktree({ path: W })] })]), [
@@ -1457,4 +1468,8 @@ Deno.test("edges: time kinds fire once their threshold passes", () => {
 Deno.test("snoozeKey is kind and worktree", () => {
   const [d] = edges(facts([repo()], CTX), facts(prSnap(null), CTX));
   assertEquals(snoozeKey(d), `wt-added:${W}`);
+  assertEquals(
+    snoozeKey({ kind: "gh-error", wt: null, repo: "/r/forest" }),
+    "gh-error:/r/forest",
+  );
 });

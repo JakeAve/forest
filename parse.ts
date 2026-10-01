@@ -1252,7 +1252,8 @@ export type Facts = { active: Map<string, Draft>; known: Set<string> };
 const FALLING = new Set<Kind>(["wt-removed", "server-died"]);
 const MID_OP = new Set(["rebase", "merge", "cherry-pick"]);
 
-export const snoozeKey = (d: Pick<Draft, "kind" | "wt">) => `${d.kind}:${d.wt}`;
+export const snoozeKey = (d: Pick<Draft, "kind" | "wt" | "repo">) =>
+  `${d.kind}:${d.wt ?? d.repo}`;
 
 export function facts(
   repos: Repo[],
@@ -1371,14 +1372,11 @@ export function facts(
       known.add(ps);
       const open = pr.state === "OPEN";
       const approved = pr.reviewDecision === "APPROVED";
-      const failing = [...pr.ci.failing].sort().join(",");
-      add(
-        "ci-failed",
-        ps,
-        pr.ci.state === "fail",
-        failing,
-        failing || pr.title,
-      );
+      if (pr.ci.state === "fail") {
+        for (const n of pr.ci.failing.length ? pr.ci.failing : [null]) {
+          add("ci-failed", ps, true, n, n ?? pr.title);
+        }
+      }
       add("changes-requested", ps, pr.reviewDecision === "CHANGES_REQUESTED");
       add("conflict", ps, pr.mergeable === "CONFLICTING");
       add(
@@ -1388,7 +1386,7 @@ export function facts(
           pr.mergeState === "CLEAN" && !pr.autoMerge,
       );
       add("ci-passed", ps, pr.ci.state === "pass");
-      add("approved", ps, approved || pr.approvals > 0, pr.approvals);
+      add("approved", ps, approved);
       add("ready-for-review", ps, open && !pr.isDraft);
       add("behind-base", ps, open && pr.mergeState === "BEHIND");
       add(
