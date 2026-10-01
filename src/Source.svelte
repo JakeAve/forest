@@ -22,6 +22,8 @@ import {
 } from "@codemirror/language";
 import { languages } from "@codemirror/language-data";
 import { tags as t } from "@lezer/highlight";
+import Hex from "./Hex.svelte";
+import { decodeChunk, fmtSize, rawUrl } from "../parse.ts";
 
 let {
   wt,
@@ -40,6 +42,7 @@ let {
   onsaved,
   oncopy,
   onready,
+  onbinary,
 } = $props();
 
 const highlight = syntaxHighlighting(
@@ -70,6 +73,10 @@ let lang = [];
 let disk = null;
 let dirty = $state(false);
 let skip = $state(null);
+let note = $state(null);
+let sentinel;
+let stream = null;
+const CHUNK = 1 << 20;
 let usedLine = 0;
 let builtWt = null;
 let builtPath = null;
@@ -235,6 +242,9 @@ function build({ file, hunks }) {
   disk = file.work;
   setDirty(false);
   skip = file.skip ?? null;
+  onbinary?.(!!skip);
+  stream = null;
+  note = file.encoding ? `${file.encoding.toUpperCase()} · read-only` : null;
   if (skip) return;
   const theme = EditorView.theme({}, { dark: true });
   const ro = [
@@ -246,7 +256,7 @@ function build({ file, hunks }) {
     EditorState.readOnly.of(true),
     theme,
   ];
-  const editable = file.work !== null;
+  const editable = file.work !== null && !file.encoding;
   const bExt = editable
     ? [
       lineNumbers({ domEventHandlers: { click: copyLine } }),
@@ -268,7 +278,7 @@ function build({ file, hunks }) {
       }),
     ]
     : ro;
-  if (single) {
+  if (single || file.large || file.encoding) {
     const box = el.appendChild(document.createElement("div"));
     box.className = "cm-mergeView";
     const b = new EditorView({
@@ -294,6 +304,17 @@ function build({ file, hunks }) {
   }
   builtWt = wt;
   builtPath = path;
+  if (file.large) {
+    stream = {
+      src: rawUrl(wt, path),
+      off: 0,
+      size: file.large,
+      dec: new TextDecoder(file.encoding ?? "utf-8"),
+      carry: "",
+      busy: false,
+    };
+    more();
+  }
   if (line && line !== usedLine) scrollToLine(line);
   onready?.();
 }
@@ -339,10 +360,56 @@ export async function save() {
   onsaved?.();
 }
 
+async function more() {
+  const s = stream;
+  if (!s || s.busy || s.off >= s.size) return;
+  s.busy = true;
+  const buf = await fetch(s.src, {
+    headers: { Range: `bytes=${s.off}-${s.off + CHUNK - 1}` },
+  }).then((r) => r.ok ? r.arrayBuffer() : null)
+    .then((b) => b && new Uint8Array(b), () => null);
+  if (stream !== s || !view) return;
+  s.busy = false;
+  if (!buf?.length) {
+    stream = null;
+    note = `load failed at ${fmtSize(s.off)} of ${fmtSize(s.size)}`;
+    return;
+  }
+  s.off += buf.length;
+  const b = view.b;
+  b.dispatch({
+    changes: {
+      from: b.state.doc.length,
+      insert: decodeChunk(s, buf, s.off >= s.size),
+    },
+  });
+  const enc = s.dec.encoding;
+  note = `${fmtSize(s.off)} of ${fmtSize(s.size)} loaded${
+    enc === "utf-8" ? "" : ` · ${enc.toUpperCase()} · read-only`
+  }`;
+  requestAnimationFrame(() => near() && more());
+}
+
+const AHEAD = 2000;
+function near() {
+  const box = sentinel?.parentElement?.getBoundingClientRect();
+  return !!box && sentinel.getBoundingClientRect().top < box.bottom + AHEAD;
+}
+
+$effect(() => {
+  const io = new IntersectionObserver((es) => es[0].isIntersecting && more(), {
+    root: sentinel.parentElement,
+    rootMargin: `0px 0px ${AHEAD}px 0px`,
+  });
+  io.observe(sentinel);
+  return () => io.disconnect();
+});
+
 export function reloadTheirs() {
   fetchData().then(build);
 }
 
+// ponytail: large files have work === disk === null, so a growing log never refreshes; compare size if that matters
 async function check() {
   const data = await fetchData();
   if (data.file.work === disk) {
@@ -383,6 +450,8 @@ $effect(() => {
 
 $effect(() => {
   void wt, void path, void base, void single;
+  stream = null;
+  skip = null;
   let stale = false;
   Promise.all([fetchData(), loadLang(path)]).then(([d, l]) => {
     if (stale) return;
@@ -407,18 +476,25 @@ $effect(() => {
   if (view) { for (const v of [view.a, view.b]) v?.dispatch({ effects }); }
 });
 
-$effect(() => () => view?.destroy());
+$effect(() => () => {
+  stream = null;
+  view?.destroy();
+});
 </script>
 
-{#if skip}<div class="skip">{skip}</div>{/if}
+{#if skip}
+  {#key path}<Hex src="{rawUrl(wt, path)}&t={tick}" note={skip} />{/key}
+{/if}
+{#if note && !skip}<div class="note">{note}</div>{/if}
 <div class="wrap" class:dirtyhide={dirty} hidden={!!skip} bind:this={el}></div>
+<div bind:this={sentinel}></div>
 
 <style>
 .wrap {
   min-height: 100%;
 }
-.skip {
-  padding: 1rem;
+.note {
+  padding: 0.5rem 1rem;
   color: var(--dimmer);
   font: 0.75rem var(--mono);
 }

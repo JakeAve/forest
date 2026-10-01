@@ -138,7 +138,7 @@ Deno.test("listFiles merges name-status, numstat, status flags and untracked lin
   });
 });
 
-Deno.test("fileContents skips an oversize file and reads base from git show", async () => {
+Deno.test("fileContents: binary, large text, UTF-16, and base from git show", async () => {
   await withTmp(async (dir) => {
     await Deno.writeFile(join(dir, "big.bin"), new Uint8Array(MAX_PREVIEW + 1));
     await Deno.writeTextFile(join(dir, "small.txt"), "hi\n");
@@ -147,9 +147,24 @@ Deno.test("fileContents skips an oversize file and reads base from git show", as
     }, [[dir, dir]]);
 
     const big = await files.fileContents(dir, "big.bin", "branch");
-    assertEquals(big.base, null);
-    assertEquals(big.work, null);
-    assert(big.skip?.startsWith("too large to show"));
+    assertEquals(big, { base: null, work: null, skip: "binary · 1.0 MB" });
+
+    await Deno.writeTextFile(join(dir, "big.log"), "x\n".repeat(MAX_PREVIEW));
+    const log = await files.fileContents(dir, "big.log", "branch");
+    assertEquals(log, {
+      base: null,
+      work: null,
+      large: 2 * MAX_PREVIEW,
+      encoding: undefined,
+    });
+
+    const utf16 = new Uint8Array([0xff, 0xfe, 0x68, 0, 0x69, 0]);
+    await Deno.writeFile(join(dir, "u16.txt"), utf16);
+    assertEquals(await files.fileContents(dir, "u16.txt", "branch"), {
+      base: null,
+      work: "hi",
+      encoding: "utf-16le",
+    });
 
     const small = await files.fileContents(dir, "small.txt", "branch");
     assertEquals(small, { base: "old\n", work: "hi\n" });

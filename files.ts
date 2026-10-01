@@ -1,18 +1,38 @@
 import { dirname, join } from "@std/path";
 import { matchPath } from "./src/filter.js";
 import {
+  type Encoding,
   type FileRow,
   type Files,
+  fmtSize,
   isLocalRequest,
   MAX_PREVIEW,
   parseIgnored,
   parseStatus,
-  previewSkip,
+  sniff,
   TREE_CAP,
 } from "./parse.ts";
 import type { Shell } from "./exec.ts";
 import type { RepoApi } from "./repo.ts";
 import type { Tree } from "./types.ts";
+
+export type FileContents = {
+  base: string | null;
+  work: string | null;
+  skip?: string;
+  large?: number;
+  encoding?: Encoding;
+};
+
+async function readHead(p: string) {
+  const f = await Deno.open(p);
+  try {
+    const buf = new Uint8Array(8000);
+    return buf.subarray(0, (await f.read(buf)) ?? 0);
+  } finally {
+    f.close();
+  }
+}
 
 export type FilesApi = {
   looseRoots: Set<string>;
@@ -29,7 +49,7 @@ export type FilesApi = {
     wt: string,
     path: string,
     mode: string,
-  ): Promise<{ base: string | null; work: string | null; skip?: string }>;
+  ): Promise<FileContents>;
   listTree(wt: string): Promise<Tree>;
   listDir(root: string, dir: string): Promise<Tree>;
   walkTree(root: string): Promise<Tree>;
@@ -173,14 +193,31 @@ export function createFiles(deps: {
     };
   }
 
-  async function fileContents(wt: string, path: string, mode: string) {
+  async function fileContents(
+    wt: string,
+    path: string,
+    mode: string,
+  ): Promise<FileContents> {
     const p = join(wt, path);
     const size = (await Deno.stat(p).catch(() => null))?.size ?? 0;
-    const bytes = size > MAX_PREVIEW
-      ? new Uint8Array()
-      : await Deno.readFile(p).catch(() => null);
-    const skip = bytes && previewSkip(size, bytes);
-    if (skip) return { base: null, work: null, skip };
+    const bytes = await (size > MAX_PREVIEW ? readHead(p) : Deno.readFile(p))
+      .catch(() => null);
+    const enc = bytes && sniff(bytes);
+    if (enc === "binary") {
+      return { base: null, work: null, skip: `binary · ${fmtSize(size)}` };
+    }
+    // ponytail: no base for UTF-16, git show decodes as UTF-8; decode its bytes if UTF-16 diffs matter
+    const encoding = enc && enc !== "utf-8" ? enc : undefined;
+    if (size > MAX_PREVIEW) {
+      return { base: null, work: null, large: size, encoding };
+    }
+    if (bytes && encoding) {
+      return {
+        base: null,
+        work: new TextDecoder(encoding).decode(bytes),
+        encoding,
+      };
+    }
     const work = bytes && new TextDecoder().decode(bytes);
     if (isLoose(wt)) return { base: null, work };
     const base = await resolveBase(wt, mode);
