@@ -23,6 +23,13 @@ export const DEFAULTS = {
   collapseMinSize: 5,
   launchers: {} as Record<string, string>,
   keys: {} as Record<string, string>,
+  notify: {} as Record<string, string>,
+  notifyMuted: [] as string[],
+  notifyMax: 200,
+  notifyCiStuckMin: 30,
+  notifyHalfDoneMin: 15,
+  notifyStaleDirtyDays: 3,
+  notifyUnpushedHours: 24,
 };
 
 export type Settings = typeof DEFAULTS;

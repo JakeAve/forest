@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { Repo, Worktree } from "./types.ts";
 
 export function parseWorktreeList(porcelain: string) {
   const wts: { path: string; head: string; branch: string }[] = [];
@@ -154,6 +155,11 @@ export function coerceSettings(
       if (typeof v === "string" && v.trim()) out[k] = v.trim();
     } else if (typeof d === "boolean") {
       if (typeof v === "boolean") out[k] = v;
+    } else if (Array.isArray(d)) {
+      if (Array.isArray(v)) {
+        out[k] = v.filter((s) => typeof s === "string" && s.trim())
+          .map((s) => s.trim());
+      }
     } else if (v && typeof v === "object") {
       out[k] = Object.fromEntries(
         Object.entries(v).filter(([, s]) => typeof s === "string" && s.trim())
@@ -1144,4 +1150,297 @@ export function decodeChunk(
 export function byteChar(b: number): string {
   const c = byteClass(b);
   return c === "txt" ? String.fromCharCode(b) : BYTE_GLYPH[c];
+}
+
+export type Kind =
+  | "ci-failed"
+  | "changes-requested"
+  | "new-comment"
+  | "conflict"
+  | "autorebase-failed"
+  | "half-done"
+  | "pushed-to-branch"
+  | "gh-error"
+  | "ready-to-merge"
+  | "ci-passed"
+  | "approved"
+  | "ready-for-review"
+  | "behind-base"
+  | "ci-stuck"
+  | "pr-opened"
+  | "pr-merged"
+  | "pr-closed"
+  | "automerge-changed"
+  | "wt-added"
+  | "wt-removed"
+  | "branch-switched"
+  | "merged-deletable"
+  | "branch-gone"
+  | "orphan-server"
+  | "server-died"
+  | "stale-dirty"
+  | "unpushed";
+
+export type Deliver = "off" | "app" | "os" | "both";
+
+const FETCH_HINT =
+  "Only after a fetch; Forest fetches for auto-rebase worktrees";
+
+export const KINDS: Record<
+  Kind,
+  { group: "act" | "move" | "life" | "clean"; label: string; hint?: string }
+> = {
+  "ci-failed": { group: "act", label: "CI failed" },
+  "changes-requested": { group: "act", label: "Changes requested" },
+  "new-comment": { group: "act", label: "New comment" },
+  "conflict": { group: "act", label: "Merge conflict" },
+  "autorebase-failed": { group: "act", label: "Auto-rebase failed" },
+  "half-done": {
+    group: "act",
+    label: "Rebase or merge left half done",
+    hint: "Idle mid-rebase, merge or cherry-pick",
+  },
+  "pushed-to-branch": {
+    group: "act",
+    label: "Someone pushed to your branch",
+    hint: FETCH_HINT,
+  },
+  "gh-error": { group: "act", label: "GitHub CLI error" },
+  "ready-to-merge": {
+    group: "move",
+    label: "Ready to merge",
+    hint: "Not sent when auto-merge is on",
+  },
+  "ci-passed": { group: "move", label: "CI passed" },
+  "approved": { group: "move", label: "Approved" },
+  "ready-for-review": { group: "move", label: "Ready for review" },
+  "behind-base": { group: "move", label: "Behind base" },
+  "ci-stuck": { group: "move", label: "CI stuck" },
+  "pr-opened": { group: "life", label: "PR opened" },
+  "pr-merged": { group: "life", label: "PR merged" },
+  "pr-closed": { group: "life", label: "PR closed" },
+  "automerge-changed": { group: "life", label: "Auto-merge changed" },
+  "wt-added": { group: "life", label: "Worktree added" },
+  "wt-removed": { group: "life", label: "Worktree removed" },
+  "branch-switched": { group: "life", label: "Branch switched" },
+  "merged-deletable": { group: "clean", label: "Merged and safe to delete" },
+  "branch-gone": {
+    group: "clean",
+    label: "Upstream branch gone",
+    hint: FETCH_HINT,
+  },
+  "orphan-server": { group: "clean", label: "Server running on merged PR" },
+  "server-died": { group: "clean", label: "Server stopped" },
+  "stale-dirty": { group: "clean", label: "Stale uncommitted changes" },
+  "unpushed": { group: "clean", label: "Unpushed commits" },
+};
+
+export type Draft = {
+  kind: Kind;
+  key: string;
+  scope: string;
+  repo: string;
+  wt: string | null;
+  pr: number | null;
+  title: string;
+  body: string;
+  url: string | null;
+};
+
+export type Facts = { active: Map<string, Draft>; known: Set<string> };
+
+const FALLING = new Set<Kind>(["wt-removed", "server-died"]);
+const MID_OP = new Set(["rebase", "merge", "cherry-pick"]);
+
+export const snoozeKey = (d: Pick<Draft, "kind" | "wt">) => `${d.kind}:${d.wt}`;
+
+export function facts(
+  repos: Repo[],
+  ctx: {
+    now: number;
+    ciStuckMin: number;
+    halfDoneMin: number;
+    staleDirtyDays: number;
+    unpushedHours: number;
+  },
+): Facts {
+  const active = new Map<string, Draft>();
+  const known = new Set<string>();
+  const idle = (w: Worktree, ms: number) => ctx.now - w.lastActivity > ms;
+  for (const r of repos) {
+    const rs = `repo:${r.path}`;
+    known.add(rs);
+    if (r.prError) {
+      active.set(`gh-error:${r.path}`, {
+        kind: "gh-error",
+        key: `gh-error:${r.path}`,
+        scope: rs,
+        repo: r.path,
+        wt: null,
+        pr: null,
+        title: `${KINDS["gh-error"].label}: ${r.name}`,
+        body: r.prError,
+        url: null,
+      });
+    }
+    for (const w of r.worktrees) {
+      const pr = w.pr;
+      const name = w.path.slice(w.path.lastIndexOf("/") + 1);
+      const add = (
+        kind: Kind,
+        scope: string,
+        on: unknown,
+        disc: string | number | null = null,
+        body = pr?.title ?? w.branch,
+        url = pr?.url ?? null,
+      ) => {
+        if (!on) return;
+        const key = `${kind}:${w.path}${disc === null ? "" : `:${disc}`}`;
+        active.set(key, {
+          kind,
+          key,
+          scope,
+          repo: r.path,
+          wt: w.path,
+          pr: pr?.number ?? null,
+          title: `${KINDS[kind].label}: ${name}`,
+          body,
+          url,
+        });
+      };
+      const ws = `wt:${w.path}`;
+      known.add(ws);
+      add("wt-added", rs, true, null, w.branch);
+      add("wt-removed", rs, true, null, w.branch);
+      if (w.branch !== "(detached)" && !w.state) {
+        known.add(`branch:${w.path}`);
+        add("branch-switched", `branch:${w.path}`, true, w.branch, w.branch);
+      }
+      add(
+        "autorebase-failed",
+        ws,
+        w.autoRebase?.error,
+        null,
+        w.autoRebase?.error ?? "",
+      );
+      add(
+        "half-done",
+        ws,
+        w.state && MID_OP.has(w.state) && idle(w, ctx.halfDoneMin * 60_000),
+        null,
+        `${w.state} in progress`,
+      );
+      add("pushed-to-branch", ws, (w.behind ?? 0) > 0, null, `${w.behind} new`);
+      add("branch-gone", ws, w.gone, null, w.branch);
+      for (const p of w.ports) add("server-died", ws, true, p, `port ${p}`);
+      add(
+        "stale-dirty",
+        ws,
+        w.dirty > 0 && idle(w, ctx.staleDirtyDays * 86_400_000),
+        null,
+        `${w.dirty} changed files`,
+      );
+      add(
+        "unpushed",
+        ws,
+        (w.ahead ?? 0) > 0 && idle(w, ctx.unpushedHours * 3_600_000),
+        null,
+        `${w.ahead} unpushed commits`,
+      );
+      if (!r.prListed) continue;
+      const ls = `prs:${w.path}`;
+      known.add(ls);
+      if (!pr) {
+        add("behind-base", ws, (w.behindMain ?? 0) > 0, w.behindMain);
+        continue;
+      }
+      const merged = pr.state === "MERGED";
+      add("pr-opened", ls, pr.state === "OPEN", pr.number);
+      add("pr-merged", ls, merged, pr.number);
+      add("pr-closed", ls, pr.state === "CLOSED", pr.number);
+      add("merged-deletable", ls, merged && !w.dirty && !(w.ahead ?? 0));
+      add(
+        "orphan-server",
+        ls,
+        merged && w.ports.length,
+        null,
+        `port ${w.ports.join(", ")}`,
+      );
+      if (pr.detailAt == null) continue;
+      const ps = `pr:${w.path}#${pr.number}`;
+      known.add(ps);
+      const open = pr.state === "OPEN";
+      const approved = pr.reviewDecision === "APPROVED";
+      const failing = [...pr.ci.failing].sort().join(",");
+      add(
+        "ci-failed",
+        ps,
+        pr.ci.state === "fail",
+        failing,
+        failing || pr.title,
+      );
+      add("changes-requested", ps, pr.reviewDecision === "CHANGES_REQUESTED");
+      add("conflict", ps, pr.mergeable === "CONFLICTING");
+      add(
+        "ready-to-merge",
+        ps,
+        open && !pr.isDraft && approved && pr.ci.state === "pass" &&
+          pr.mergeState === "CLEAN" && !pr.autoMerge,
+      );
+      add("ci-passed", ps, pr.ci.state === "pass");
+      add("approved", ps, approved || pr.approvals > 0, pr.approvals);
+      add("ready-for-review", ps, open && !pr.isDraft);
+      add("behind-base", ps, open && pr.mergeState === "BEHIND");
+      add(
+        "ci-stuck",
+        ps,
+        pr.ci.state === "pending" && pr.ciSince != null &&
+          ctx.now - pr.ciSince > ctx.ciStuckMin * 60_000,
+      );
+      add(
+        "automerge-changed",
+        ps,
+        true,
+        pr.autoMerge ? "on" : "off",
+        `auto-merge ${pr.autoMerge ? "on" : "off"}`,
+      );
+      const card = pr.card;
+      if (!card) continue;
+      const cs = `card:${w.path}#${pr.number}`;
+      known.add(cs);
+      for (const c of [...card.threads, ...card.comments]) {
+        add(
+          "new-comment",
+          cs,
+          c.url && c.login !== card.author,
+          c.url,
+          `${c.login}: ${c.body}`,
+          c.url,
+        );
+      }
+    }
+  }
+  return { active, known };
+}
+
+export function edges(prev: Facts, next: Facts): Draft[] {
+  const out: Draft[] = [];
+  for (const [k, d] of next.active) {
+    if (
+      !FALLING.has(d.kind) && !prev.active.has(k) && prev.known.has(d.scope)
+    ) {
+      out.push(d);
+    }
+  }
+  for (const [k, d] of prev.active) {
+    if (FALLING.has(d.kind) && !next.active.has(k) && next.known.has(d.scope)) {
+      out.push(d);
+    }
+  }
+  const ready = new Set(
+    out.filter((d) => d.kind === "ready-to-merge").map((d) => d.wt),
+  );
+  return out.filter((d) =>
+    !((d.kind === "ci-passed" || d.kind === "approved") && ready.has(d.wt))
+  );
 }

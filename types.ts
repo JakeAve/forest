@@ -37,6 +37,7 @@ export type Repo = {
   defaultBranch: string | null;
   worktrees: Worktree[];
   prError?: string | null; // why gh failed here; set by the store at publish
+  prListed?: boolean;
 };
 
 export type Pr = {
