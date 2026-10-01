@@ -1,13 +1,16 @@
-import { assertEquals, assertThrows } from "@std/assert";
+import { assert, assertEquals, assertThrows } from "@std/assert";
 import type { DiffWorktree } from "./parse.ts";
 import {
   ancestorDirs,
   approvals,
   backoffOver,
+  byteChar,
+  byteClass,
   ciSince,
   ciSummary,
   clampMenu,
   classifyPath,
+  decodeChunk,
   diffSnapshots,
   discardPrompt,
   hotBackoff,
@@ -26,16 +29,17 @@ import {
   parseWorktreeList,
   pool,
   prCard,
-  previewSkip,
   procsByCwd,
   prStatus,
   qbool,
   qnum,
   rateWindow,
+  rawUrl,
   remoteWebUrl,
   removeSummary,
   reviewSince,
   selectWt,
+  sniff,
   snippet,
   statusCounts,
   TREE_CAP,
@@ -1135,11 +1139,14 @@ Deno.test("ancestorDirs: every parent folder, none for root files", () => {
   assertEquals([...ancestorDirs(["a/b/c.ts", "x.ts"])], ["a", "a/b"]);
 });
 
-Deno.test("previewSkip: text passes, NUL bytes and big files don't", () => {
-  const text = new TextEncoder().encode("hello");
-  assertEquals(previewSkip(5, text), null);
-  assertEquals(previewSkip(3, new Uint8Array([1, 0, 2])), "binary · 3 B");
-  assertEquals(previewSkip(3 << 20, text), "too large to show · 3.0 MB");
+Deno.test("sniff: UTF-16 BOMs, NUL means binary, else UTF-8", () => {
+  const b = (...x: number[]) => new Uint8Array(x);
+  assertEquals(sniff(new TextEncoder().encode("hello")), "utf-8");
+  assertEquals(sniff(b()), "utf-8");
+  assertEquals(sniff(b(1, 0, 2)), "binary");
+  assertEquals(sniff(b(0xff, 0xfe, 0x68, 0)), "utf-16le");
+  assertEquals(sniff(b(0xfe, 0xff, 0, 0x68)), "utf-16be");
+  assertEquals(sniff(b(0xef, 0xbb, 0xbf, 0x68)), "utf-8");
 });
 
 Deno.test("normPath expands ~, ~/ and a missing slash", () => {
@@ -1237,4 +1244,63 @@ Deno.test("prStatus: the next blocker wins, in fix order", () => {
     st({ mergeState: "UNKNOWN", reviewDecision: "", ci: { state: null } }),
     ["warn", "", "Checking", 1],
   );
+});
+
+Deno.test("byteClass/byteChar: hexyl classes at every boundary", () => {
+  const cases: [number, string, string][] = [
+    [0x00, "nul", "⋄"],
+    [0x08, "ctl", "•"],
+    [0x09, "ws", "_"],
+    [0x0d, "ws", "_"],
+    [0x0e, "ctl", "•"],
+    [0x20, "ws", "_"],
+    [0x21, "txt", "!"],
+    [0x7e, "txt", "~"],
+    [0x7f, "ctl", "•"],
+    [0x80, "hi", "×"],
+    [0xff, "hi", "×"],
+  ];
+  for (const [b, cls, ch] of cases) {
+    assertEquals([byteClass(b), byteChar(b)], [cls, ch], `0x${b.toString(16)}`);
+  }
+});
+
+Deno.test("rawUrl: basename segment, everything encoded", () => {
+  assertEquals(
+    rawUrl("/r/wt", "docs/a b (1).pdf"),
+    "/api/raw/a%20b%20(1).pdf?wt=%2Fr%2Fwt&path=docs%2Fa%20b%20(1).pdf",
+  );
+});
+
+Deno.test("decodeChunk: any chunking decodes like the whole file", () => {
+  const utf8 = new TextEncoder().encode("a\r\nñ🌲\r\nz\r");
+  const u16 = new Uint8Array([
+    0xff,
+    0xfe,
+    0x68,
+    0,
+    0x0d,
+    0,
+    0x0a,
+    0,
+    0x3d,
+    0xd8,
+    0x32,
+    0xdf,
+  ]);
+  for (const [enc, bytes] of [["utf-8", utf8], ["utf-16le", u16]] as const) {
+    const whole = new TextDecoder(enc).decode(bytes);
+    for (let size = 1; size <= bytes.length; size++) {
+      const s = { dec: new TextDecoder(enc), carry: "" };
+      let out = "";
+      for (let off = 0; off < bytes.length; off += size) {
+        const end = Math.min(off + size, bytes.length);
+        const last = end === bytes.length;
+        const piece = decodeChunk(s, bytes.subarray(off, end), last);
+        assert(last || !piece.endsWith("\r"), `CR split at ${end}`);
+        out += piece;
+      }
+      assertEquals(out, whole, `${enc} in ${size}-byte chunks`);
+    }
+  }
 });

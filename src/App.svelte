@@ -3,6 +3,7 @@ import { tick, untrack } from "svelte";
 import Source from "./Source.svelte";
 import Palette from "./Palette.svelte";
 import Shortcuts from "./Shortcuts.svelte";
+import Hex from "./Hex.svelte";
 import { matchPath, matchWt, pathText, rank, wtText } from "./filter.js";
 import {
   ancestorDirs,
@@ -10,6 +11,7 @@ import {
   discardPrompt,
   isIgnoredPath,
   prStatus,
+  rawUrl,
   removeSummary,
   TREE_CAP,
   treeRows,
@@ -46,6 +48,13 @@ let panes = $state({
 let split = $state(50);
 let max = $state(null);
 let wrap = $state(false);
+const MODES = {
+  text: ["text", "hex"],
+  markup: ["text", "preview", "hex"],
+  media: ["preview", "hex"],
+};
+const MODE_LABEL = { text: "Text", preview: "Preview", hex: "Hex" };
+let modes = $state({ text: "text", markup: "text", media: "preview" });
 let closed = $state({});
 let pinned = $state({});
 let checked = $state({});
@@ -59,6 +68,9 @@ fetch("/api/layout").then((r) => r.json()).then((l) => {
   if (l.preset in AXES) preset = l.preset;
   if (l.split) split = l.split;
   if (l.wrap) wrap = true;
+  for (const k in MODES) {
+    if (MODES[k].includes(l.modes?.[k])) modes[k] = l.modes[k];
+  }
   if (l.closed) closed = l.closed;
   if (l.pinned) pinned = l.pinned;
   if (l.zoom) zoom = l.zoom;
@@ -77,6 +89,7 @@ function saveLayout() {
         panes,
         split,
         wrap,
+        modes,
         closed,
         pinned,
         theme,
@@ -106,7 +119,7 @@ let newEl;
 let selDir = $state(null);
 let openDirs = $state({});
 let showDiff = $state(false);
-let preview = $state(false);
+let srcBinary = $state(false);
 let previewSrc = $state("");
 let previewReady = $state(false);
 let srcBodyEl = $state();
@@ -176,26 +189,28 @@ const isHtml = $derived(/\.html?$/i.test(file ?? ""));
 const isMd = $derived(/\.(md|markdown)$/i.test(file ?? ""));
 const isSvg = $derived(/\.svg$/i.test(file ?? ""));
 const isPdf = $derived(/\.pdf$/i.test(file ?? ""));
-const canPreview = $derived(isHtml || isMd || isSvg || isPdf);
-const media = $derived(
-  /\.(png|jpe?g|gif|webp|avif|ico|bmp)$/i.test(file ?? "") ||
-    (preview && isSvg)
+const mediaType = $derived(
+  /\.(png|jpe?g|gif|webp|avif|ico|bmp)$/i.test(file ?? "")
     ? "img"
     : /\.(mp4|webm|mov|m4v|ogv)$/i.test(file ?? "")
     ? "video"
     : /\.(mp3|wav|ogg|oga|m4a|aac|flac|opus)$/i.test(file ?? "")
     ? "audio"
-    : preview && isPdf
+    : isPdf
     ? "pdf"
     : null,
 );
-const rawSrc = $derived(
-  `/api/raw/${encodeURIComponent(file?.split("/").pop() ?? "")}?wt=${
-    encodeURIComponent(sel ?? "")
-  }&path=${encodeURIComponent(file ?? "")}`,
+const kind = $derived(
+  mediaType ? "media" : isHtml || isMd || isSvg ? "markup" : "text",
 );
+const mode = $derived(modes[kind]);
+const modeList = $derived(
+  kind === "text" && srcBinary ? ["hex"] : MODES[kind],
+);
+const rawSrc = $derived(rawUrl(sel ?? "", file ?? ""));
 $effect(() => {
   void sel, void file;
+  srcBinary = false;
   previewSrc = "";
   previewReady = false;
   rawView = null;
@@ -236,14 +251,17 @@ function mdDoc(src) {
 ${MD_CSS}</style>${marked.parse(src, { async: false })}`;
 }
 
-function togglePreview(e) {
-  const on = e.currentTarget.checked;
-  if (on) rawView = { top: srcBodyEl.scrollTop, head: diffRef?.cursor() ?? 0 };
-  preview = on;
+function setMode(m) {
+  if (m === mode) return;
+  if (mode === "text") {
+    rawView = { top: srcBodyEl.scrollTop, head: diffRef?.cursor() ?? 0 };
+  }
+  modes[kind] = m;
+  saveLayout();
 }
 
 function restoreRawView() {
-  if (preview || !rawView) return;
+  if (mode !== "text" || !rawView) return;
   const { top, head } = rawView;
   rawView = null;
   diffRef?.setCursor(head);
@@ -261,7 +279,7 @@ function restoreRawView() {
 }
 
 $effect(() => {
-  if (!(preview && canPreview && sel && file) || isSvg || isPdf) {
+  if (!(mode === "preview" && (isHtml || isMd) && sel && file)) {
     return void (previewReady = false);
   }
   void diffTick, void theme;
@@ -1499,6 +1517,15 @@ const COMMANDS = [
     run: () => toggleMax(i + 1),
   })),
   {
+    id: "cycle-mode",
+    label: "Cycle text, preview and hex",
+    section: "View",
+    keys: "alt+cmd+v",
+    when: () => hasFile() && modeList.length > 1 && !diffDirty,
+    run: () =>
+      setMode(modeList[(modeList.indexOf(mode) + 1) % modeList.length]),
+  },
+  {
     id: "copy-path",
     label: "Copy path (relative)",
     section: "Files",
@@ -2145,8 +2172,8 @@ async function confirmDiscard() {
       <span class="sp"></span>
       {#if explore && selFile}
         <div class="seg">
-          <button class:on={!showDiff} onclick={() => (showDiff = false)}>View</button>
-          <button class:on={showDiff} onclick={() => (showDiff = true)}>Diff</button>
+          <button class:on={!showDiff} disabled={mode !== "text"} onclick={() => (showDiff = false)}>View</button>
+          <button class:on={showDiff} disabled={mode !== "text"} onclick={() => (showDiff = true)}>Diff</button>
         </div>
       {/if}
       {#if diffDirty}
@@ -2155,30 +2182,37 @@ async function confirmDiscard() {
         <button class="btn" title="discard editor changes, reload from disk"
                 onclick={() => { banner = null; diffRef?.reloadTheirs(); }}>Discard</button>
       {/if}
-      {#if canPreview && !diffDirty}
+      {#if mode === "text" && !srcBinary}
         <label class="meta wraplbl">
-          <input type="checkbox" class="cbxin" checked={preview} onchange={togglePreview}>
-          <span class="cbx" class:on={preview}></span>Preview
+          <input type="checkbox" class="cbxin" bind:checked={wrap} onchange={saveLayout}>
+          <span class="cbx" class:on={wrap}></span>Wrap
         </label>
       {/if}
-      <label class="meta wraplbl">
-        <input type="checkbox" class="cbxin" bind:checked={wrap} onchange={saveLayout}>
-        <span class="cbx" class:on={wrap}></span>Wrap
-      </label>
+      {#if file && modeList.length > 1}
+        <div class="seg" title={kbdOf("cycle-mode")}>
+          {#each modeList as m (m)}
+            <button class:on={m === mode} aria-pressed={m === mode} disabled={diffDirty}
+                    title={diffDirty ? "Save or discard edits first" : null}
+                    onclick={() => setMode(m)}>{MODE_LABEL[m]}</button>
+          {/each}
+        </div>
+      {/if}
       {#if selFile}<span class="meta mono">+{selFile.added} −{selFile.removed}</span>{/if}
       {@render maxBtn(3)}
     </div>
     <div class="body" bind:this={srcBodyEl}>
-      {#if media === "img" && sel && file}
+      {#if mode === "hex" && sel && file}
+        {#key file}<Hex src="{rawSrc}&t={diffTick}" />{/key}
+      {:else if mode === "preview" && (mediaType === "img" || isSvg) && sel && file}
         <img class="media" src="{rawSrc}&t={diffTick}" alt={file}>
-      {:else if media === "video" && sel && file}
+      {:else if mode === "preview" && mediaType === "video" && sel && file}
         <!-- svelte-ignore a11y_media_has_caption -->
         <video class="media" src={rawSrc} controls muted></video>
-      {:else if media === "audio" && sel && file}
+      {:else if mode === "preview" && mediaType === "audio" && sel && file}
         <audio class="audio" src={rawSrc} controls></audio>
-      {:else if media === "pdf" && sel && file}
+      {:else if mode === "preview" && mediaType === "pdf" && sel && file}
         <iframe class="preview ready" title="Preview of {file}" src="{rawSrc}&t={diffTick}"></iframe>
-      {:else if preview && canPreview && previewSrc}
+      {:else if mode === "preview" && previewSrc}
         {#key previewSrc}
           <iframe class="preview" class:md={isMd} class:ready={previewReady} title="Preview of {file}"
                   sandbox="allow-scripts" srcdoc={previewSrc}
@@ -2194,7 +2228,8 @@ async function confirmDiscard() {
               onerror={errBanner}
               oncopy={showToast}
               onsaved={loadFiles}
-              onready={restoreRawView} />
+              onready={restoreRawView}
+              onbinary={(b) => (srcBinary = b)} />
       {:else}
         <div class="empty">Select a file</div>
       {/if}
@@ -2859,8 +2894,12 @@ dialog.settings::backdrop {
   cursor: pointer;
   white-space: nowrap;
 }
-.seg button:hover {
+.seg button:hover:not(:disabled) {
   color: var(--fg);
+}
+.seg button:disabled {
+  color: var(--dimmer);
+  cursor: default;
 }
 .seg button.on {
   background: var(--hl);

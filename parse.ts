@@ -1090,11 +1090,13 @@ export const fmtSize = (n: number) =>
     ? `${(n / 1024).toFixed(1)} KB`
     : `${(n / (1 << 20)).toFixed(1)} MB`;
 
-/** Why a file can't be shown as text, or null if it can. */
-export function previewSkip(size: number, head: Uint8Array): string | null {
-  if (size > MAX_PREVIEW) return `too large to show · ${fmtSize(size)}`;
-  if (head.subarray(0, 8000).includes(0)) return `binary · ${fmtSize(size)}`;
-  return null;
+export type Encoding = "utf-8" | "utf-16le" | "utf-16be";
+
+/** A file's text encoding from its first bytes: a UTF-16 BOM, else NUL means binary. */
+export function sniff(head: Uint8Array): Encoding | "binary" {
+  if (head[0] === 0xff && head[1] === 0xfe) return "utf-16le";
+  if (head[0] === 0xfe && head[1] === 0xff) return "utf-16be";
+  return head.subarray(0, 8000).includes(0) ? "binary" : "utf-8";
 }
 
 /** `git grep -z -n` output as hits, at most `limit`, each line trimmed and cut to 200 chars. */
@@ -1107,4 +1109,39 @@ export function parseGrep(out: string, limit = 200) {
       text: text.join("\0").trim().slice(0, 200),
     };
   });
+}
+
+/** `/api/raw` URL for a file; the name segment titles PDF viewers and "Save as". */
+export const rawUrl = (wt: string, path: string) =>
+  `/api/raw/${encodeURIComponent(path.split("/").pop() ?? "")}?wt=${
+    encodeURIComponent(wt)
+  }&path=${encodeURIComponent(path)}`;
+
+export type ByteClass = "nul" | "txt" | "ws" | "ctl" | "hi";
+
+/** hexyl's byte classes: NUL, printable ASCII, whitespace, other ASCII, non-ASCII. */
+export function byteClass(b: number): ByteClass {
+  if (b === 0) return "nul";
+  if (b > 0x20 && b < 0x7f) return "txt";
+  if (b === 0x20 || (b >= 0x09 && b <= 0x0d)) return "ws";
+  return b < 0x80 ? "ctl" : "hi";
+}
+
+const BYTE_GLYPH = { nul: "⋄", ws: "_", ctl: "•", hi: "×" };
+
+/** Decodes one chunk of a streamed file. A trailing CR waits for the next chunk so a split CRLF stays one line break. */
+export function decodeChunk(
+  s: { dec: TextDecoder; carry: string },
+  buf: Uint8Array,
+  last: boolean,
+): string {
+  const text = s.carry + s.dec.decode(buf, { stream: !last });
+  s.carry = !last && text.endsWith("\r") ? "\r" : "";
+  return s.carry ? text.slice(0, -1) : text;
+}
+
+/** One ASCII-gutter glyph per byte, hexyl style. */
+export function byteChar(b: number): string {
+  const c = byteClass(b);
+  return c === "txt" ? String.fromCharCode(b) : BYTE_GLYPH[c];
 }
