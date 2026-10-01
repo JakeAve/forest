@@ -7,6 +7,7 @@ import { createStore } from "./store.ts";
 import { createTools } from "./tools.ts";
 import { createAutoRebase } from "./autorebase.ts";
 import { createRoutes } from "./routes.ts";
+import { createNotify, memoryInbox } from "./notify.ts";
 import { DEFAULTS } from "./settings.ts";
 import { newStats } from "./stats.ts";
 import type { PrsApi } from "./prs.ts";
@@ -54,6 +55,15 @@ const make = (opts?: {
     known: store.known,
     // deno-lint-ignore require-await
     mergeBase: async () => "HEAD",
+  });
+  const notify = createNotify({
+    sh,
+    settings: { ...DEFAULTS },
+    sse,
+    inbox: memoryInbox(),
+    now: Date.now,
+    os: false,
+    log: () => {},
   });
 
   const mutations: number[] = [];
@@ -103,12 +113,13 @@ const make = (opts?: {
       afterMutation: () => {},
       log: () => {},
     }),
+    notify,
     sse,
     stats,
     tools,
     desktop: false,
   });
-  return { routes, sh, store, files, mutations, prCalls, settings };
+  return { routes, notify, sh, store, files, mutations, prCalls, settings };
 };
 
 async function withTmp(fn: (dir: string) => Promise<void>) {
@@ -340,6 +351,25 @@ Deno.test("an unknown POST is 404", async () => {
   assertEquals(res.status, 404);
   assertEquals(await res.text(), "not found");
   assertEquals(mutations.length, 0);
+});
+
+Deno.test("routes: notify POST without wt is not rejected by guardWt", async () => {
+  const { routes } = make();
+  const read = await routes(post("/api/notify/read", { all: true }), LOCAL);
+  assertEquals([read.status, await read.json()], [200, { ok: true }]);
+  const snooze = await routes(post("/api/notify/snooze", { key: "k" }), LOCAL);
+  assertEquals([snooze.status, await snooze.json()], [200, { ok: true }]);
+  const bad = await routes(post("/api/notify/snooze", {}), LOCAL);
+  assertEquals(bad.status, 400);
+  const badRead = await routes(post("/api/notify/read", {}), LOCAL);
+  assertEquals(badRead.status, 400);
+});
+
+Deno.test("routes: GET /api/notify returns events newest first as a copy", async () => {
+  const { routes, notify } = make();
+  const res = await routes(get("/api/notify"), LOCAL);
+  assertEquals(await res.json(), []);
+  assertEquals(notify.list(), []);
 });
 
 Deno.test("GET /mcp with a foreign Host is rejected", async () => {

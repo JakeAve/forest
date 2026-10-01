@@ -31,6 +31,7 @@ import { enc, type SseApi } from "./sse.ts";
 import type { WatcherApi } from "./watcher.ts";
 import type { AutoRebaseApi } from "./autorebase.ts";
 import type { StoreApi } from "./store.ts";
+import type { NotifyApi } from "./notify.ts";
 import { DEFAULTS, saveSettings, type Settings } from "./settings.ts";
 import { type Stats, statsLine } from "./stats.ts";
 import type { createTools } from "./tools.ts";
@@ -60,6 +61,7 @@ export function createRoutes(deps: {
   files: FilesApi;
   watcher: WatcherApi;
   autoRebase: AutoRebaseApi;
+  notify: NotifyApi;
   sse: SseApi;
   stats: Stats;
   tools: ReturnType<typeof createTools>;
@@ -78,6 +80,7 @@ export function createRoutes(deps: {
     files,
     watcher,
     autoRebase,
+    notify,
     sse,
     stats,
     desktop,
@@ -310,6 +313,27 @@ export function createRoutes(deps: {
           guardPath(url.searchParams.get("path")),
         );
         return json(parseDiffHunks(d ?? ""));
+      }
+      if (url.pathname === "/api/notify" && req.method === "GET") {
+        return json([...notify.list()]);
+      }
+      if (url.pathname === "/api/notify/read" && req.method === "POST") {
+        const b = await req.json();
+        if (b.all === true) await notify.read("all");
+        else if (
+          Array.isArray(b.ids) &&
+          b.ids.every((i: unknown) => typeof i === "string")
+        ) await notify.read(b.ids);
+        else throw new Error("ids or all required");
+        return json({ ok: true });
+      }
+      if (url.pathname === "/api/notify/snooze" && req.method === "POST") {
+        const b = await req.json();
+        if (typeof b.key !== "string" || !b.key) {
+          throw new Error("key required");
+        }
+        await notify.snooze(b.key);
+        return json({ ok: true });
       }
       if (req.method === "POST" && url.pathname.startsWith("/api/")) {
         const b = await req.json();

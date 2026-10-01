@@ -189,6 +189,18 @@ itself. Opening a path outside every scanned repo (⌘O, above) only answers
 requests from this machine — a loopback address and a `Host` of `localhost`,
 `127.0.0.1`, `[::1]` or `forest-app.localhost` — even when `host` is `0.0.0.0`.
 
+### Notifications
+
+Every kind is off by default: set `notify[kind]` to `app`, `os` or `both` in
+settings to turn one on. Events land in an in-memory inbox (`notifyMax`) and
+macOS gets one grouped banner per cycle.
+
+| route                     | body                                    | returns              |
+| ------------------------- | --------------------------------------- | -------------------- |
+| `GET /api/notify`         |                                         | events, newest first |
+| `POST /api/notify/read`   | `{ "ids": [...] }` or `{ "all": true }` | `{ "ok": true }`     |
+| `POST /api/notify/snooze` | `{ "key": "..." }`                      | `{ "ok": true }`     |
+
 ### Launchers
 
 By default, "new worktree" runs `git worktree add <repo>-wt/<slug> -b <slug>`.

@@ -9,6 +9,7 @@ import { createSse } from "./sse.ts";
 import { createWatcher } from "./watcher.ts";
 import { createAutoRebase } from "./autorebase.ts";
 import { createStore } from "./store.ts";
+import { createNotify, memoryInbox } from "./notify.ts";
 import { createTools } from "./tools.ts";
 import { BW, createRoutes } from "./routes.ts";
 import type { Settings } from "./settings.ts";
@@ -21,6 +22,7 @@ export function boot(opts: {
   home: string;
   distDir: string;
   watchFs?: (root: string) => AsyncIterable<{ paths: string[] }>;
+  notifyOs?: boolean;
 }) {
   const { settings, home, distDir } = opts;
   const dir = join(home, ".forest");
@@ -30,6 +32,16 @@ export function boot(opts: {
   const repo = createRepo({ sh, root });
   const sse = createSse();
   const ports = createPorts(sh, stats);
+  const log = createLog({ path: join(dir, "forest-log.jsonl"), stats });
+  const notify = createNotify({
+    sh,
+    settings,
+    sse,
+    inbox: memoryInbox(),
+    now: Date.now,
+    os: opts.notifyOs ?? Deno.build.os === "darwin",
+    log: (o) => log.line(o),
+  });
   const prs = createPrs({
     sh,
     settings,
@@ -41,7 +53,11 @@ export function boot(opts: {
     autoRebase: (wt) => autoRebase.status(wt),
     prError: (r) => prs.prError(r),
     procs: () => ports.current(),
-    onSnapshot: (j) => sse.broadcast(j),
+    prListed: (r) => prs.listed(r),
+    onSnapshot: (j) => {
+      sse.broadcast(j);
+      notify.observe(j);
+    },
     stats,
   });
   const files = createFiles({
@@ -49,7 +65,6 @@ export function boot(opts: {
     known: store.known,
     mergeBase: repo.mergeBase,
   });
-  const log = createLog({ path: join(dir, "forest-log.jsonl"), stats });
   const watcher = createWatcher({
     repo,
     prs,
@@ -86,10 +101,11 @@ export function boot(opts: {
     files,
     watcher,
     autoRebase,
+    notify,
     sse,
     stats,
     tools,
     desktop: !!BW,
   });
-  return { root, stats, sse, log, watcher, autoRebase, routes };
+  return { root, stats, sse, log, watcher, autoRebase, notify, routes };
 }

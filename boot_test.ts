@@ -30,6 +30,7 @@ Deno.test("boot wires the real module graph end to end", async () => {
       settings: { ...DEFAULTS, root, watch: false },
       home,
       distDir: home,
+      notifyOs: false,
     });
     await app.watcher.poll();
     const get = (path: string) =>
@@ -40,6 +41,7 @@ Deno.test("boot wires the real module graph end to end", async () => {
     assertEquals(snap.map((r: { name: string }) => r.name), ["demo"]);
     assertEquals(snap[0].worktrees[0].branch, "main");
     assertEquals(snap[0].worktrees[0].untracked, 1);
+    assertEquals(await get("/api/notify"), []);
     const stats = await get("/api/stats");
     assertEquals([stats.repos, stats.worktrees, stats.mode], [1, 1, "poll"]);
     const files = await get(`/api/files?wt=${demo}`);
