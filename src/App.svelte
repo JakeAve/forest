@@ -156,6 +156,8 @@ const prOff = $derived.by(() => {
 });
 let discarding = $state(null);
 let touched = $state({});
+let fresh = $state({}); // rel path -> when it last changed on disk, for the row flash
+let diskAt = $state(0); // when the open file last changed on disk
 let now = $state(Date.now());
 let b1El = $state(), b2El = $state();
 let themes = $state([]);
@@ -213,6 +215,7 @@ const modeList = $derived(
 const rawSrc = $derived(rawUrl(sel ?? "", file ?? ""));
 $effect(() => {
   void sel, void file;
+  diskAt = 0;
   srcBinary = false;
   previewSrc = "";
   previewReady = false;
@@ -361,6 +364,14 @@ $effect(() => {
     inbox = [ev, ...inbox];
     const d = settings?.notify[ev.kind];
     if (d === "app" || d === "both") addToast(ev);
+  });
+  es.addEventListener("fs", (e) => {
+    const { wt, paths } = JSON.parse(e.data);
+    if (wt !== sel) return;
+    fresh = Object.fromEntries(paths.map((p) => [p, Date.now()]));
+    if (explore) loadTree();
+    else loadFiles();
+    if (file && paths.includes(file)) diffTick++;
   });
   es.addEventListener("status", (e) => {
     boot = JSON.parse(e.data);
@@ -921,9 +932,17 @@ function errBanner(text) {
 function conflictBanner() {
   banner = {
     kind: "warn",
-    text:
-      `${file} changed on disk while you had unsaved edits — not saved. Use discard to reload it.`,
-    actions: [{ label: "Dismiss", fn: () => (banner = null) }],
+    text: `${file} changed on disk while you have unsaved edits.`,
+    actions: [
+      {
+        label: "Reload from disk",
+        fn: () => {
+          banner = null;
+          diffRef?.reloadTheirs();
+        },
+      },
+      { label: "Keep mine", fn: () => (banner = null) },
+    ],
   };
 }
 
@@ -2159,7 +2178,8 @@ async function confirmDiscard() {
       {/snippet}
       {#snippet fileRow(f, mode)}
         {@const [dir, name] = splitPath(f.path)}
-        <div class="f" class:sel={file === f.path} role="button" tabindex="0"
+        {#key fresh[f.path]}
+        <div class="f" class:touch={fresh[f.path]} class:sel={file === f.path} role="button" tabindex="0"
              onclick={() => pick(f)}
              onkeydown={(e) => e.key === "Enter" ? pick(f) : menuKey(e, fileItems(f, mode))}
              oncontextmenu={(e) => openMenu(e, fileItems(f, mode))}>
@@ -2185,11 +2205,13 @@ async function confirmDiscard() {
           </span>
           <span class="n"><span class="pl">+{f.added}</span><span class="mi">−{f.removed}</span></span>
         </div>
+        {/key}
       {/snippet}
       {#snippet treeRow(r)}
         {@const [dir, name] = fq ? splitPath(r.path) : ["", r.path.split("/").pop()]}
         {@const f = byPath.get(r.path)}
-        <div class="f tr" class:sel={r.dir ? selDir === r.path : !selDir && file === r.path} class:ign={isIgnoredPath(r.path, treeIgnored)} role="button" tabindex="0" data-path={r.path}
+        {#key fresh[r.path]}
+        <div class="f tr" class:touch={fresh[r.path]} class:sel={r.dir ? selDir === r.path : !selDir && file === r.path} class:ign={isIgnoredPath(r.path, treeIgnored)} role="button" tabindex="0" data-path={r.path}
              style:padding-left="{0.625 + r.depth * 0.875}rem"
              onclick={() => r.dir ? toggleDir(r.path) : pick(r)}
              onkeydown={(e) => e.key === "Enter" ? (r.dir ? toggleDir(r.path) : pick(r)) : menuKey(e, fileItems(r))}
@@ -2204,6 +2226,7 @@ async function confirmDiscard() {
             <span></span>
           {/if}
         </div>
+        {/key}
       {/snippet}
       {#if !sel}
         {#if restoring}{@render loadingRow()}{:else}<div class="empty">Select a worktree</div>{/if}
@@ -2220,7 +2243,7 @@ async function confirmDiscard() {
             <div class="empty">{treeMatches.length - treeShown.length} more, narrow the filter</div>
           {/if}
           {#if loose && tree.length >= TREE_CAP}
-            <div class="empty">Showing the first {TREE_CAP} files, narrow the path</div>
+            <div class="empty">Showing the first {TREE_CAP} files, live updates off · narrow the path</div>
           {/if}
         {/if}
       {:else if filesOf !== sel}
@@ -2273,6 +2296,9 @@ async function confirmDiscard() {
           <button class:on={showDiff} disabled={mode !== "text"} onclick={() => (showDiff = true)}>Diff</button>
         </div>
       {/if}
+      {#if diskAt && now - diskAt < 60_000}
+        <span class="meta" title={new Date(diskAt).toLocaleTimeString()}>Updated {ago(diskAt)}</span>
+      {/if}
       {#if diffDirty}
         <span class="unsaved">● Unsaved ⌘S</span>
         <button class="btn p" onclick={() => diffRef?.save()}>Save</button>
@@ -2323,6 +2349,7 @@ async function confirmDiscard() {
               {split} onsplit={(s) => { split = s; saveLayout(); }} {wrap}
               onstate={(d) => (diffDirty = d)}
               onconflict={conflictBanner}
+              onupdated={() => (diskAt = Date.now())}
               onerror={errBanner}
               oncopy={showToast}
               onsaved={loadFiles}
@@ -3466,7 +3493,8 @@ select.theme {
     background: transparent;
   }
 }
-.wt.touch {
+.wt.touch,
+.f.touch {
   animation: flash 1.4s ease-out;
 }
 

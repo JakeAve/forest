@@ -1,6 +1,6 @@
 <script>
 import { untrack } from "svelte";
-import { MergeView } from "@codemirror/merge";
+import { MergeView, presentableDiff } from "@codemirror/merge";
 import {
   Decoration,
   EditorView,
@@ -13,6 +13,7 @@ import {
   EditorState,
   StateEffect,
   StateField,
+  Transaction,
 } from "@codemirror/state";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import {
@@ -38,6 +39,7 @@ let {
   single = false,
   onstate,
   onconflict,
+  onupdated,
   onerror,
   onsaved,
   oncopy,
@@ -81,6 +83,7 @@ let loading = $state(true);
 let usedLine = 0;
 let builtWt = null;
 let builtPath = null;
+let applying = false; // a disk update is being dispatched: not a user edit
 
 const mkDecoField = (effect) =>
   StateField.define({
@@ -161,15 +164,58 @@ function scrollToLine(ln) {
 }
 
 function flash(v, ln) {
+  flashLines(v, [[ln, ln]]);
+}
+
+function flashLines(v, ranges) {
+  const lines = new Set();
+  for (const [a, b] of ranges) for (let l = a; l <= b; l++) lines.add(l);
   v.dispatch({
     effects: setFlash.of(
-      Decoration.set([flashLine.range(v.state.doc.line(ln).from)]),
+      Decoration.set(
+        [...lines].sort((a, b) => a - b).map((l) =>
+          flashLine.range(v.state.doc.line(l).from)
+        ),
+      ),
     ),
   });
   setTimeout(
     () =>
       view?.b === v && v.dispatch({ effects: setFlash.of(Decoration.none) }),
     1600,
+  );
+}
+
+// Patch the editor to what is on disk instead of rebuilding it: scroll,
+// cursor, selection and history survive, and only the changed lines flash. A
+// reader parked at the end stays at the end, so a growing log tails itself.
+function applyDisk(work) {
+  const b = view.b;
+  const sd = b.scrollDOM;
+  const atEnd = sd.scrollTop + sd.clientHeight >= sd.scrollHeight - 4;
+  const changes = presentableDiff(b.state.doc.toString(), work).map((c) => ({
+    from: c.fromA,
+    to: c.toA,
+    insert: work.slice(c.fromB, c.toB),
+  }));
+  if (!changes.length) return;
+  applying = true;
+  try {
+    b.dispatch({
+      changes,
+      annotations: Transaction.addToHistory.of(false),
+      effects: atEnd ? EditorView.scrollIntoView(work.length) : [],
+    });
+  } finally {
+    applying = false;
+  }
+  const doc = b.state.doc;
+  flashLines(
+    b,
+    presentableDiff(disk ?? "", work).map((c) => [
+      doc.lineAt(c.fromB).number,
+      doc.lineAt(Math.max(c.fromB, c.toB - 1)).number,
+    ]),
   );
 }
 
@@ -275,7 +321,7 @@ function build({ file, hunks }) {
       hunkField,
       flashField,
       EditorView.updateListener.of((u) => {
-        if (u.docChanged) setDirty(true);
+        if (u.docChanged && !applying) setDirty(true);
       }),
     ]
     : ro;
@@ -412,9 +458,12 @@ export function reloadTheirs() {
 
 // ponytail: large files have work === disk === null, so a growing log never refreshes; compare size if that matters
 async function check() {
+  const [w, p] = [wt, path];
   const data = await fetchData();
-  if (data.file.work === disk) {
-    if (view && data.file.work !== null) {
+  if (w !== wt || p !== path || loading) return;
+  const { file } = data;
+  if (file.work === disk) {
+    if (view && file.work !== null) {
       view.b.dispatch({
         effects: setHunks.of(decosFor(view.b.state.doc, data.hunks)),
       });
@@ -422,7 +471,29 @@ async function check() {
     return;
   }
   if (dirty) return onconflict?.();
-  build(data);
+  // gone from disk: keep showing what we had, read-only in spirit; a ⌘S
+  // writes it back because disk is now null and save's expect matches
+  if (
+    file.work === null && disk !== null && view && !file.skip && !file.large
+  ) {
+    disk = null;
+    note = "Deleted on disk";
+    onupdated?.();
+    return;
+  }
+  const sameBase = view?.a
+    ? view.a.state.doc.toString() === (file.base ?? "")
+    : true;
+  if (!view || skip || file.skip || file.large || file.encoding || !sameBase) {
+    return build(data);
+  }
+  applyDisk(file.work);
+  disk = file.work;
+  note = null;
+  onupdated?.();
+  view.b.dispatch({
+    effects: setHunks.of(decosFor(view.b.state.doc, data.hunks)),
+  });
 }
 
 // language-data has no entry for these; the nearest mode it does have
