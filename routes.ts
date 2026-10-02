@@ -261,7 +261,7 @@ export function createRoutes(deps: {
           owner = ownerWorktree(real, [...looseRoots]);
           if (!owner) {
             owner = stat.isDirectory ? real : dirname(real);
-            looseRoots.add(owner);
+            files.addLoose(owner);
           }
         }
         return json({

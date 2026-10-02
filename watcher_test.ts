@@ -57,6 +57,7 @@ function make(opts: { openFails?: (call: number) => boolean } = {}) {
     repoDirs: 0,
     pushes: [] as string[],
     logs: [] as Record<string, unknown>[],
+    emits: [] as [string, string][],
     streams: [] as Stream[],
     opens: 0,
   };
@@ -88,7 +89,7 @@ function make(opts: { openFails?: (call: number) => boolean } = {}) {
     },
     ports: { refresh: () => Promise.resolve() },
     store,
-    sse: { setStatus: () => {} },
+    sse: { setStatus: () => {}, emit: (e, d) => void h.emits.push([e, d]) },
     stats,
     settings,
     root: "/r",
@@ -397,4 +398,42 @@ Deno.test("a stream that ends restarts with backoff and polls once", async () =>
   h.streams[1].push(ev("/r/forest-feat/src/a.ts"));
   await tick(time, 300);
   assertEquals(h.recomputes, [["/r/forest-feat"]]);
+});
+
+Deno.test("a drain emits the changed paths per worktree, relative", async () => {
+  using time = new FakeTime();
+  const h = await boot();
+  h.w.onEvent({
+    paths: [
+      "/r/forest-feat/src/a.ts",
+      "/r/forest-feat/src/b.ts",
+      "/r/forest-feat/src/a.ts",
+      "/r/forest/README.md",
+      "/r/forest-feat",
+    ],
+  });
+  assertEquals(h.emits, []);
+  await tick(time, 400);
+  assertEquals(
+    h.emits.map(([e, d]) => [e, JSON.parse(d)]),
+    [
+      ["fs", { wt: "/r/forest-feat", paths: ["src/a.ts", "src/b.ts"] }],
+      ["fs", { wt: "/r/forest", paths: ["README.md"] }],
+    ],
+  );
+  h.emits.length = 0;
+  await tick(time, 400);
+  assertEquals(h.emits, []);
+});
+
+Deno.test("fs emits are not held back by backoff", async () => {
+  using time = new FakeTime();
+  const h = await boot();
+  h.settings.watchHotThreshold = 1;
+  for (let i = 0; i < 3; i++) {
+    h.w.onEvent({ paths: [`/r/forest-feat/f${i}.ts`] });
+    await tick(time, 400);
+  }
+  assertEquals(h.emits.length, 3);
+  assert(h.recomputes.length < 3);
 });
