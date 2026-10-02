@@ -1,6 +1,7 @@
 import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
 import { join } from "@std/path";
-import { fakeExec, STATUS_V2 } from "./fixtures.ts";
+import { FakeTime } from "@std/testing/time";
+import { fakeExec, pushable, STATUS_V2 } from "./fixtures.ts";
 import { createFiles } from "./files.ts";
 import { guardThemeName } from "./themes.ts";
 import { MAX_PREVIEW, TREE_CAP } from "./parse.ts";
@@ -344,5 +345,60 @@ Deno.test("every mutation rejects a path with ..", async () => {
       Error,
       "bad path",
     );
+  });
+});
+
+Deno.test("a temporary root gets its own watcher, debounced and filtered", async () => {
+  using time = new FakeTime();
+  const stream = pushable<{ paths: string[] }>();
+  const emits: [string, string[]][] = [];
+  const files = createFiles({
+    sh: fakeExec({}),
+    known: new Map(),
+    // deno-lint-ignore require-await
+    mergeBase: async () => BASE,
+    watchFs: () => stream,
+    onChange: (r, p) => void emits.push([r, p]),
+  });
+  files.addLoose("/tmp/dl");
+  files.addLoose("/tmp/dl");
+  assert(files.isLoose("/tmp/dl"));
+  stream.push({ paths: ["/tmp/dl/a.txt", "/tmp/dl/node_modules/x.js"] });
+  await time.tickAsync(0);
+  stream.push({ paths: ["/tmp/dl/sub/b.txt", "/tmp/dl", "/tmp/dlx/c"] });
+  await time.tickAsync(0);
+  assertEquals(emits, []);
+  await time.tickAsync(300);
+  assertEquals(emits, [["/tmp/dl", ["a.txt", "sub/b.txt"]]]);
+  stream.end();
+});
+
+Deno.test("a capped temporary root stops watching", async () => {
+  await withTmp(async (dir) => {
+    using time = new FakeTime();
+    let closed = 0;
+    const stream = Object.assign(pushable<{ paths: string[] }>(), {
+      close: () => void closed++,
+    });
+    const emits: string[] = [];
+    const files = createFiles({
+      sh: fakeExec({}),
+      known: new Map(),
+      // deno-lint-ignore require-await
+      mergeBase: async () => BASE,
+      watchFs: () => stream,
+      onChange: (r) => void emits.push(r),
+    });
+    for (let i = 0; i < TREE_CAP; i++) {
+      await Deno.writeTextFile(join(dir, `f${i}`), "");
+    }
+    files.addLoose(dir);
+    const t = await files.walkTree(dir);
+    assertEquals(t.files.length, TREE_CAP);
+    assertEquals(closed, 1);
+    stream.push({ paths: [join(dir, "f0")] });
+    await time.tickAsync(500);
+    assertEquals(emits, []);
+    stream.end();
   });
 });

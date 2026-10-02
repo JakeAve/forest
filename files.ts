@@ -37,6 +37,7 @@ async function readHead(p: string) {
 export type FilesApi = {
   looseRoots: Set<string>;
   isLoose(wt: string): boolean;
+  addLoose(root: string): void;
   guardWt(wt: string | null): string;
   guardRoot(
     wt: string | null,
@@ -95,6 +96,9 @@ export function createFiles(deps: {
   sh: Shell;
   known: Map<string, string>;
   mergeBase: RepoApi["mergeBase"];
+  watchFs?: (root: string) => AsyncIterable<{ paths: string[] }>;
+  onChange?: (root: string, paths: string[]) => void;
+  debounceMs?: number;
 }): FilesApi {
   const { tryGit } = deps.sh;
   const { known } = deps;
@@ -108,6 +112,50 @@ export function createFiles(deps: {
 
   const looseRoots = new Set<string>();
   const isLoose = (wt: string) => !known.has(wt) && looseRoots.has(wt);
+
+  // A temporary root is outside ROOT, so the main watcher never sees it: each
+  // gets its own stream, closed again if the root turns out to be too big to
+  // list (walkTree hits TREE_CAP). No git recompute downstream, so no storm
+  // valve: the dependency-dir filter is the whole defence.
+  const looseWatchers = new Map<string, () => void>();
+
+  function addLoose(root: string) {
+    looseRoots.add(root);
+    if (!deps.watchFs || !deps.onChange || looseWatchers.has(root)) return;
+    const onChange = deps.onChange;
+    let w: AsyncIterable<{ paths: string[] }>;
+    try {
+      w = deps.watchFs(root);
+    } catch {
+      return;
+    }
+    const pending = new Set<string>();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let open = true;
+    looseWatchers.set(root, () => {
+      open = false;
+      clearTimeout(timer);
+      (w as { close?: () => void }).close?.();
+    });
+    (async () => {
+      for await (const ev of w) {
+        if (!open) return;
+        for (const p of ev.paths) {
+          const rel = p.slice(root.length + 1);
+          if (!rel || !p.startsWith(root + "/")) continue;
+          const segs = rel.split("/");
+          if (segs.some((s) => s === ".git" || DEP_DIRS.has(s))) continue;
+          if (pending.size < 200) pending.add(rel);
+        }
+        if (!pending.size) continue;
+        clearTimeout(timer);
+        timer = setTimeout(() => {
+          onChange(root, [...pending]);
+          pending.clear();
+        }, deps.debounceMs ?? 300);
+      }
+    })().catch(() => {}).finally(() => looseWatchers.delete(root));
+  }
 
   function guardRoot(
     wt: string | null,
@@ -283,6 +331,7 @@ export function createFiles(deps: {
         continue;
       }
     }
+    if (files.length >= TREE_CAP) looseWatchers.get(root)?.();
     return { files, dirs, ignored: dirs };
   }
 
@@ -325,6 +374,7 @@ export function createFiles(deps: {
   return {
     looseRoots,
     isLoose,
+    addLoose,
     guardWt,
     guardRoot,
     guardPath,
