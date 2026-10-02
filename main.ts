@@ -13,7 +13,7 @@ if (BW) {
 const HOME = Deno.env.get("HOME")!;
 const SETTINGS = await loadSettings(join(HOME, ".forest", "settings.json"));
 const DIST_DIR = join(import.meta.dirname!, "dist");
-const { root, stats, sse, log, watcher, autoRebase, routes } = boot({
+const { root, stats, sse, log, watcher, autoRebase, notify, routes } = boot({
   settings: SETTINGS,
   home: HOME,
   distDir: DIST_DIR,
@@ -41,6 +41,9 @@ setInterval(() => {
     console.error(e);
   });
 }, SETTINGS.autoRebaseMs);
+
+await notify.load();
+setInterval(notify.tick, 60_000);
 
 setInterval(() => {
   log.line({

@@ -78,3 +78,15 @@ Deno.test("coerceSettings: a zero threshold would disable the watcher forever", 
     { watchStormRate: 1, watchHotThreshold: 1 },
   );
 });
+
+Deno.test("coerceSettings keeps string arrays", () => {
+  const A = { notifyMuted: [] as string[], notify: {} };
+  assertEquals(
+    coerceSettings(A, {
+      notifyMuted: [" /r/a ", "", 3, "/r/b"],
+      notify: { "ci-failed": "os", x: 1 },
+    }),
+    { notifyMuted: ["/r/a", "/r/b"], notify: { "ci-failed": "os" } },
+  );
+  assertEquals(coerceSettings(A, { notifyMuted: "/r/a" }), {});
+});

@@ -8,6 +8,7 @@ export type SseApi = {
   add(c: ReadableStreamDefaultController): void;
   remove(c: ReadableStreamDefaultController): void;
   broadcast(json: string): void;
+  emit(event: string, data: string): void;
   setStatus(o: Partial<{ phase: string; done: number; total: number }>): void;
   statusChunk(): Uint8Array;
   ping(): void;
@@ -38,6 +39,7 @@ export function createSse(): SseApi {
     add: (c) => clients.add(c),
     remove: (c) => clients.delete(c),
     broadcast: (s) => send(enc(`data: ${s}\n\n`)),
+    emit: (event, data) => send(enc(`event: ${event}\ndata: ${data}\n\n`)),
     statusChunk,
     setStatus(o) {
       bootStatus = { ...bootStatus, ...o };

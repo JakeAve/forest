@@ -1,5 +1,5 @@
 import { assert, assertEquals, assertThrows } from "@std/assert";
-import type { DiffWorktree } from "./parse.ts";
+import type { DiffWorktree, PrCard } from "./parse.ts";
 import {
   ancestorDirs,
   approvals,
@@ -1303,4 +1303,267 @@ Deno.test("decodeChunk: any chunking decodes like the whole file", () => {
       assertEquals(out, whole, `${enc} in ${size}-byte chunks`);
     }
   }
+});
+
+import { edges, facts, snoozeKey } from "./parse.ts";
+import type { Pr, Repo } from "./types.ts";
+import { GH_CARD, repo, worktree } from "./fixtures.ts";
+
+const CTX = {
+  now: 10 * 86_400_000,
+  ciStuckMin: 30,
+  halfDoneMin: 15,
+  staleDirtyDays: 3,
+  unpushedHours: 24,
+};
+const W = "/r/forest-feat";
+const pr = (over: Partial<Pr> = {}): Pr => ({
+  number: 7,
+  url: "https://github.com/x/y/pull/7",
+  state: "OPEN",
+  stateSince: 0,
+  title: "Add the thing",
+  isDraft: false,
+  baseRefName: "main",
+  reviewDecision: "",
+  mergeable: "MERGEABLE",
+  mergeState: "BLOCKED",
+  autoMerge: false,
+  ci: { state: "pending", failing: [] },
+  ciSince: CTX.now,
+  reviewSince: null,
+  approvals: 0,
+  card: null,
+  detailAt: 1,
+  ...over,
+});
+const prSnap = (p: Pr | null, over: Partial<Repo> = {}) => [
+  repo({
+    prListed: true,
+    worktrees: [
+      worktree({ path: W, branch: "feat", lastActivity: CTX.now, pr: p }),
+    ],
+    ...over,
+  }),
+];
+const kinds = (a: Repo[], b: Repo[]) =>
+  edges(facts(a, CTX), facts(b, CTX)).map((d) => d.kind).sort();
+const EMPTY = { active: new Map(), known: new Set<string>() };
+
+Deno.test("edges: first snapshot is a silent baseline", () => {
+  const s = prSnap(pr({ ci: { state: "fail", failing: ["test"] } }), {
+    prError: "boom",
+  });
+  assertEquals(edges(EMPTY, facts(s, CTX)), []);
+});
+
+Deno.test("edges: pr list arriving late does not fire pr-opened", () => {
+  assertEquals(kinds(prSnap(null, { prListed: false }), prSnap(pr())), []);
+  assertEquals(kinds(prSnap(null), prSnap(pr({ detailAt: null }))), [
+    "pr-opened",
+  ]);
+});
+
+Deno.test("edges: first card fetch does not fire new-comment", () => {
+  const card = (urls: string[]) => ({
+    ...prCard(JSON.parse(GH_CARD)),
+    comments: urls.map((url) => ({
+      login: url.endsWith("me") ? "jake" : "octo",
+      body: "hi",
+      url,
+      at: 1,
+      review: false,
+    })),
+  });
+  assertEquals(
+    kinds(prSnap(pr({ detailAt: null })), prSnap(pr({ card: card(["u1"]) }))),
+    [],
+  );
+  assertEquals(kinds(prSnap(pr()), prSnap(pr({ card: card(["u1"]) }))), []);
+  assertEquals(
+    kinds(
+      prSnap(pr({ card: card(["u1"]) })),
+      prSnap(pr({ card: card(["u1", "u2", "u-me"]) })),
+    ),
+    ["new-comment"],
+  );
+});
+
+Deno.test("edges: ready-to-merge subsumes ci-passed and approved", () => {
+  const ready = {
+    reviewDecision: "APPROVED" as const,
+    approvals: 1,
+    mergeState: "CLEAN",
+    ci: { state: "pass" as const, failing: [] },
+  };
+  assertEquals(kinds(prSnap(pr()), prSnap(pr(ready))), ["ready-to-merge"]);
+  assertEquals(kinds(prSnap(pr()), prSnap(pr({ ...ready, autoMerge: true }))), [
+    "approved",
+    "automerge-changed",
+    "ci-passed",
+  ]);
+});
+
+Deno.test("edges: ci-failed fires again when a new check fails", () => {
+  const fail = (failing: string[]) => pr({ ci: { state: "fail", failing } });
+  assertEquals(kinds(prSnap(pr()), prSnap(fail(["a"]))), ["ci-failed"]);
+  assertEquals(kinds(prSnap(fail(["a"])), prSnap(fail(["a"]))), []);
+  assertEquals(kinds(prSnap(fail(["a"])), prSnap(fail(["b", "a"]))), [
+    "ci-failed",
+  ]);
+});
+
+Deno.test("edges: optional failing checks fire ci-failed-optional", () => {
+  const check = (name: string, required: boolean) => ({
+    name,
+    bucket: "fail" as const,
+    required,
+    url: "",
+    startedAt: null,
+    completedAt: null,
+  });
+  const card = {
+    ...prCard(JSON.parse(GH_CARD)),
+    comments: [],
+    threads: [],
+    checks: [check("lint", false), check("test", true)],
+  };
+  const fail = (failing: string[], c: PrCard | null = card) =>
+    pr({ card: c, ci: { state: "fail", failing } });
+  assertEquals(kinds(prSnap(pr({ card })), prSnap(fail(["lint"]))), [
+    "ci-failed-optional",
+  ]);
+  assertEquals(kinds(prSnap(pr({ card })), prSnap(fail(["test", "lint"]))), [
+    "ci-failed",
+    "ci-failed-optional",
+  ]);
+  assertEquals(kinds(prSnap(pr()), prSnap(fail(["lint"], null))), [
+    "ci-failed",
+  ]);
+});
+
+Deno.test("facts: titles name the repo and PR number", () => {
+  const titles = (p: Pr | null) =>
+    [...facts(prSnap(p), CTX).active.values()].map((d) => d.title);
+  assert(titles(pr()).includes("PR opened: forest #7"));
+  assert(titles(null).includes("Worktree added: forest · forest-feat"));
+});
+
+Deno.test("edges: a failing check recovering does not refire ci-failed", () => {
+  const fail = (failing: string[]) => pr({ ci: { state: "fail", failing } });
+  assertEquals(kinds(prSnap(fail(["a", "b"])), prSnap(fail(["a"]))), []);
+});
+
+Deno.test("edges: dismissed approval does not refire approved", () => {
+  const ok = pr({ reviewDecision: "APPROVED", approvals: 2 });
+  assertEquals(kinds(prSnap(ok), prSnap({ ...ok, approvals: 1 })), []);
+  assertEquals(kinds(prSnap(pr()), prSnap(ok)), ["approved"]);
+});
+
+Deno.test("edges: falling kinds fire on loss, not on repo vanish", () => {
+  const up = [repo({ worktrees: [worktree({ path: W, ports: [3000] })] })];
+  assertEquals(kinds(up, [repo({ worktrees: [worktree({ path: W })] })]), [
+    "server-died",
+  ]);
+  assertEquals(kinds(up, [repo()]), ["wt-removed"]);
+  assertEquals(kinds([repo()], up), ["wt-added"]);
+  assertEquals(kinds(up, []), []);
+});
+
+Deno.test("edges: branch-switched ignores a detour through a rebase", () => {
+  const at = (branch: string, state: "rebase" | null = null) => [
+    repo({
+      worktrees: [worktree({ path: W, branch, state, lastActivity: CTX.now })],
+    }),
+  ];
+  assertEquals(kinds(at("feat"), at("other")), ["branch-switched"]);
+  assertEquals(kinds(at("feat"), at("(detached)", "rebase")), []);
+  assertEquals(kinds(at("(detached)", "rebase"), at("feat")), []);
+});
+
+Deno.test("edges: time kinds fire once their threshold passes", () => {
+  const wt = (
+    over: Parameters<typeof worktree>[0],
+  ) => [repo({ worktrees: [worktree({ path: W, ...over })] })];
+  const later = { ...CTX, now: CTX.now + 20 * 60_000 };
+  const mid = wt({ state: "rebase", lastActivity: CTX.now });
+  assertEquals(edges(facts(mid, CTX), facts(mid, later)).map((d) => d.kind), [
+    "half-done",
+  ]);
+  const old = wt({
+    dirty: 2,
+    ahead: 1,
+    lastActivity: CTX.now - 5 * 86_400_000,
+  });
+  assertEquals(kinds(wt({ lastActivity: CTX.now - 5 * 86_400_000 }), old), [
+    "stale-dirty",
+    "unpushed",
+  ]);
+});
+
+Deno.test("snoozeKey is kind and worktree", () => {
+  const [d] = edges(facts([repo()], CTX), facts(prSnap(null), CTX));
+  assertEquals(snoozeKey(d), `wt-added:${W}`);
+  assertEquals(
+    snoozeKey({ kind: "gh-error", wt: null, repo: "/r/forest" }),
+    "gh-error:/r/forest",
+  );
+});
+
+Deno.test("edges: switching to a branch with a merged PR is silent", () => {
+  const at = (branch: string, p: Pr | null, over = {}) => [
+    repo({
+      prListed: true,
+      worktrees: [
+        worktree({ path: W, branch, lastActivity: CTX.now, pr: p, ...over }),
+      ],
+    }),
+  ];
+  const busy = { ports: [3000], behind: 2, behindMain: 3 };
+  assertEquals(
+    kinds(
+      at("feat", pr()),
+      at("old", pr({ number: 9, state: "MERGED" }), busy),
+    ),
+    ["branch-switched"],
+  );
+  assertEquals(kinds(at("feat", pr()), at("old", null, busy)), [
+    "branch-switched",
+  ]);
+});
+
+Deno.test("edges: diverged after local rebase does not fire pushed-to-branch", () => {
+  const wt = (ahead: number, behind: number) => [
+    repo({
+      worktrees: [
+        worktree({ path: W, ahead, behind, lastActivity: CTX.now }),
+      ],
+    }),
+  ];
+  assertEquals(kinds(wt(1, 0), wt(1, 2)), []);
+  assertEquals(kinds(wt(0, 0), wt(0, 2)), ["pushed-to-branch"]);
+});
+
+Deno.test("edges: a new reply in an existing thread fires new-comment", () => {
+  const base = prCard(JSON.parse(GH_CARD));
+  const card = (replies: number, lastBy: string) => ({
+    ...base,
+    comments: [],
+    threads: [{
+      path: "a.ts",
+      line: 1,
+      login: "octo",
+      body: "hi",
+      tag: "",
+      url: "t1",
+      at: 1,
+      replies,
+      lastBy,
+      resolved: false,
+    }],
+  });
+  const at = (replies: number, lastBy = "octo") =>
+    prSnap(pr({ card: card(replies, lastBy) }));
+  assertEquals(kinds(at(0), at(1)), ["new-comment"]);
+  assertEquals(kinds(at(1), at(2, base.author)), []);
 });

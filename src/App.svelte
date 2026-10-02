@@ -10,9 +10,11 @@ import {
   clampMenu,
   discardPrompt,
   isIgnoredPath,
+  KINDS,
   prStatus,
   rawUrl,
   removeSummary,
+  snoozeKey,
   TREE_CAP,
   treeRows,
   trimSeps,
@@ -351,6 +353,15 @@ const allClosed = $derived(closed.__all ?? true);
 
 $effect(() => {
   const es = new EventSource("/api/events");
+  es.onopen = () =>
+    fetch("/api/notify").then((r) => r.json()).then((l) => (inbox = l));
+  es.addEventListener("notify", (e) => {
+    const ev = JSON.parse(e.data);
+    if (inbox.some((x) => x.id === ev.id)) return;
+    inbox = [ev, ...inbox];
+    const d = settings?.notify[ev.kind];
+    if (d === "app" || d === "both") addToast(ev);
+  });
   es.addEventListener("status", (e) => {
     boot = JSON.parse(e.data);
     if (boot.phase !== "ready") return;
@@ -816,6 +827,77 @@ function showToast(text) {
   toast = text;
   clearTimeout(toastT);
   toastT = setTimeout(() => (toast = ""), settings?.toastMs ?? 7000);
+}
+
+let inbox = $state([]);
+let inboxEl = $state();
+let notifySec = $state();
+let toasts = $state([]);
+const unread = $derived(inbox.filter((e) => !e.readAt).length);
+const GROUPS = {
+  act: "Act now",
+  move: "Your move",
+  life: "Lifecycle",
+  clean: "Cleanup",
+};
+const DELIVER = { off: "Off", app: "In app", os: "macOS", both: "Both" };
+
+function addToast(ev) {
+  toasts = [ev, ...toasts];
+  setTimeout(
+    () => (toasts = toasts.filter((t) => t.id !== ev.id)),
+    settings?.toastMs ?? 7000,
+  );
+}
+
+const notifyPost = (what, body) =>
+  fetch(`/api/notify/${what}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+function onInbox(e) {
+  if (e.newState !== "open" || !unread) return;
+  notifyPost("read", { all: true });
+  const t = Date.now();
+  for (const ev of inbox) ev.readAt ??= t;
+}
+
+function openEv(ev) {
+  toasts = toasts.filter((t) => t.id !== ev.id);
+  inboxEl?.hidePopover();
+  if (ev.wt && allWts.some((w) => w.path === ev.wt)) selectWt(ev.wt);
+  else if (ev.url) open(ev.url, "_blank", "noreferrer");
+}
+
+function mute(path) {
+  if (!settings.notifyMuted.includes(path)) settings.notifyMuted.push(path);
+  saveSettings();
+}
+
+function setDeliver(kind, v) {
+  if (v === "off") delete settings.notify[kind];
+  else settings.notify[kind] = v;
+  saveSettings();
+}
+
+const evItems = (ev) => [
+  { label: "Open", fn: () => openEv(ev) },
+  { label: "Snooze", fn: () => notifyPost("snooze", { key: snoozeKey(ev) }) },
+  "-",
+  ev.wt && { label: "Mute worktree", fn: () => mute(ev.wt) },
+  { label: "Mute repo", fn: () => mute(ev.repo) },
+  {
+    label: `Mute "${KINDS[ev.kind]?.label ?? ev.kind}"`,
+    fn: () => setDeliver(ev.kind, "off"),
+  },
+];
+
+function notifySettings() {
+  inboxEl?.hidePopover();
+  dlg.showModal();
+  notifySec?.scrollIntoView({ block: "start" });
 }
 
 async function copy(e, text, key, label = text) {
@@ -1770,6 +1852,10 @@ async function confirmDiscard() {
           <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d={d}/></svg></button>
       {/each}
     </div>
+    <button class="circ bell" popovertarget="inbox" title="Notifications"
+            aria-label={unread ? `Notifications, ${unread} unread` : "Notifications"}>
+      <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
+      {#if unread}<span class="n">{unread > 99 ? "99+" : unread}</span>{/if}</button>
     <button class="circ" title="Settings {kbdOf('settings') ?? ''}" aria-label="Settings" onclick={() => dlg.showModal()}>
       <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg></button>
   </div>
@@ -2436,11 +2522,34 @@ async function confirmDiscard() {
       </section>
     {/if}
   </div>
-  {#if toast}
-    <div class="toast" onclick={() => (toast = "")} role="presentation">
-      copied <span class="mono">{toast}</span> to clipboard
+  <div class="toasts">
+    {#each toasts.slice(0, 3) as ev (ev.id)}
+      <button class="toast" onclick={() => openEv(ev)}>{ev.title} <span class="dim">{ev.body}</span></button>
+    {/each}
+    {#if toasts.length > 3}
+      <button class="toast" onclick={() => inboxEl.showPopover()}>+{toasts.length - 3} more</button>
+    {/if}
+    {#if toast}
+      <div class="toast" onclick={() => (toast = "")} role="presentation">
+        copied <span class="mono">{toast}</span> to clipboard
+      </div>
+    {/if}
+  </div>
+</div>
+<div id="inbox" class="ctx inbox" popover bind:this={inboxEl}
+  ontoggle={onInbox}>
+  {#each inbox as ev (ev.id)}
+    <div class="ev" oncontextmenu={(e) => openMenu(e, evItems(ev))} role="presentation">
+      <button class="go" onclick={() => openEv(ev)}>
+        <span class="t">{ev.title}</span><span class="ago">{ago(ev.at)}</span>
+        <span class="b">{ev.body}</span></button>
+      <button class="more" title="Snooze or mute" aria-label="Snooze or mute"
+              onclick={(e) => openMenu(e, evItems(ev))}>⋯</button>
     </div>
-  {/if}
+  {:else}
+    <div class="empty">Nothing yet — every kind starts off
+      <button class="btn" onclick={notifySettings}>Choose kinds…</button></div>
+  {/each}
 </div>
 
 <Palette items={paletteItems} bind:open={paletteOpen} />
@@ -2512,6 +2621,35 @@ async function confirmDiscard() {
   </div>
   <div class="hint mono">{"{slug} {repo} {path} {root}"}</div>
 
+  <div class="sec" bind:this={notifySec}>Notifications</div>
+  {#each Object.entries(GROUPS) as [g, name] (g)}
+    <div class="sub">{name}</div>
+    {#each Object.entries(KINDS).filter(([, k]) => k.group === g) as [kind, k] (kind)}
+      <div class="row">
+        <label class="kind" for="n-{kind}">{k.label}{#if k.hint}<span class="hint">{k.hint}</span>{/if}</label>
+        <select id="n-{kind}" class="theme" value={settings?.notify[kind] ?? "off"}
+                onchange={(e) => setDeliver(kind, e.target.value)}>
+          {#each Object.entries(DELIVER) as [v, l] (v)}<option value={v}>{l}</option>{/each}
+        </select>
+      </div>
+    {/each}
+  {/each}
+  <div class="sub">Muted</div>
+  {#each settings?.notifyMuted ?? [] as p, i (p)}
+    <div class="row">
+      <span class="kind mono">{p}</span>
+      <button class="btn" onclick={() => (settings.notifyMuted.splice(i, 1), saveSettings())}>Remove</button>
+    </div>
+  {:else}
+    <div class="hint">Nothing muted. Mute a worktree or repo from an inbox row.</div>
+  {/each}
+  <div class="hint">
+    Someone pushed to your branch and upstream branch gone only fire after a
+    fetch, and Forest fetches only for auto-rebase worktrees. macOS delivery
+    needs a one-time permission for Script Editor in System Settings,
+    Notifications.
+  </div>
+
   <div class="sec">Keyboard shortcuts</div>
   <div class="row">
     <button class="btn" onclick={() => (dlg.close(), (shortcutsOpen = true))}>
@@ -2577,6 +2715,87 @@ async function confirmDiscard() {
 }
 .circ:hover {
   color: var(--acc);
+}
+.bell {
+  position: relative;
+}
+.bell .n {
+  position: absolute;
+  top: -0.25rem;
+  right: -0.375rem;
+  min-width: 1rem;
+  padding: 0 0.25rem;
+  border-radius: 999px;
+  background: var(--acc);
+  color: var(--bg);
+  font: 600 0.625rem/1rem var(--sans);
+}
+button.toast {
+  font-family: var(--sans);
+  text-align: left;
+}
+.toast .dim {
+  color: var(--dim);
+}
+.ctx.inbox {
+  inset: 3rem 0.5rem auto auto;
+  width: min(26rem, calc(100vw - 1rem));
+  max-height: calc(100vh - 4rem);
+  overflow-y: auto;
+}
+.inbox .ev {
+  display: flex;
+  align-items: start;
+  border-radius: 0.375rem;
+}
+.inbox .ev:hover {
+  background: var(--hov);
+}
+.inbox .ev button.go {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0 0.5rem;
+  white-space: normal;
+}
+.inbox .ev button.go:hover,
+.inbox .ev button.more:hover {
+  background: none;
+  color: var(--fg);
+}
+.inbox .ev .b {
+  grid-column: 1 / -1;
+  color: var(--dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.inbox .ev .ago {
+  color: var(--dimmer);
+}
+.inbox .ev button.more {
+  width: auto;
+  color: var(--dim);
+}
+.inbox .empty .btn {
+  margin-top: 0.5rem;
+}
+.sub {
+  padding: 0.5rem 1rem 0.125rem;
+  color: var(--dim);
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+.row .kind {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  color: var(--fg);
+  font: 0.8125rem var(--sans);
+  overflow-wrap: anywhere;
+}
+.row .kind.mono {
+  font-family: var(--mono);
 }
 dialog.settings {
   margin: auto;
@@ -2656,11 +2875,17 @@ dialog.settings::backdrop {
 .row .hint {
   padding: 0;
 }
-.toast {
+.toasts {
   position: fixed;
   bottom: 0.75rem;
   right: 0.75rem;
   z-index: 20;
+  display: flex;
+  flex-direction: column;
+  align-items: end;
+  gap: 0.375rem;
+}
+.toast {
   max-width: 60vw;
   padding: 0.4375rem 0.6875rem;
   border: 1px solid var(--line);
