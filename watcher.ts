@@ -184,13 +184,12 @@ export function createWatcher(
   // sweep either way. pollMs spans the whole cycle, git sweep through PRs.
   async function poll() {
     const t0 = performance.now();
-    await sweepAll();
+    await Promise.all([sweepAll(), ports.refresh()]);
     const repos = [...repoByPath.values()];
     // PRs are decoration; the repo list is the content. Start the gh fan-out but
     // paint without it — at boot that is ~half the wait, and it is the only stage
     // that depends on the network. The PR tags land on the second publish.
     const prsDone = prs.refreshPrs(repos);
-    await ports.refresh();
     store.publish();
     if (!booted) sse.setStatus({ phase: "prs" });
     await prsDone;
