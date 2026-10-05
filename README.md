@@ -66,7 +66,12 @@ open it in its desktop app (`claude://resume`, `codex://threads/`); right-click
 resumes the most likely one directly. A session's › (or right-click, or →) swaps
 the list for its actions: open in its app, resume in Terminal (`claude --resume`
 / `codex resume` in the directory it started in), copy its ID or its resume
-link. Another agent is one entry in `PROVIDERS` in `agents.ts`.
+link. Keys: `a` opens the selected worktree's list and ⌥⌘A resumes its most
+likely session; in the list `↑`/`↓` (or whatever moves between worktrees) step,
+`↩` opens, `→`/`←` enter and leave a session's actions, and `t`, `c`, `l` resume
+in terminal, copy the ID, copy the link. They're rebindable under Agent sessions
+in the shortcuts overlay. Another agent is one entry in `PROVIDERS` in
+`agents.ts`.
 
 Auto-rebase keeps a worktree current with `origin/HEAD` on a timer
 (`autoRebaseMs`). A branch with an open PR is updated on GitHub, the same

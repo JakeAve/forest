@@ -1136,6 +1136,7 @@ function menuKey(e, items) {
 
 function closeMenu() {
   menu = null;
+  menuCur = null;
   menuReturn?.focus();
   menuReturn = null;
 }
@@ -1147,7 +1148,7 @@ $effect(() => {
     closeMenu();
   };
   const onDown = (ev) => !menuEl?.contains(ev.target) && hide();
-  const onKey = (ev) => ev.key === "Escape" && hide();
+  const onKey = (ev) => (ev.key === "Escape" ? hide() : menuNav(ev));
   addEventListener("pointerdown", onDown, true);
   addEventListener("keydown", onKey, true);
   addEventListener("scroll", hide, true);
@@ -1164,15 +1165,36 @@ function runItem(item, e) {
 }
 
 // ← goes back, → opens a session's actions: the agent popover's drill-down.
-function menuNav(e, it) {
+// The menu item under focus, else under the pointer; its session is what
+// t / c / l act on.
+let menuCur = $state(null);
+const curItem = () => {
+  const i = menuEl?.contains(document.activeElement) &&
+    document.activeElement.dataset.i;
+  return i ? menu?.items[+i] : menuCur;
+};
+const menuSession = () => menu && (menu.session ?? curItem()?.agent);
+
+// ↑ ↓ (and whatever moves between worktrees) step through items; → opens a
+// session's actions, ← goes back. Runs in capture so a menu opened with the
+// mouse navigates too, and j / k move here instead of between worktrees.
+function menuNav(e) {
+  const k = combo(e);
+  const step = k === "arrowdown" || keymap.byId["next-wt"]?.includes(k)
+    ? 1
+    : k === "arrowup" || keymap.byId["prev-wt"]?.includes(k)
+    ? -1
+    : 0;
   const back = menu?.items.find((x) => x.back);
-  if (e.key === "ArrowLeft" && back) {
-    e.preventDefault();
-    back.fn(e);
-  } else if (e.key === "ArrowRight" && it?.more) {
-    e.preventDefault();
-    it.more(e);
-  }
+  if (step) {
+    const bs = [...menuEl.querySelectorAll("button:not(:disabled):not(.more)")];
+    const i = bs.indexOf(document.activeElement);
+    bs.at(i < 0 ? (step > 0 ? 0 : -1) : (i + step) % bs.length)?.focus();
+  } else if (k === "arrowleft" && back) back.fn(e);
+  else if (k === "arrowright" && curItem()?.more) curItem().more(e);
+  else return;
+  e.preventDefault();
+  e.stopPropagation();
 }
 
 function showCard(w, e) {
@@ -1420,9 +1442,10 @@ const terminal = (a, e) =>
   act("agent-terminal", { agent: a.agent, id: a.id }, "at:" + a.id, e);
 
 // Swaps the open menu's items in place: the agent popover's drill-down.
-async function drill(items, e) {
+async function drill(items, e, session = null) {
   if (!menu) return;
-  menu = { ...menu, items: trimSeps(items.filter(Boolean)) };
+  menuCur = null;
+  menu = { ...menu, session, items: trimSeps(items.filter(Boolean)) };
   await tick();
   placeMenu();
   if (e?.detail === 0) menuEl?.querySelector("button:not(:disabled)")?.focus();
@@ -1452,7 +1475,7 @@ function sessionItems(w) {
       sub: `${shortId(a.id)} · ${fmtAt(a.seenAt)}`,
       tip: agentTip(a),
       fn: (e) => resume(a, e),
-      more: (e) => drill(sessionActions(w, a), e),
+      more: (e) => drill(sessionActions(w, a), e, a),
     })),
     "-",
     {
@@ -1485,14 +1508,21 @@ function sessionActions(w, a) {
     { label: `Open in ${a.label}`, kbd: "↩", fn: (e) => resume(a, e) },
     {
       label: "Resume in terminal",
+      kbd: kbdOf("session-terminal"),
       sub: clip(a.command, 56),
       tip: a.command,
       fn: (e) => terminal(a, e),
     },
     "-",
-    { label: "Copy session ID", sub: a.id, fn: (e) => copy(e, a.id, "ctx") },
+    {
+      label: "Copy session ID",
+      kbd: kbdOf("session-copy-id"),
+      sub: a.id,
+      fn: (e) => copy(e, a.id, "ctx"),
+    },
     {
       label: "Copy resume link",
+      kbd: kbdOf("session-copy-link"),
       sub: clip(a.url, 56),
       fn: (e) => copy(e, a.url, "ctx", "resume link"),
     },
@@ -1507,16 +1537,23 @@ function agentItems(w) {
     {
       agent: a,
       label: `Resume ${a.label} session`,
+      kbd: w === selWt && kbdOf("agent-resume"),
       sub: clip(a.title || shortId(a.id)),
       tip: agentTip(a),
       fn: (e) => resume(a, e),
     },
     {
-      label: rest.length
-        ? `Agent sessions (${rest.length + 1})…`
-        : "Session actions…",
+      label: rest.length ? "Agent sessions…" : "Session actions…",
+      kbd: w === selWt && kbdOf("agent-sessions"),
       keep: true,
-      fn: (e) => drill(rest.length ? sessionItems(w) : sessionActions(w, a), e),
+      fn: (e) =>
+        menu
+          ? drill(
+            rest.length ? sessionItems(w) : sessionActions(w, a),
+            e,
+            rest.length ? null : a,
+          )
+          : openSessions(w),
     },
     { label: "Copy session ID", fn: (e) => copy(e, a.id, "ctx") },
     {
@@ -1726,6 +1763,20 @@ function stepWt(d) {
   goWt(navWts[Math.max(0, Math.min(navWts.length - 1, i < 0 ? 0 : i + d))]);
 }
 const liveWt = () => !loose && selWt;
+
+// Opens the selected row's agent popover from its badge, as a click would.
+async function openSessions(w) {
+  await scrollRow(w.path);
+  document.querySelector(`.wt[data-path="${CSS.escape(w.path)}"] .ag`)
+    ?.click();
+}
+
+// Runs a t / c / l action on the popover's session, then closes the popover.
+function onSession(fn) {
+  const a = menuSession();
+  menuEl?.hidePopover();
+  fn(a);
+}
 const toggleSettings = () => (dlg.open ? dlg.close() : dlg.showModal());
 const COMMANDS = [
   {
@@ -1779,6 +1830,49 @@ const COMMANDS = [
       liveWt() && !selWt.isPrimary && !busy["ar:" + selWt.path] &&
       (selWt.autoRebase || selWt.pr?.state !== "MERGED"),
     run: (e) => toggleAutoRebase(selWt, e),
+  },
+  {
+    id: "agent-sessions",
+    label: "Agent sessions…",
+    section: "Agent sessions",
+    keys: "a",
+    when: () => liveWt()?.agents?.length,
+    run: () => openSessions(selWt),
+  },
+  {
+    id: "agent-resume",
+    get label() {
+      const a = liveWt()?.agents?.[0];
+      return `Resume ${a?.label ?? "agent"} session`;
+    },
+    section: "Agent sessions",
+    keys: "alt+cmd+a",
+    when: () => liveWt()?.agents?.length,
+    run: (e) => resume(selWt.agents[0], e),
+  },
+  {
+    id: "session-terminal",
+    label: "Resume session in terminal",
+    section: "Agent sessions",
+    keys: "t",
+    when: menuSession,
+    run: (e) => onSession((a) => terminal(a, e)),
+  },
+  {
+    id: "session-copy-id",
+    label: "Copy session ID",
+    section: "Agent sessions",
+    keys: "c",
+    when: menuSession,
+    run: (e) => onSession((a) => copy(e, a.id, "kbd")),
+  },
+  {
+    id: "session-copy-link",
+    label: "Copy session resume link",
+    section: "Agent sessions",
+    keys: "l",
+    when: menuSession,
+    run: (e) => onSession((a) => copy(e, a.url, "kbd", "resume link")),
   },
   ...["Worktrees", "Files", "Source"].map((name, i) => ({
     id: `max-${name.toLowerCase()}`,
@@ -2539,10 +2633,8 @@ async function confirmDiscard() {
   </div>
   </div>
   {/if}
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="ctx" popover="manual" bind:this={menuEl}
-       ontoggle={(e) => e.newState === "closed" && closeMenu()}
-       onkeydown={(e) => menuNav(e)}>
+       ontoggle={(e) => e.newState === "closed" && closeMenu()}>
     {#each menu?.items ?? [] as it, i (i)}
       {#if it === "-"}
         <hr>
@@ -2552,7 +2644,8 @@ async function confirmDiscard() {
         {#snippet item()}
           <button class:dg={it.danger} disabled={it.disabled} title={it.tip}
                   onclick={(e) => runItem(it, e)}
-                  onkeydown={(e) => { if (e.key === "ArrowRight") { e.stopPropagation(); menuNav(e, it); } }}
+                  data-i={i}
+                  onpointerenter={() => (menuCur = it)}
                   oncontextmenu={(e) => { if (it.more) { e.preventDefault(); it.more(e); } }}
                   >{#if it.agent}<span class="ag"
                   style="--ag: var(--{it.agent.tone})">{it.agent.glyph}</span>{/if}{it.label}{#if
