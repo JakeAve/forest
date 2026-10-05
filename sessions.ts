@@ -1,6 +1,6 @@
 import { join, relative } from "@std/path";
 import type { Provider } from "./agents.ts";
-import type { AgentSession } from "./types.ts";
+import type { AgentSession, SessionInfo } from "./types.ts";
 
 // ---- agent sessions ----
 
@@ -17,6 +17,7 @@ export type SessionFs = {
 type Scan = {
   p: Provider;
   id: string;
+  path: string;
   size: number;
   mtime: number;
   offset: number; // bytes consumed, always just past a newline
@@ -86,6 +87,35 @@ export function createSessions(
   );
   let version = 0;
   let memo = { key: "", value: new Map<string, AgentSession[]>() };
+  let infoMemo = { version: -1, value: new Map<string, SessionInfo>() };
+
+  // agent:id -> the session, from its earliest file (the transcript, not a
+  // subagent's).
+  function all(): Map<string, SessionInfo> {
+    if (infoMemo.version === version) return infoMemo.value;
+    const main = new Map<string, Scan>();
+    for (const s of scans.values()) {
+      const k = `${s.p.agent}:${s.id}`;
+      const m = main.get(k);
+      if (!m || s.startedAt < m.startedAt) main.set(k, s);
+    }
+    const value = new Map<string, SessionInfo>();
+    for (const [k, s] of main) {
+      value.set(k, {
+        agent: s.p.agent,
+        label: s.p.label,
+        id: s.id,
+        title: titles.get(k) || s.title || s.autoTitle || s.prompt,
+        cwd: s.cwd,
+        startedAt: s.startedAt,
+        transcript: s.path,
+        url: s.p.url(s.id),
+        command: s.p.command(s),
+      });
+    }
+    infoMemo = { version, value };
+    return value;
+  }
   let running: Promise<void> | null = null;
 
   function scanLine(s: Scan, l: string) {
@@ -114,6 +144,7 @@ export function createSessions(
       s = {
         p,
         id,
+        path,
         size: 0,
         mtime: 0,
         offset: 0,
@@ -195,12 +226,7 @@ export function createSessions(
     forWts(wts: WtKey[]): Map<string, AgentSession[]> {
       const key = `${version}\n${JSON.stringify(wts)}`;
       if (memo.key === key) return memo.value;
-      const main = new Map<string, Scan>(); // agent:id -> earliest file
-      for (const s of scans.values()) {
-        const k = `${s.p.agent}:${s.id}`;
-        const m = main.get(k);
-        if (!m || s.startedAt < m.startedAt) main.set(k, s);
-      }
+      const info = all();
       const out = new Map<string, AgentSession[]>();
       const under = (p: string, wt: string) =>
         p === wt || p.startsWith(wt + "/");
@@ -233,22 +259,8 @@ export function createSessions(
           wt,
           shown([...first].sort((a, b) => a[1] - b[1]), deep).map(
             ([k, seenAt]) => {
-              const s = main.get(k)!;
-              const { agent, label, glyph, tone } = s.p;
-              return {
-                agent,
-                label,
-                glyph,
-                tone,
-                id: s.id,
-                title: titles.get(k) || s.title || s.autoTitle || s.prompt,
-                cwd: s.cwd,
-                startedAt: s.startedAt,
-                seenAt,
-                deep: deep.has(k),
-                url: s.p.url(s.id),
-                command: s.p.command(s),
-              };
+              const { agent, id, title } = info.get(k)!;
+              return { agent, id, title, seenAt, deep: deep.has(k) };
             },
           ),
         );
@@ -259,14 +271,21 @@ export function createSessions(
 
     // Only a session Forest has indexed, so a route never opens a link or
     // runs a command built from request input alone.
-    find(agent: string, id: string): { url: string; command: string } | null {
-      for (const s of scans.values()) {
-        if (s.p.agent === agent && s.id === id && s.cwd) {
-          return { url: s.p.url(id), command: s.p.command(s) };
-        }
-      }
-      return null;
+    find(agent: string, id: string): SessionInfo | null {
+      const s = all().get(`${agent}:${id}`);
+      return s?.cwd ? s : null;
     },
+
+    all,
+
+    // What the UI draws per agent, so it never names one itself.
+    meta: () =>
+      providers.map(({ agent, label, glyph, tone }) => ({
+        agent,
+        label,
+        glyph,
+        tone,
+      })),
   };
 }
 

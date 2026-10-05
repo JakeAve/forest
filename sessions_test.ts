@@ -107,16 +107,18 @@ Deno.test("sessions rank by first mention and mark ones that worked inside", asy
       ["codex", C, "Codex feat", ms(9), true],
     ],
   );
-  assertEquals(got.get(WT)![0].cwd, "/h/Repos/app");
-  assertEquals(
-    got.get(WT)![0].command,
-    `cd '/h/Repos/app' && claude --resume ${B}`,
-  );
-  assertEquals(got.get(WT)![2].url, `codex://threads/${C}`);
-  assertEquals(s.find("codex", C), {
-    url: `codex://threads/${C}`,
-    command: `cd '${WT}' && codex resume ${C}`,
+  assertEquals(s.all().get(`claude:${B}`), {
+    agent: "claude",
+    label: "Claude",
+    id: B,
+    title: "Make feat",
+    cwd: "/h/Repos/app",
+    startedAt: ms(0),
+    transcript: claudeFile(B),
+    url: `claude://resume?session=${B}`,
+    command: `cd '/h/Repos/app' && claude --resume ${B}`,
   });
+  assertEquals(s.find("codex", C)?.command, `cd '${WT}' && codex resume ${C}`);
   assertEquals(s.find("codex", A), null);
 });
 
@@ -161,12 +163,9 @@ Deno.test("a subagent transcript counts for its parent session; a removed file d
   const { s } = make(files);
   await s.refresh();
   const [a] = s.forWts([{ path: WT }]).get(WT)!;
-  assertEquals([a.id, a.title, a.startedAt, a.seenAt], [
-    A,
-    "Parent",
-    ms(0),
-    ms(7),
-  ]);
+  assertEquals([a.id, a.title, a.seenAt], [A, "Parent", ms(7)]);
+  assertEquals(s.all().get(`claude:${A}`)?.transcript, claudeFile(A));
+  assertEquals(s.all().get(`claude:${A}`)?.startedAt, ms(0));
 
   files.delete(sub);
   await s.refresh();

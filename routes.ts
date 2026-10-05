@@ -123,6 +123,7 @@ export function createRoutes(deps: {
           },
         });
       }
+      if (url.pathname === "/api/agents") return json(sessions.meta());
       if (url.pathname === "/api/stats") {
         return json(statsLine(stats, SETTINGS, gauges()));
       }

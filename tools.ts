@@ -1,11 +1,19 @@
 import { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
-import { matchWt } from "./src/filter.js";
-import { normPath, ownerWorktree, qbool, qnum, selectWt } from "./parse.ts";
+import { matchWt, rank } from "./src/filter.js";
+import {
+  normPath,
+  ownerWorktree,
+  qbool,
+  qnum,
+  selectWt,
+  sessionTag,
+} from "./parse.ts";
 import type { FilesApi } from "./files.ts";
 import type { StoreApi } from "./store.ts";
+import type { SessionsApi } from "./sessions.ts";
 import type { Settings } from "./settings.ts";
-import type { WtRow } from "./types.ts";
+import type { SessionInfo, WtRow } from "./types.ts";
 
 // ---- tools ----
 
@@ -24,8 +32,9 @@ export function createTools(deps: {
   files: FilesApi;
   settings: Settings;
   home: string;
+  sessions: Pick<SessionsApi, "all">;
 }) {
-  const { store, files, settings, home: HOME } = deps;
+  const { store, files, settings, sessions, home: HOME } = deps;
   const { byPath: repoByPath, known: knownWorktrees } = store;
 
   function wtRows(): WtRow[] {
@@ -46,7 +55,12 @@ export function createTools(deps: {
     const e = new ToolError(
       hit.candidates.length ? "ambiguous worktree" : "no worktree matches",
     );
-    e.candidates = hit.candidates;
+    // enough to pick one and retry, not each worktree's whole row
+    e.candidates = hit.candidates.map(({ repo, branch, path }) => ({
+      repo,
+      branch,
+      path,
+    }));
     throw e;
   }
 
@@ -99,6 +113,61 @@ export function createTools(deps: {
           [...knownWorktrees.keys()],
         );
         return wtRows().find((w) => w.path === owner) ?? null;
+      },
+    },
+    sessions: {
+      desc:
+        "Coding agent sessions (Claude Code, Codex, …) linked to worktrees, each with its transcript path, resume link and resume command. By wt (most likely creator first), by id (or a unique prefix) with the worktrees it touched, or q fuzzy-matching titles.",
+      input: {
+        wt: z.string().optional(),
+        id: z.string().optional(),
+        q: z.string().optional(),
+      },
+      run: (a) => {
+        const info = sessions.all();
+        const key = (s: { agent: string; id: string }) => `${s.agent}:${s.id}`;
+        const linked = (k: string) =>
+          wtRows().flatMap((w) => {
+            const i = w.agents.findIndex((s) => key(s) === k);
+            if (i < 0) return [];
+            const s = w.agents[i];
+            return [{
+              wt: w.path,
+              repo: w.repo,
+              branch: w.branch,
+              seenAt: s.seenAt,
+              tag: sessionTag(i, w.agents.length, s.deep),
+            }];
+          });
+        if (a.wt !== undefined) {
+          const w = resolveWt(String(a.wt));
+          return w.agents.map((s, i) => ({
+            ...info.get(key(s)),
+            seenAt: s.seenAt,
+            tag: sessionTag(i, w.agents.length, s.deep),
+          }));
+        }
+        if (a.id !== undefined) {
+          const id = String(a.id);
+          const hits = [...info.values()].filter((s) => s.id.startsWith(id));
+          if (hits.length !== 1) {
+            const e = new ToolError(
+              hits.length ? "ambiguous session id" : "no session matches",
+            );
+            e.candidates = hits.slice(0, 20).map(({ agent, id, title }) => ({
+              agent,
+              id,
+              title,
+            }));
+            throw e;
+          }
+          return { ...hits[0], wts: linked(key(hits[0])) };
+        }
+        if (a.q !== undefined) {
+          return rank(String(a.q), [...info.values()], 20, (s) => s.title)
+            .map((s: SessionInfo) => ({ ...s, wts: linked(key(s)) }));
+        }
+        throw new ToolError("pass wt, id or q");
       },
     },
     files: {
