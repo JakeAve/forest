@@ -23,6 +23,7 @@
     "dist/",
     "docs/",
     "node_modules/",
-    ".claude/"
+    ".claude/",
+    ".agents/"
   ]
 }

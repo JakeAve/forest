@@ -57,6 +57,15 @@ a PR draft or ready, close it, kill a process listening in it, turn on
 auto-rebase, or remove the worktree. Select several to copy or remove them
 together. Right-click a repo for new worktree.
 
+A badge on the row names the coding agent session that created the worktree.
+Forest finds it by reading agent transcripts (`~/.claude/projects`,
+`~/.codex/sessions`) for the earliest mention of the worktree's path; a count on
+the badge means several sessions worked inside it. Click the badge, or
+right-click and pick Resume, to open the session in its desktop app
+(`claude://resume`, `codex://threads/`). The menu also copies the session ID or
+a `claude --resume` / `codex resume` command for a terminal. Another agent is
+one entry in `PROVIDERS` in `agents.ts`.
+
 Auto-rebase keeps a worktree current with `origin/HEAD` on a timer
 (`autoRebaseMs`). A branch with an open PR is updated on GitHub, the same
 merge-from-base as the card's update-branch button, and fast-forwarded locally
@@ -255,8 +264,8 @@ Parsing is deliberately split out of `main.ts` into `parse.ts`, `src/theme.js`,
 and `src/filter.js` — that's the part with edge cases worth testing, and it's
 testable without spawning git. The rest of the server is split into per-system
 modules (`exec`, `repo`, `prs`, `ports`, `store`, `sse`, `watcher`, `files`,
-`themes`, `log`, `tools`, `routes`, `stats`, `settings`, `types`), each with its
-own `<module>_test.ts`.
+`themes`, `log`, `tools`, `routes`, `stats`, `settings`, `agents`, `sessions`,
+`types`), each with its own `<module>_test.ts`.
 
 ## Desktop app
 

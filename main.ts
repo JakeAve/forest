@@ -13,7 +13,17 @@ if (BW) {
 const HOME = Deno.env.get("HOME")!;
 const SETTINGS = await loadSettings(join(HOME, ".forest", "settings.json"));
 const DIST_DIR = join(import.meta.dirname!, "dist");
-const { root, stats, sse, log, watcher, autoRebase, notify, routes } = boot({
+const {
+  root,
+  stats,
+  sse,
+  log,
+  watcher,
+  autoRebase,
+  notify,
+  sessions,
+  routes,
+} = boot({
   settings: SETTINGS,
   home: HOME,
   distDir: DIST_DIR,
@@ -41,6 +51,15 @@ setInterval(() => {
     console.error(e);
   });
 }, SETTINGS.autoRebaseMs);
+
+// ponytail: fixed 30s; agent badges are context, not alerts
+const refreshSessions = () =>
+  sessions.refresh().catch((e) => {
+    stats.errorsTotal++;
+    console.error(e);
+  });
+refreshSessions();
+setInterval(refreshSessions, 30_000);
 
 await notify.load();
 setInterval(notify.tick, 60_000);

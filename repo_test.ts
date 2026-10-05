@@ -82,6 +82,7 @@ Deno.test("computeRepo builds one Worktree per porcelain entry with ahead/behind
     procs: [],
     pr: null,
     autoRebase: null,
+    agents: [],
   });
   const w = r!.worktrees[1];
   assertEquals(

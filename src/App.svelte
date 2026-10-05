@@ -1258,6 +1258,7 @@ function wtItems(w, solo = false) {
   return [
     !many && { label: "Open", fn: () => selectWt(w.path) },
     !many && "-",
+    ...(many ? [] : agentItems(w)),
     {
       label: many ? `Copy ${t.length} branch names` : "Copy branch name",
       fn: (e) =>
@@ -1358,6 +1359,46 @@ function wtItems(w, solo = false) {
       danger: true,
       fn: () => (confirming = t.filter((x) => !x.isPrimary)),
     },
+  ];
+}
+
+// The earliest session (likely the creator), then others that worked inside.
+const agentPicks = (w) => {
+  const [first, ...rest] = w.agents ?? [];
+  return first ? [first, ...rest.filter((a) => a.deep)].slice(0, 3) : [];
+};
+
+const agentTip = (a) =>
+  [
+    `${a.label} · ${a.title || "untitled"}`,
+    a.id,
+    `started in ${a.cwd}`,
+    `first mentioned this worktree ${ago(a.seenAt)} ago`,
+  ].join("\n");
+
+async function resume(a, e) {
+  if (
+    await act("agent-resume", { agent: a.agent, id: a.id }, "ag:" + a.id, e)
+  ) {
+    showToast(`Opening ${a.label} session`);
+  }
+}
+
+function agentItems(w) {
+  const picks = agentPicks(w);
+  if (!picks.length) return [];
+  return [
+    ...picks.map((a) => ({
+      label: `Resume ${a.label} session`,
+      sub: `${a.title || a.id.slice(0, 8)} · ${ago(a.seenAt)}`,
+      fn: (e) => resume(a, e),
+    })),
+    { label: "Copy session ID", fn: (e) => copy(e, picks[0].id, "ctx") },
+    {
+      label: "Copy resume command",
+      fn: (e) => copy(e, picks[0].command, "ctx", "resume command"),
+    },
+    "-",
   ];
 }
 
@@ -2079,6 +2120,15 @@ async function confirmDiscard() {
           showRepo}<span class="rp">{w.repo}</span>{/if}{w.branch}{#if
           renamed(w)}<span class="rb">{renamed(w)}</span>{/if}{#if
           dirName(w)}<span class="dir">{dirName(w)}</span>{/if}</span>
+        <span class="ags">
+          {#if w.agents?.length}
+            {@const a = w.agents[0]}
+            {@const n = w.agents.filter((x) => x.deep).length}
+            <button class="ag" style="--ag: var(--{a.tone})" title={agentTip(a)}
+                    aria-label="Resume {a.label} session {a.title}"
+                    onclick={(e) => resume(a, e)}>{a.glyph}{#if n > 1}<i>{n}</i>{/if}</button>
+          {/if}
+        </span>
         <span class="prc">
           {#if w.pr}
             {@const s = prStatus(w.pr)}
@@ -2370,7 +2420,7 @@ async function confirmDiscard() {
       {#if it === "-"}
         <hr>
       {:else}
-        <button class:dg={it.danger} onclick={(e) => runItem(it, e)}>{it.label}{#if it.kbd}<kbd>{it.kbd}</kbd>{/if}</button>
+        <button class:dg={it.danger} onclick={(e) => runItem(it, e)}>{it.label}{#if it.kbd}<kbd>{it.kbd}</kbd>{/if}{#if it.sub}<small>{it.sub}</small>{/if}</button>
       {/if}
     {/each}
   </div>
@@ -3323,7 +3373,7 @@ select.theme {
 .wt {
   display: grid;
   grid-template-columns:
-    0.75rem 1fr 5rem minmax(5.25rem, auto) 4.625rem 3.875rem 2.875rem;
+    0.75rem 1fr auto 5rem minmax(5.25rem, auto) 4.625rem 3.875rem 2.875rem;
   align-items: center;
   gap: 0.5rem;
   padding: 0.3125rem 0.625rem;
@@ -3376,6 +3426,28 @@ select.theme {
 }
 .wt .br .dir::after {
   content: ")";
+}
+.ag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.1875rem;
+  height: 1.125rem;
+  min-width: 1.125rem;
+  justify-content: center;
+  padding: 0 0.25rem;
+  border-radius: 999px;
+  font: 0.6875rem var(--mono);
+  color: var(--ag);
+  background: color-mix(in srgb, var(--ag) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ag) 35%, transparent);
+  cursor: pointer;
+}
+.ag:hover {
+  border-color: var(--ag);
+}
+.ag i {
+  font-style: normal;
+  font-size: 0.625rem;
 }
 .prc,
 .ports {
@@ -3741,6 +3813,17 @@ select.theme {
   background: var(--hl);
   color: var(--hlfg);
 }
+.ctx button small {
+  display: block;
+  max-width: 22rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--dim);
+  font: 0.6875rem var(--mono);
+}
+.ctx button:hover small {
+  color: var(--hlfg);
+}
 .ctx button.dg {
   color: var(--danger);
 }
@@ -4049,6 +4132,10 @@ select.theme {
   }
   .wt .ports {
     grid-area: 2 / 3;
+  }
+  .wt .ags {
+    grid-area: 2 / 4;
+    justify-self: start;
   }
   .wt .dirty {
     grid-area: 2 / 5;
