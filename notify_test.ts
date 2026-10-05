@@ -1,6 +1,12 @@
 import { assertEquals } from "@std/assert";
 import { DEFAULTS, type Settings } from "./settings.ts";
-import { createNotify, type InboxStore, memoryInbox } from "./notify.ts";
+import {
+  createNotify,
+  type Ev,
+  fileInbox,
+  type InboxStore,
+  memoryInbox,
+} from "./notify.ts";
 import { fakeExec, repo, worktree } from "./fixtures.ts";
 import type { Pr, Repo, Worktree } from "./types.ts";
 
@@ -215,5 +221,30 @@ Deno.test("notify: only the InboxStore interface is used", async (t) => {
       name,
       () => fn((over) => setup(over, interfaceOnly(memoryInbox()))),
     );
+  }
+});
+
+Deno.test("fileInbox: events, read state and snoozes survive a restart", async () => {
+  const dir = await Deno.makeTempDir();
+  try {
+    const path = `${dir}/roots/x/inbox.json`;
+    const ev = (id: string, at: number) =>
+      ({ id, at, readAt: null, kind: "ci-failed" }) as unknown as Ev;
+    const a = fileInbox(path);
+    assertEquals(await a.load(), { events: [], snoozes: [] });
+    await a.append([ev("1", 1), ev("2", 2), ev("3", 3)]);
+    await a.update(["3"], { readAt: 9 });
+    await a.snooze({ key: "k", at: 4 });
+    await a.snooze({ key: "gone", at: 5 });
+    await a.unsnooze("gone");
+    await a.trim(2);
+    const b = await fileInbox(path).load();
+    assertEquals(b.events.map((e) => [e.id, e.readAt]), [["2", null], [
+      "3",
+      9,
+    ]]);
+    assertEquals(b.snoozes, [{ key: "k", at: 4 }]);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
   }
 });

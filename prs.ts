@@ -60,6 +60,7 @@ export type PrsApi = {
   expire(repo: string): void;
   prError(repo: string): string | null;
   listed(repo: string): boolean;
+  restore(repos: Repo[]): void;
 };
 
 export function createPrs(
@@ -329,6 +330,21 @@ export function createPrs(
     },
     expire: (repo) => void ghNextAt.delete(repo),
     listed: (repo) => prsByRepo.has(repo),
+    // Rebuilds both maps from a snapshot's own rows, so the first publish after
+    // a restart keeps its PR badges until gh answers.
+    restore(repos) {
+      for (const r of repos) {
+        if (!r.prListed) continue;
+        const byBranch = new Map<string, PrSlim>();
+        for (const w of r.worktrees) {
+          if (!w.pr) continue;
+          const { number, url, state, stateSince, ...detail } = w.pr;
+          byBranch.set(w.branch, { number, url, state, stateSince });
+          prDetail.set(`${r.path}#${number}`, detail);
+        }
+        prsByRepo.set(r.path, byBranch);
+      }
+    },
     // A remote GitHub can't find (deleted, renamed, no access) just has no PRs;
     // that's the repo's state, not gh being broken, so it stays off the notice.
     prError: (repo) => {
