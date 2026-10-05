@@ -16,6 +16,7 @@ import {
   hotBackoff,
   isIgnoredPath,
   isLocalRequest,
+  limiter,
   normPath,
   ownerWorktree,
   parseDiffHunks,
@@ -227,6 +228,31 @@ Deno.test("pool handles empty, oversized limit, and never returns holes", async 
   assertEquals(await pool(99, [1, 2], (n) => Promise.resolve(n * 3)), [3, 6]);
   // a limit of 0 must still process every item, not silently return holes
   assertEquals(await pool(0, [1, 2], (n) => Promise.resolve(n * 3)), [3, 6]);
+});
+
+Deno.test("limiter bounds concurrency across calls and frees a slot on throw", async () => {
+  const gh = limiter(2);
+  let live = 0, peak = 0;
+  const job = (ms: number, fail = false) =>
+    gh(async () => {
+      peak = Math.max(peak, ++live);
+      await new Promise((r) => setTimeout(r, ms));
+      live--;
+      if (fail) throw new Error("gh");
+      return ms;
+    });
+  const first = [job(5, true), job(5)];
+  const later = [job(1), job(1), job(1)];
+  const out = await Promise.allSettled([...first, ...later]);
+  assertEquals(out.map((o) => o.status), [
+    "rejected",
+    "fulfilled",
+    "fulfilled",
+    "fulfilled",
+    "fulfilled",
+  ]);
+  assertEquals(peak, 2);
+  assertEquals(live, 0);
 });
 
 // ---- fs-watch classifier ----

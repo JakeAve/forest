@@ -2,7 +2,7 @@ import {
   approvals,
   ciSince,
   ciSummary,
-  pool,
+  limiter,
   type PrCard,
   prCard,
   reviewSince,
@@ -72,6 +72,7 @@ export function createPrs(
   },
 ): PrsApi {
   const { exec } = sh;
+  const gh = limiter(PR_JOBS);
   const prsByRepo = new Map<string, Map<string, PrSlim>>();
   const prDetail = new Map<string, PrDetail>();
   // repo path -> earliest next gh call. Only an OPEN pr can change under us, so a
@@ -152,25 +153,62 @@ export function createPrs(
     };
   }
 
+  async function refreshDetail(repo: string, n: number) {
+    const cardP = fetchCard(repo, n);
+    const out = await exec(repo, [
+      "gh",
+      "pr",
+      "view",
+      String(n),
+      "--json",
+      PR_VIEW_FIELDS,
+    ]).catch((e) => {
+      stats.ghFailTotal++;
+      const first = !ghFailed.has(repo);
+      if (first) {
+        ghFailed.set(repo, ghError(e));
+        console.error(`gh pr view failed in ${repo}:`, e.message);
+      }
+      ghNextAt.set(repo, Date.now() + GH_RETRY_MS[first ? 0 : 1]);
+      return null;
+    });
+    if (out === null) return;
+    const prev = prDetail.get(`${repo}#${n}`);
+    const fields = prDetailFields(
+      JSON.parse(out),
+      await cardP,
+      prev,
+    );
+    if (
+      prev &&
+      JSON.stringify({ ...prev, detailAt: null }) ===
+        JSON.stringify({ ...fields, detailAt: null })
+    ) {
+      return;
+    }
+    prDetail.set(`${repo}#${n}`, { ...fields, detailAt: Date.now() });
+  }
+
   async function refreshPrs(repos: Repo[]) {
     const now = Date.now();
     // no origin remote, no PRs -- ever. The rest run on their own clock.
     const due = repos.filter((r) =>
       r.webUrl && now >= (ghNextAt.get(r.path) ?? 0)
     );
-    const jobs: [string, number][] = [];
-    await pool(PR_JOBS, due, async (r) => {
-      const out = await exec(r.path, [
-        "gh",
-        "pr",
-        "list",
-        "--state",
-        "all",
-        "--limit",
-        "200",
-        "--json",
-        "number,url,headRefName,state,createdAt,closedAt,mergedAt",
-      ]).catch((e) => {
+    await Promise.all(due.map(async (r) => {
+      const out = await gh(() =>
+        exec(r.path, [
+          "gh",
+          "pr",
+          "list",
+          "--state",
+          "all",
+          "--limit",
+          "200",
+          "--json",
+          "number,url,headRefName,state,createdAt,closedAt,mergedAt",
+        ])
+      ).catch((e) => {
         stats.ghFailTotal++;
         const first = !ghFailed.has(r.path);
         if (first) {
@@ -225,47 +263,12 @@ export function createPrs(
       for (const k of prDetail.keys()) {
         if (k.startsWith(`${r.path}#`) && !keep.has(k)) prDetail.delete(k);
       }
-      for (const n of open) jobs.push([r.path, n]);
       ghNextAt.set(
         r.path,
         Date.now() + (open.length ? settings.prPollMs : settings.prIdleMs),
       );
-    });
-    await pool(PR_JOBS, jobs, async ([repo, n]) => {
-      const cardP = fetchCard(repo, n);
-      const out = await exec(repo, [
-        "gh",
-        "pr",
-        "view",
-        String(n),
-        "--json",
-        PR_VIEW_FIELDS,
-      ]).catch((e) => {
-        stats.ghFailTotal++;
-        const first = !ghFailed.has(repo);
-        if (first) {
-          ghFailed.set(repo, ghError(e));
-          console.error(`gh pr view failed in ${repo}:`, e.message);
-        }
-        ghNextAt.set(repo, Date.now() + GH_RETRY_MS[first ? 0 : 1]);
-        return null;
-      });
-      if (out === null) return;
-      const prev = prDetail.get(`${repo}#${n}`);
-      const fields = prDetailFields(
-        JSON.parse(out),
-        await cardP,
-        prev,
-      );
-      if (
-        prev &&
-        JSON.stringify({ ...prev, detailAt: null }) ===
-          JSON.stringify({ ...fields, detailAt: null })
-      ) {
-        return;
-      }
-      prDetail.set(`${repo}#${n}`, { ...fields, detailAt: Date.now() });
-    });
+      await Promise.all(open.map((n) => gh(() => refreshDetail(r.path, n))));
+    }));
   }
 
   // After a user-triggered mutation (update-branch, auto-merge) on one PR, pull
