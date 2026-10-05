@@ -44,6 +44,7 @@ Deno.test("claude line facts: timestamp, cwd, both titles", () => {
     {
       at: Date.parse("2026-10-05T16:00:00.000Z"),
       cwd: "/r/x",
+      branch: undefined,
       title: undefined,
       autoTitle: undefined,
     },

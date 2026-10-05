@@ -1530,7 +1530,7 @@ function sessionActions(w, a) {
 }
 
 function agentItems(w) {
-  if (w.isPrimary) return [];
+  if (w.isPrimary && !w.agents?.length) return [];
   const [a, ...rest] = w.agents ?? [];
   if (!a) return [{ label: "No agent session found", disabled: true }, "-"];
   return [

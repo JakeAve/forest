@@ -5,6 +5,7 @@
 export type Facts = {
   at?: number; // line timestamp, ms
   cwd?: string;
+  branch?: string; // checked out in cwd at this line
   title?: string; // named by the user; wins over autoTitle
   autoTitle?: string;
   prompt?: string; // first one is the fallback title
@@ -58,6 +59,7 @@ export const PROVIDERS: Provider[] = [
     line: (l) => ({
       at: ts(l),
       cwd: str(l, "cwd"),
+      branch: str(l, "gitBranch"),
       title: str(l, "customTitle"),
       autoTitle: str(l, "aiTitle"),
     }),
@@ -79,6 +81,7 @@ export const PROVIDERS: Provider[] = [
     line: (l) => ({
       at: ts(l),
       cwd: str(l, "cwd"),
+      branch: str(l, "branch"), // session_meta's git.branch
       prompt: l.includes('"type":"user_message"')
         ? str(l, "message")
         : undefined,

@@ -1,6 +1,7 @@
 import { assertEquals } from "@std/assert";
 import { newStats } from "./stats.ts";
 import { createStore } from "./store.ts";
+import type { WtKey } from "./sessions.ts";
 import { repo, worktree } from "./fixtures.ts";
 import type { AgentSession, Pr, Procs, Repo, Worktree } from "./types.ts";
 
@@ -15,7 +16,7 @@ const make = (opts?: {
   prFor?: (repo: string, w: Worktree) => Pr | null;
   procs?: Map<string, Procs>;
   prListed?: (repo: string) => boolean;
-  agents?: (wts: string[]) => Map<string, AgentSession[]>;
+  agents?: (wts: WtKey[]) => Map<string, AgentSession[]>;
 }) => {
   const sent: string[] = [];
   const stats = newStats();
@@ -122,8 +123,8 @@ Deno.test("publish does not call onSnapshot when the JSON is unchanged", () => {
   assertEquals(store.byPath.size, 2);
 });
 
-Deno.test("publish asks for agent sessions of linked worktrees only", () => {
-  const asked: string[][] = [];
+Deno.test("publish asks for agent sessions of linked worktrees, and of a main checkout only on a feature branch", () => {
+  const asked: WtKey[][] = [];
   const a = { id: "s1" } as AgentSession;
   const { store } = make({
     agents: (wts) => {
@@ -135,7 +136,14 @@ Deno.test("publish asks for agent sessions of linked worktrees only", () => {
   r.worktrees[0].isPrimary = true;
   store.byPath.set("/r/alpha", r);
   store.publish();
-  assertEquals(asked, [["/r/alpha-feat"]]);
+  assertEquals(asked, [[{ path: "/r/alpha-feat" }]]);
+
+  r.worktrees[0].branch = "feat/x";
+  store.publish();
+  assertEquals(asked.at(-1), [
+    { path: "/r/alpha", branch: "feat/x" },
+    { path: "/r/alpha-feat" },
+  ]);
   assertEquals(
     JSON.parse(store.snapshot())[0].worktrees.map((w: Worktree) => w.agents),
     [[], [a]],

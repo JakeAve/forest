@@ -95,7 +95,9 @@ Deno.test("sessions rank by first mention and mark ones that worked inside", asy
   ]);
   const { s } = make(files);
   await s.refresh();
-  const got = s.forWts([WT, "/h/Repos/app/.worktrees/other"]);
+  const got = s.forWts([{ path: WT }, {
+    path: "/h/Repos/app/.worktrees/other",
+  }]);
   assertEquals(got.has("/h/Repos/app/.worktrees/other"), false);
   assertEquals(
     got.get(WT)!.map((a) => [a.agent, a.id, a.title, a.seenAt, a.deep]),
@@ -127,7 +129,7 @@ Deno.test("refresh tails appended lines and waits for a partial line to finish",
   ]);
   const { s, fs, changes } = make(files);
   await s.refresh();
-  assertEquals(s.forWts([WT]).size, 0);
+  assertEquals(s.forWts([{ path: WT }]).size, 0);
   assertEquals(changes(), 1);
 
   await s.refresh(); // nothing changed: no read, no publish
@@ -138,12 +140,12 @@ Deno.test("refresh tails appended lines and waits for a partial line to finish",
   const tail = line({ timestamp: at(4), content: `cd ${WT}` });
   files.set(claudeFile(A), before + tail.slice(0, 20));
   await s.refresh();
-  assertEquals(s.forWts([WT]).size, 0);
+  assertEquals(s.forWts([{ path: WT }]).size, 0);
 
   files.set(claudeFile(A), before + tail);
   await s.refresh();
   assertEquals(fs.reads.at(-1), tail.length); // only the unconsumed bytes
-  assertEquals(s.forWts([WT]).get(WT)![0].seenAt, ms(4));
+  assertEquals(s.forWts([{ path: WT }]).get(WT)![0].seenAt, ms(4));
 });
 
 Deno.test("a subagent transcript counts for its parent session; a removed file drops out", async () => {
@@ -158,7 +160,7 @@ Deno.test("a subagent transcript counts for its parent session; a removed file d
   ]);
   const { s } = make(files);
   await s.refresh();
-  const [a] = s.forWts([WT]).get(WT)!;
+  const [a] = s.forWts([{ path: WT }]).get(WT)!;
   assertEquals([a.id, a.title, a.startedAt, a.seenAt], [
     A,
     "Parent",
@@ -168,7 +170,7 @@ Deno.test("a subagent transcript counts for its parent session; a removed file d
 
   files.delete(sub);
   await s.refresh();
-  assertEquals(s.forWts([WT]).size, 0);
+  assertEquals(s.forWts([{ path: WT }]).size, 0);
 });
 
 Deno.test("a rewritten (shorter) transcript is rescanned from the start", async () => {
@@ -182,7 +184,7 @@ Deno.test("a rewritten (shorter) transcript is rescanned from the start", async 
   await s.refresh();
   files.set(claudeFile(A), line({ timestamp: at(2), content: "gone" }));
   await s.refresh();
-  assertEquals(s.forWts([WT]).size, 0);
+  assertEquals(s.forWts([{ path: WT }]).size, 0);
 });
 
 Deno.test("shown keeps the earliest, then prefers sessions that worked inside", () => {
@@ -204,4 +206,37 @@ Deno.test("promptTitle drops tagged blocks and collapses whitespace", () => {
     ),
     "For the cards: fix them",
   );
+});
+
+Deno.test("a main checkout on a branch matches sessions that ran in it on that branch", async () => {
+  const MAIN = "/h/Repos/app";
+  const files = new Map([
+    // ran in the checkout on feat/x from 10:03: a match
+    [
+      claudeFile(A),
+      line({ cwd: MAIN, gitBranch: "main", timestamp: at(1) }) +
+      line({ cwd: MAIN, gitBranch: "feat/x", timestamp: at(3) }),
+    ],
+    // names the checkout but ran elsewhere, and feat/x only in another repo
+    [
+      claudeFile(B),
+      line({ cwd: "/h/Repos/other", gitBranch: "feat/x", timestamp: at(0) }) +
+      line({ timestamp: at(2), content: `cd ${MAIN}` }),
+    ],
+    [
+      codexFile,
+      line({
+        timestamp: at(5),
+        type: "session_meta",
+        payload: { id: C, cwd: `${MAIN}/src`, git: { branch: "feat/x" } },
+      }),
+    ],
+  ]);
+  const { s } = make(files);
+  await s.refresh();
+  const got = s.forWts([{ path: MAIN, branch: "feat/x" }]).get(MAIN)!;
+  assertEquals(got.map((a) => [a.id, a.seenAt, a.deep]), [
+    [A, ms(3), true],
+    [C, ms(5), true],
+  ]);
 });

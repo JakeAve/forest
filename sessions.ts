@@ -27,7 +27,13 @@ type Scan = {
   autoTitle: string;
   prompt: string;
   seen: Map<string, number>; // path under home -> first mention
+  ran: Map<string, number>; // `${cwd}\n${branch}` -> first line there
 };
+
+// What a worktree is matched by: its path, or for a main checkout on a
+// feature branch, sessions that ran inside it on that branch (every session
+// in the repo names the main checkout's path).
+export type WtKey = { path: string; branch?: string };
 
 export const MAX_SHOWN = 5;
 
@@ -89,6 +95,8 @@ export function createSessions(
     const at = s.at || s.mtime;
     s.startedAt ||= at;
     if (f.cwd && !s.cwd) s.cwd = f.cwd;
+    const ran = f.cwd && f.branch && `${f.cwd}\n${f.branch}`;
+    if (ran && !s.ran.has(ran)) s.ran.set(ran, at);
     if (f.title) s.title = f.title;
     if (f.autoTitle) s.autoTitle = f.autoTitle;
     if (f.prompt && !s.prompt) s.prompt = promptTitle(f.prompt);
@@ -116,6 +124,7 @@ export function createSessions(
         autoTitle: "",
         prompt: "",
         seen: new Map(),
+        ran: new Map(),
       };
       scans.set(path, s);
     }
@@ -183,8 +192,8 @@ export function createSessions(
 
     // wt path -> sessions that mention it, earliest mention first. A session
     // is all its files: the transcript plus any subagent transcripts.
-    forWts(wts: string[]): Map<string, AgentSession[]> {
-      const key = `${version}\n${wts.join("\n")}`;
+    forWts(wts: WtKey[]): Map<string, AgentSession[]> {
+      const key = `${version}\n${JSON.stringify(wts)}`;
       if (memo.key === key) return memo.value;
       const main = new Map<string, Scan>(); // agent:id -> earliest file
       for (const s of scans.values()) {
@@ -193,17 +202,30 @@ export function createSessions(
         if (!m || s.startedAt < m.startedAt) main.set(k, s);
       }
       const out = new Map<string, AgentSession[]>();
-      for (const wt of wts) {
+      const under = (p: string, wt: string) =>
+        p === wt || p.startsWith(wt + "/");
+      for (const { path: wt, branch } of wts) {
         const first = new Map<string, number>();
         const deep = new Set<string>();
+        const hit = (k: string, at: number) => {
+          if (at < (first.get(k) ?? Infinity)) first.set(k, at);
+        };
         for (const s of scans.values()) {
           const k = `${s.p.agent}:${s.id}`;
-          if (s.cwd === wt || s.cwd.startsWith(wt + "/")) deep.add(k);
+          if (branch) {
+            for (const [ran, at] of s.ran) {
+              const [cwd, b] = ran.split("\n");
+              if (b !== branch || !under(cwd, wt)) continue;
+              deep.add(k);
+              hit(k, at);
+            }
+            continue;
+          }
+          if (under(s.cwd, wt)) deep.add(k);
           for (const [path, at] of s.seen) {
-            const inside = path.startsWith(wt + "/");
-            if (!inside && path !== wt) continue;
-            if (inside) deep.add(k);
-            if (at < (first.get(k) ?? Infinity)) first.set(k, at);
+            if (!under(path, wt)) continue;
+            if (path !== wt) deep.add(k);
+            hit(k, at);
           }
         }
         if (!first.size) continue;
