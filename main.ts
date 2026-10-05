@@ -18,6 +18,7 @@ const {
   stats,
   sse,
   log,
+  cache,
   watcher,
   autoRebase,
   notify,
@@ -75,6 +76,7 @@ setInterval(() => {
   stats.subprocessPeak = stats.subprocessInflight; // children still running
 }, 60_000);
 
+await cache.load();
 watcher.start();
 
 // ---- server ----

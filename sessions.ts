@@ -86,6 +86,7 @@ export function createSessions(
     "g",
   );
   let version = 0;
+  let ready = false; // a first sweep has finished
   let memo = { key: "", value: new Map<string, AgentSession[]>() };
   let infoMemo = { version: -1, value: new Map<string, SessionInfo>() };
 
@@ -209,13 +210,16 @@ export function createSessions(
       }
       changed = await scanTitles(p) || changed;
     }
-    if (changed) {
+    // the first sweep always reports, even empty: it replaces cached badges
+    if (changed || !ready) {
+      ready = true;
       version++;
       onChange();
     }
   }
 
   return {
+    ready: () => ready,
     refresh(): Promise<void> {
       running ??= sweep().finally(() => (running = null));
       return running;

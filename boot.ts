@@ -1,4 +1,5 @@
 import { join } from "@std/path";
+import { createCache } from "./cache.ts";
 import { createExec } from "./exec.ts";
 import { createFiles } from "./files.ts";
 import { createLog } from "./log.ts";
@@ -11,7 +12,7 @@ import { createAutoRebase } from "./autorebase.ts";
 import { createStore } from "./store.ts";
 import { PROVIDERS } from "./agents.ts";
 import { createSessions, denoFs, type SessionFs } from "./sessions.ts";
-import { createNotify, memoryInbox } from "./notify.ts";
+import { createNotify, fileInbox } from "./notify.ts";
 import { createTools } from "./tools.ts";
 import { BW, createRoutes } from "./routes.ts";
 import type { Settings } from "./settings.ts";
@@ -30,6 +31,8 @@ export function boot(opts: {
   const { settings, home, distDir } = opts;
   const dir = join(home, ".forest");
   const root = settings.root.replace(/^~/, home);
+  // what was last seen under this root; another root keeps its own
+  const rootDir = join(dir, "roots", encodeURIComponent(root));
   const stats = newStats();
   const sh = createExec(stats);
   const repo = createRepo({ sh, root });
@@ -40,7 +43,7 @@ export function boot(opts: {
     sh,
     settings,
     sse,
-    inbox: memoryInbox(),
+    inbox: fileInbox(join(rootDir, "inbox.json")),
     now: Date.now,
     os: opts.notifyOs ?? Deno.build.os === "darwin",
     log: (o) => log.line(o),
@@ -63,12 +66,19 @@ export function boot(opts: {
     prError: (r) => prs.prError(r),
     procs: () => ports.current(),
     prListed: (r) => prs.listed(r),
-    agents: (wts) => sessions.forWts(wts),
+    agents: (wts) => sessions.ready() ? sessions.forWts(wts) : null,
     onSnapshot: (j) => {
       sse.broadcast(j);
       notify.observe(j);
+      cache.save(j);
     },
     stats,
+  });
+  const cache = createCache({
+    path: join(rootDir, "cache.json"),
+    store,
+    prs,
+    log: (o) => log.line(o),
   });
   const watchFs = opts.watchFs ??
     ((r: string) => Deno.watchFs(r, { recursive: true }));
@@ -127,6 +137,7 @@ export function boot(opts: {
     stats,
     sse,
     log,
+    cache,
     watcher,
     autoRebase,
     notify,

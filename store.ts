@@ -39,7 +39,8 @@ export function createStore(
     prError?: (repo: string) => string | null;
     prListed?: (repo: string) => boolean;
     procs: () => Map<string, Procs>;
-    agents?: (wts: WtKey[]) => Map<string, AgentSession[]>;
+    // null until sessions have loaded: rows keep the agents they last had
+    agents?: (wts: WtKey[]) => Map<string, AgentSession[]> | null;
     onSnapshot: (json: string) => void;
     stats: Stats;
   },
@@ -48,6 +49,8 @@ export function createStore(
   const known = new Map<string, string>(); // wt path -> repo main path
   const repoPaths = new Map<string, string>();
   let snapshot = "[]";
+  // wt path -> agents last published; a recomputed row arrives without any
+  let held = new Map<string, AgentSession[]>();
 
   return {
     byPath,
@@ -90,7 +93,10 @@ export function createStore(
           )
         ),
       );
-      for (const w of wtByPath.values()) w.agents = byWt.get(w.path) ?? [];
+      for (const w of wtByPath.values()) {
+        w.agents = byWt ? byWt.get(w.path) ?? [] : held.get(w.path) ?? w.agents;
+      }
+      held = new Map([...wtByPath].map(([p, w]) => [p, w.agents]));
       for (const [cwd, ps] of procs()) {
         const w = wtByPath.get(ownerWorktree(cwd, wtPaths) ?? "");
         if (w) {

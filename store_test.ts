@@ -16,7 +16,7 @@ const make = (opts?: {
   prFor?: (repo: string, w: Worktree) => Pr | null;
   procs?: Map<string, Procs>;
   prListed?: (repo: string) => boolean;
-  agents?: (wts: WtKey[]) => Map<string, AgentSession[]>;
+  agents?: (wts: WtKey[]) => Map<string, AgentSession[]> | null;
 }) => {
   const sent: string[] = [];
   const stats = newStats();
@@ -148,4 +148,25 @@ Deno.test("publish asks for agent sessions of linked worktrees, and of a main ch
     JSON.parse(store.snapshot())[0].worktrees.map((w: Worktree) => w.agents),
     [[], [a]],
   );
+});
+
+Deno.test("publish keeps a row's agents until sessions have loaded, across a recompute", () => {
+  const a = { id: "s1" } as AgentSession;
+  let loaded: Map<string, AgentSession[]> | null = null;
+  const { store } = make({ agents: () => loaded });
+  const agentsOf = () =>
+    JSON.parse(store.snapshot())[0].worktrees.map((w: Worktree) => w.agents);
+  const cached = mkRepo("alpha", ["/r/alpha", "/r/alpha-feat"]);
+  cached.worktrees[1].agents = [a];
+  store.byPath.set("/r/alpha", cached);
+  store.publish();
+  assertEquals(agentsOf(), [[], [a]]);
+
+  store.byPath.set("/r/alpha", mkRepo("alpha", ["/r/alpha", "/r/alpha-feat"]));
+  store.publish();
+  assertEquals(agentsOf(), [[], [a]]);
+
+  loaded = new Map();
+  store.publish();
+  assertEquals(agentsOf(), [[], []]);
 });

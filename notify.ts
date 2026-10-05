@@ -1,4 +1,5 @@
 import { type Draft, edges, type Facts, facts, snoozeKey } from "./parse.ts";
+import { writeFileAtomic } from "./cache.ts";
 import type { Shell } from "./exec.ts";
 import type { Settings } from "./settings.ts";
 import type { SseApi } from "./sse.ts";
@@ -56,6 +57,35 @@ export function memoryInbox(): InboxStore {
       events = events.slice(Math.max(0, events.length - max));
       return Promise.resolve();
     },
+  };
+}
+
+// memoryInbox, written whole to one file after every change.
+// ponytail: rewrites the file per op; fine at notifyMax rows
+export function fileInbox(path: string): InboxStore {
+  const mem = memoryInbox();
+  let seeded = false;
+  const save = async () =>
+    writeFileAtomic(path, JSON.stringify(await mem.load()));
+  return {
+    async load() {
+      if (!seeded) {
+        seeded = true;
+        const s = await Deno.readTextFile(path).then(JSON.parse).catch(() =>
+          null
+        );
+        if (Array.isArray(s?.events)) await mem.append(s.events);
+        if (Array.isArray(s?.snoozes)) {
+          for (const z of s.snoozes) await mem.snooze(z);
+        }
+      }
+      return mem.load();
+    },
+    append: (evs) => mem.append(evs).then(save),
+    update: (ids, patch) => mem.update(ids, patch).then(save),
+    snooze: (s) => mem.snooze(s).then(save),
+    unsnooze: (key) => mem.unsnooze(key).then(save),
+    trim: (max) => mem.trim(max).then(save),
   };
 }
 

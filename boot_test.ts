@@ -46,6 +46,35 @@ Deno.test("boot wires the real module graph end to end", async () => {
     assertEquals([stats.repos, stats.worktrees, stats.mode], [1, 1, "poll"]);
     const files = await get(`/api/files?wt=${demo}`);
     assertEquals(files.files.map((f: { path: string }) => f.path), ["a.txt"]);
+
+    await app.cache.flush();
+    const again = boot({
+      settings: { ...DEFAULTS, root, watch: false },
+      home,
+      distDir: home,
+      notifyOs: false,
+    });
+    await again.cache.load();
+    const cached = await again.routes(
+      new Request("http://localhost/api/t/snapshot"),
+      info,
+    ).then((r) => r.json());
+    assertEquals(cached[0].worktrees[0].untracked, 1);
+    await again.cache.flush();
+    const other = boot({
+      settings: { ...DEFAULTS, root: join(home, "Elsewhere"), watch: false },
+      home,
+      distDir: home,
+      notifyOs: false,
+    });
+    await other.cache.load();
+    assertEquals(
+      await other.routes(
+        new Request("http://localhost/api/t/snapshot"),
+        info,
+      ).then((r) => r.json()),
+      [],
+    );
   } finally {
     await Deno.remove(home, { recursive: true });
   }
