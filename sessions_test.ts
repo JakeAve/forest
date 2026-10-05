@@ -3,6 +3,7 @@ import { PROVIDERS } from "./agents.ts";
 import {
   createSessions,
   MAX_SHOWN,
+  promptTitle,
   type SessionFs,
   shown,
 } from "./sessions.ts";
@@ -190,4 +191,13 @@ Deno.test("shown keeps the earliest, then prefers sessions that worked inside", 
   assertEquals(out.length, MAX_SHOWN);
   assertEquals(out[0], "s0");
   assertEquals(out.at(-1), `s${MAX_SHOWN + 1}`);
+});
+
+Deno.test("promptTitle drops tagged blocks and collapses whitespace", () => {
+  assertEquals(
+    promptTitle(
+      'For the cards:\n<pasted_content id="5">\nlong <b>paste</b>\n</pasted_content> fix them <br/>',
+    ),
+    "For the cards: fix them",
+  );
 });

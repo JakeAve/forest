@@ -44,6 +44,12 @@ export function shown<T extends [string, number]>(
   return sorted.filter((e) => keep.has(e));
 }
 
+// A prompt as a fallback title: tagged blocks (pasted content, attachments)
+// dropped, whitespace collapsed.
+export const promptTitle = (p: string) =>
+  p.replace(/<([\w-]+)[^>]*>[\s\S]*?<\/\1>/g, " ").replace(/<[^>]*>/g, " ")
+    .replace(/\s+/g, " ").trim().slice(0, 80);
+
 const dec = new TextDecoder();
 
 const concat = (...parts: Uint8Array[]) => {
@@ -85,7 +91,7 @@ export function createSessions(
     if (f.cwd && !s.cwd) s.cwd = f.cwd;
     if (f.title) s.title = f.title;
     if (f.autoTitle) s.autoTitle = f.autoTitle;
-    if (f.prompt && !s.prompt) s.prompt = f.prompt.trim().slice(0, 80);
+    if (f.prompt && !s.prompt) s.prompt = promptTitle(f.prompt);
     for (const m of l.matchAll(pathRx)) {
       const path = m[0].replace(/\.+$/, "");
       if (!s.seen.has(path)) s.seen.set(path, at);

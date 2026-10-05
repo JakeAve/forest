@@ -1385,6 +1385,9 @@ const fmtAt = (ms) =>
     minute: "2-digit",
   });
 
+// uuid v7 ids (Codex) start with a timestamp, so their tail tells them apart.
+const shortId = (id) => (id[14] === "7" ? id.slice(-8) : id.slice(0, 8));
+
 const clip = (t, n = 48) => (t.length > n ? t.slice(0, n - 1) + "…" : t);
 
 async function resume(a, e) {
@@ -1407,7 +1410,7 @@ function sessionItems(w) {
       agent: a,
       label: clip(a.title || `Untitled ${a.label} session`),
       tag: many && (i === 0 ? "created" : a.deep ? "worked here" : "mentioned"),
-      sub: `${a.id.slice(0, 8)} · ${fmtAt(a.seenAt)}`,
+      sub: `${shortId(a.id)} · ${fmtAt(a.seenAt)}`,
       tip: agentTip(a),
       fn: (e) => resume(a, e),
     })),
@@ -1437,7 +1440,7 @@ function agentItems(w) {
     {
       agent: a,
       label: `Resume ${a.label} session`,
-      sub: clip(a.title || a.id.slice(0, 8)),
+      sub: clip(a.title || shortId(a.id)),
       tip: agentTip(a),
       fn: (e) => resume(a, e),
     },
