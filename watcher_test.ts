@@ -52,10 +52,12 @@ function make(opts: { openFails?: (call: number) => boolean } = {}) {
     computeNull: false,
     recomputeNull: false,
     gate: null as Promise<void> | null,
+    gateOnly: null as string | null,
     computes: [] as string[],
     recomputes: [] as string[][],
     repoDirs: 0,
     pushes: [] as string[],
+    prCalls: [] as string[][],
     logs: [] as Record<string, unknown>[],
     emits: [] as [string, string][],
     streams: [] as Stream[],
@@ -70,7 +72,7 @@ function make(opts: { openFails?: (call: number) => boolean } = {}) {
     },
     computeRepo: async (_name, path) => {
       h.computes.push(path);
-      if (h.gate) await h.gate;
+      if (h.gate && (!h.gateOnly || h.gateOnly === path)) await h.gate;
       return h.computeNull ? null : structuredClone(truth.get(path) ?? null);
     },
     recomputeWorktrees: async (r, want) => {
@@ -84,7 +86,10 @@ function make(opts: { openFails?: (call: number) => boolean } = {}) {
   const w = createWatcher({
     repo,
     prs: {
-      refreshPrs: () => Promise.resolve(),
+      refreshPrs: (rs) => {
+        h.prCalls.push(rs.map((r) => r.path));
+        return Promise.resolve();
+      },
       pushSoon: (r) => void h.pushes.push(r),
     },
     ports: { refresh: () => Promise.resolve() },
@@ -294,6 +299,21 @@ Deno.test("30 s under a quarter of the threshold exits storm and marks root agai
   assert(h.stats.watchStormMsTotal > 0);
   await tick(time, 300);
   assertEquals(h.stats.watchRootRescansTotal, 2);
+});
+
+Deno.test("boot refreshes each repo's PRs as the sweep reads it, later polls all at once", async () => {
+  const h = make();
+  let open!: () => void;
+  h.gate = new Promise((r) => (open = r));
+  h.gateOnly = "/r/other";
+  const polled = h.w.poll();
+  await new Promise((r) => setTimeout(r, 0));
+  assertEquals(h.prCalls, [["/r/forest"]]);
+  open();
+  await polled;
+  assertEquals(h.prCalls, [["/r/forest"], ["/r/other"]]);
+  await h.w.poll();
+  assertEquals(h.prCalls.at(-1), ["/r/forest", "/r/other"]);
 });
 
 Deno.test("sweepAll while sweeping queues exactly one follow-up sweep", async () => {

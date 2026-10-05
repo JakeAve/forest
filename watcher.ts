@@ -126,6 +126,7 @@ export function createWatcher(
   // mutated a worktree this sweep already read, so it must NOT join: it gets a
   // sweep that starts after the current one ends. At most one is queued.
   let sweeping: Promise<void> | null = null;
+  const bootPrs: Promise<void>[] = [];
   let queuedSweep: Promise<void> | null = null;
 
   function sweepAll(): Promise<void> {
@@ -156,7 +157,15 @@ export function createWatcher(
           // map here, so an early event may classify as unknown and force one
           // extra root rescan — it self-corrects on the next publish.
           if (!booted) {
-            if (r) repoByPath.set(r.path, r);
+            if (r) {
+              repoByPath.set(r.path, r);
+              bootPrs.push(
+                prs.refreshPrs([r]).catch((e) => {
+                  stats.errorsTotal++;
+                  console.error(e);
+                }),
+              );
+            }
             sse.setStatus({ done: ++done });
             store.publish();
           }
@@ -188,8 +197,9 @@ export function createWatcher(
     const repos = [...repoByPath.values()];
     // PRs are decoration; the repo list is the content. Start the gh fan-out but
     // paint without it — at boot that is ~half the wait, and it is the only stage
-    // that depends on the network. The PR tags land on the second publish.
-    const prsDone = prs.refreshPrs(repos);
+    // that depends on the network. The PR tags land on the second publish. At
+    // boot each repo's fan-out already started the moment the sweep read it.
+    const prsDone = booted ? prs.refreshPrs(repos) : Promise.all(bootPrs);
     store.publish();
     if (!booted) sse.setStatus({ phase: "prs" });
     await prsDone;
