@@ -1,4 +1,4 @@
-import { assertEquals, assertThrows } from "@std/assert";
+import { assert, assertEquals, assertThrows } from "@std/assert";
 import {
   contrast,
   mergeInclude,
@@ -17,6 +17,14 @@ Deno.test("jsonc: comments and trailing commas stripped, strings intact", () => 
   }`;
   assertEquals(parseThemeText(text), { url: "http://x", list: [1, 2] });
   assertEquals(stripJsonc(`{"a": "b,]"}`), `{"a": "b,]"}`);
+  assertEquals(stripJsonc(`[1, /* c */ ]`), `[1  ]`);
+});
+
+Deno.test("jsonc: linear on a 1MB package.json", () => {
+  const text = "[" + "[1],".repeat(250_000) + "]";
+  const t0 = performance.now();
+  assertEquals(JSON.parse(stripJsonc(text)).length, 250_000);
+  assert(performance.now() - t0 < 1000);
 });
 
 Deno.test("chain picks first present key", () => {
