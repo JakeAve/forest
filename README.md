@@ -60,11 +60,12 @@ together. Right-click a repo for new worktree.
 A badge on the row names the coding agent session that created the worktree.
 Forest finds it by reading agent transcripts (`~/.claude/projects`,
 `~/.codex/sessions`) for the earliest mention of the worktree's path; a count on
-the badge means several sessions worked inside it. Click the badge, or
-right-click and pick Resume, to open the session in its desktop app
-(`claude://resume`, `codex://threads/`). The menu also copies the session ID or
-a `claude --resume` / `codex resume` command for a terminal. Another agent is
-one entry in `PROVIDERS` in `agents.ts`.
+the badge means several sessions worked inside it. Click the badge to list every
+session that mentions the worktree, most likely creator first, and pick one to
+open it in its desktop app (`claude://resume`, `codex://threads/`); right-click
+resumes the most likely one directly. The menu also copies the session ID or a
+`claude --resume` / `codex resume` command for a terminal. Another agent is one
+entry in `PROVIDERS` in `agents.ts`.
 
 Auto-rebase keeps a worktree current with `origin/HEAD` on a timer
 (`autoRebaseMs`). A branch with an open PR is updated on GitHub, the same

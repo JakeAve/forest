@@ -1094,6 +1094,8 @@ async function removeWts(wts, force) {
 }
 
 let menuReturn = null;
+let opened = $state(null); // the agent session just resumed, for its toast
+let openedT;
 
 async function openMenu(e, items, viaKey) {
   e.preventDefault();
@@ -1101,8 +1103,8 @@ async function openMenu(e, items, viaKey) {
   const box = e.currentTarget.getBoundingClientRect();
   menuReturn = viaKey ? e.currentTarget : null;
   menu = {
-    x: e.clientX ?? Math.round(box.left + 16),
-    y: e.clientY ?? Math.round(box.bottom),
+    x: (!viaKey && e.clientX) || Math.round(box.left + 16),
+    y: (!viaKey && e.clientY) || Math.round(box.bottom),
     items: trimSeps(items.filter(Boolean)),
   };
   await tick();
@@ -1362,12 +1364,6 @@ function wtItems(w, solo = false) {
   ];
 }
 
-// The earliest session (likely the creator), then others that worked inside.
-const agentPicks = (w) => {
-  const [first, ...rest] = w.agents ?? [];
-  return first ? [first, ...rest.filter((a) => a.deep)].slice(0, 3) : [];
-};
-
 const agentTip = (a) =>
   [
     `${a.label} · ${a.title || "untitled"}`,
@@ -1376,27 +1372,83 @@ const agentTip = (a) =>
     `first mentioned this worktree ${ago(a.seenAt)} ago`,
   ].join("\n");
 
+const badgeTip = (w) =>
+  `${w.agents[0].label} · ${w.agents[0].title || "untitled"}\n${
+    w.agents.length === 1 ? "1 session" : `${w.agents.length} sessions`
+  }, click to view`;
+
+const fmtAt = (ms) =>
+  new Date(ms).toLocaleString([], {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+
+const clip = (t, n = 48) => (t.length > n ? t.slice(0, n - 1) + "…" : t);
+
 async function resume(a, e) {
   if (
     await act("agent-resume", { agent: a.agent, id: a.id }, "ag:" + a.id, e)
   ) {
-    showToast(`Opening ${a.label} session`);
+    opened = a;
+    clearTimeout(openedT);
+    openedT = setTimeout(() => (opened = null), settings?.toastMs ?? 7000);
   }
 }
 
-function agentItems(w) {
-  const picks = agentPicks(w);
-  if (!picks.length) return [];
+// Earliest mention first: the first is most likely the session that created it.
+function sessionItems(w) {
+  const all = w.agents ?? [];
+  const many = all.length > 1;
   return [
-    ...picks.map((a) => ({
-      label: `Resume ${a.label} session`,
-      sub: `${a.title || a.id.slice(0, 8)} · ${ago(a.seenAt)}`,
+    { head: many ? "Agent sessions · most likely first" : "Agent session" },
+    ...all.map((a, i) => ({
+      agent: a,
+      label: clip(a.title || `Untitled ${a.label} session`),
+      tag: many && (i === 0 ? "created" : a.deep ? "worked here" : "mentioned"),
+      sub: `${a.id.slice(0, 8)} · ${fmtAt(a.seenAt)}`,
+      tip: agentTip(a),
       fn: (e) => resume(a, e),
     })),
-    { label: "Copy session ID", fn: (e) => copy(e, picks[0].id, "ctx") },
+    "-",
+    {
+      label: many ? `Copy ${all.length} session IDs` : "Copy session ID",
+      fn: (e) =>
+        copy(
+          e,
+          all.map((a) => a.id).join("\n"),
+          "ctx",
+          many ? `${all.length} session IDs` : all[0].id,
+        ),
+    },
     {
       label: "Copy resume command",
-      fn: (e) => copy(e, picks[0].command, "ctx", "resume command"),
+      fn: (e) => copy(e, all[0].command, "ctx", "resume command"),
+    },
+  ];
+}
+
+function agentItems(w) {
+  if (w.isPrimary) return [];
+  const [a, ...rest] = w.agents ?? [];
+  if (!a) return [{ label: "No agent session found", disabled: true }, "-"];
+  return [
+    {
+      agent: a,
+      label: `Resume ${a.label} session`,
+      sub: clip(a.title || a.id.slice(0, 8)),
+      tip: agentTip(a),
+      fn: (e) => resume(a, e),
+    },
+    rest.length > 0 && {
+      label: `Agent sessions (${rest.length + 1})…`,
+      fn: (e) => openMenu(e, sessionItems(w)),
+    },
+    { label: "Copy session ID", fn: (e) => copy(e, a.id, "ctx") },
+    {
+      label: "Copy resume command",
+      fn: (e) => copy(e, a.command, "ctx", "resume command"),
     },
     "-",
   ];
@@ -2124,9 +2176,9 @@ async function confirmDiscard() {
           {#if w.agents?.length}
             {@const a = w.agents[0]}
             {@const n = w.agents.filter((x) => x.deep).length}
-            <button class="ag" style="--ag: var(--{a.tone})" title={agentTip(a)}
-                    aria-label="Resume {a.label} session {a.title}"
-                    onclick={(e) => resume(a, e)}>{a.glyph}{#if n > 1}<i>{n}</i>{/if}</button>
+            <button class="ag" style="--ag: var(--{a.tone})" aria-haspopup="menu"
+                    title={badgeTip(w)}
+                    onclick={(e) => openMenu(e, sessionItems(w), e.detail === 0)}>{a.glyph}{#if n > 1}<i>{n}</i>{/if}</button>
           {/if}
         </span>
         <span class="prc">
@@ -2419,8 +2471,13 @@ async function confirmDiscard() {
     {#each menu?.items ?? [] as it, i (i)}
       {#if it === "-"}
         <hr>
+      {:else if it.head}
+        <div class="grp">{it.head}</div>
       {:else}
-        <button class:dg={it.danger} onclick={(e) => runItem(it, e)}>{it.label}{#if it.kbd}<kbd>{it.kbd}</kbd>{/if}{#if it.sub}<small>{it.sub}</small>{/if}</button>
+        <button class:dg={it.danger} disabled={it.disabled} title={it.tip}
+                onclick={(e) => runItem(it, e)}>{#if it.agent}<span class="ag"
+                style="--ag: var(--{it.agent.tone})">{it.agent.glyph}</span>{/if}{it.label}{#if
+                it.tag}<span class="mtag" class:lead={it.tag === "created"}>{it.tag}</span>{/if}{#if it.kbd}<kbd>{it.kbd}</kbd>{/if}{#if it.sub}<small>{it.sub}</small>{/if}</button>
       {/if}
     {/each}
   </div>
@@ -2605,6 +2662,13 @@ async function confirmDiscard() {
     {/each}
     {#if toasts.length > 3}
       <button class="toast" onclick={() => inboxEl.showPopover()}>+{toasts.length - 3} more</button>
+    {/if}
+    {#if opened}
+      <button class="toast" onclick={(e) => {
+        copy(e, opened.command, "ctx", "resume command");
+        opened = null;
+      }}>Opened {clip(opened.title || "session", 40)} in {opened.label}
+        <span class="dim">· click to copy resume command</span></button>
     {/if}
     {#if toast}
       <div class="toast" onclick={() => (toast = "")} role="presentation">
@@ -3812,6 +3876,34 @@ select.theme {
 .ctx button:not(.btn):hover {
   background: var(--hl);
   color: var(--hlfg);
+}
+.ctx .grp {
+  padding: 0.3125rem 0.625rem 0.125rem;
+  color: var(--dimmer);
+  font-size: 0.6875rem;
+}
+.ctx button:disabled,
+.ctx button:disabled:hover {
+  background: none;
+  color: var(--dimmer);
+  cursor: default;
+}
+.ctx button .ag {
+  margin-right: 0.375rem;
+  cursor: inherit;
+}
+.mtag {
+  margin-left: 0.375rem;
+  padding: 0 0.375rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--dim);
+  font: 0.625rem var(--mono);
+}
+.mtag.lead {
+  color: var(--acc);
+  border-color: color-mix(in srgb, var(--acc) 35%, transparent);
+  background: color-mix(in srgb, var(--acc) 10%, transparent);
 }
 .ctx button small {
   display: block;
