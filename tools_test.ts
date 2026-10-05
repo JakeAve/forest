@@ -82,12 +82,13 @@ Deno.test("link returns candidates for an ambiguous wt selector", async () => {
     () => null,
     (e) => e,
   );
-  const out = t.toolError(e) as { error: string; candidates: Worktree[] };
-  assertEquals(out.error, "ambiguous worktree");
-  assertEquals(out.candidates.map((w) => w.path), [
-    "/r/forest-a",
-    "/r/forest-b",
-  ]);
+  assertEquals(t.toolError(e), {
+    error: "ambiguous worktree",
+    candidates: [
+      { repo: "forest", branch: "feat-a", path: "/r/forest-a" },
+      { repo: "forest", branch: "feat-b", path: "/r/forest-b" },
+    ],
+  });
 
   const miss = await t.callTool("link", { wt: "zzz" }).then(
     () => null,

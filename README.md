@@ -141,10 +141,10 @@ back.
 The daemon exposes the same data read-only to agents, over plain
 `GET /api/t/<name>?k=v` and over MCP at `/mcp`. Nothing here writes; a `wt` is
 any unique substring of a branch or repo name (or a full path), and an ambiguous
-one comes back as an error listing the candidates (a 400 over `/api/t/`, a tool
-error over MCP). `wt` also accepts any path inside a worktree, `~/…` included.
-`q` is looser: it fuzzy-matches like the UI filters (branch and repo name for
-`wts`, file path for `files`).
+one comes back as an error listing the candidates (`repo`, `branch`, `path`) (a
+400 over `/api/t/`, a tool error over MCP). `wt` also accepts any path inside a
+worktree, `~/…` included. `q` is looser: it fuzzy-matches like the UI filters
+(branch and repo name for `wts`, file path for `files`).
 
 | tool       | params                                  | returns                    |
 | ---------- | --------------------------------------- | -------------------------- |

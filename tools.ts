@@ -55,7 +55,12 @@ export function createTools(deps: {
     const e = new ToolError(
       hit.candidates.length ? "ambiguous worktree" : "no worktree matches",
     );
-    e.candidates = hit.candidates;
+    // enough to pick one and retry, not each worktree's whole row
+    e.candidates = hit.candidates.map(({ repo, branch, path }) => ({
+      repo,
+      branch,
+      path,
+    }));
     throw e;
   }
 
