@@ -1728,6 +1728,9 @@ async function applyTheme(name, save = true) {
   if (resolved.dark !== null) {
     st.setProperty("color-scheme", resolved.dark ? "dark" : "light");
   }
+  try {
+    localStorage.setItem("forest-theme", JSON.stringify(resolved));
+  } catch {}
   theme = name;
   if (save) saveLayout();
 }
