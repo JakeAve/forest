@@ -120,6 +120,11 @@ export function procsByCwd(
   return byCwd;
 }
 
+// How sure we are a session made a worktree, given its place in the list
+// (earliest mention first) and whether it worked inside.
+export const sessionTag = (i: number, n: number, deep: boolean) =>
+  n < 2 ? "" : i === 0 ? "created" : deep ? "worked here" : "mentioned";
+
 export function ownerWorktree(
   cwd: string,
   paths: string[],

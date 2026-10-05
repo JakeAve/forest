@@ -14,6 +14,7 @@ import {
   prStatus,
   rawUrl,
   removeSummary,
+  sessionTag,
   snoozeKey,
   TREE_CAP,
   treeRows,
@@ -1402,16 +1403,46 @@ function wtItems(w, solo = false) {
   ];
 }
 
+// Per-agent label, glyph and tone come from the server, so the UI names no
+// agent itself.
+let agentMeta = $state({});
+fetch("/api/agents").then((r) => r.json()).then((m) => {
+  agentMeta = Object.fromEntries(m.map((x) => [x.agent, x]));
+});
+
+// The snapshot carries slim sessions; the rest (cwd, link, command) is
+// fetched per worktree as its menu opens, so a later copy needs no await.
+let details = $state({});
+const detailsFor = {};
+const sKey = (a) => `${a.agent}:${a.id}`;
+const full = (a) => ({
+  label: a.agent,
+  glyph: "•",
+  tone: "dim",
+  ...agentMeta[a.agent],
+  ...details[sKey(a)],
+  ...a,
+});
+
+function loadDetails(w) {
+  if ((w.agents ?? []).every((a) => details[sKey(a)])) return Promise.resolve();
+  return (detailsFor[w.path] ??= fetch(
+    `/api/t/sessions?wt=${encodeURIComponent(w.path)}`,
+  ).then((r) => r.json()).then((list) => {
+    for (const x of list) details[sKey(x)] = x;
+  }).catch(() => {}).finally(() => delete detailsFor[w.path]));
+}
+
 const agentTip = (a) =>
   [
     `${a.label} · ${a.title || "untitled"}`,
     a.id,
-    `started in ${a.cwd}`,
+    a.cwd && `started in ${a.cwd}`,
     `first mentioned this worktree ${ago(a.seenAt)} ago`,
-  ].join("\n");
+  ].filter(Boolean).join("\n");
 
 const badgeTip = (w) =>
-  `${w.agents[0].label} · ${w.agents[0].title || "untitled"}\n${
+  `${full(w.agents[0]).label} · ${w.agents[0].title || "untitled"}\n${
     w.agents.length === 1 ? "1 session" : `${w.agents.length} sessions`
   }, click to view`;
 
@@ -1426,7 +1457,7 @@ const fmtAt = (ms) =>
 // uuid v7 ids (Codex) start with a timestamp, so their tail tells them apart.
 const shortId = (id) => (id[14] === "7" ? id.slice(-8) : id.slice(0, 8));
 
-const clip = (t, n = 48) => (t.length > n ? t.slice(0, n - 1) + "…" : t);
+const clip = (t = "", n = 48) => (t.length > n ? t.slice(0, n - 1) + "…" : t);
 
 async function resume(a, e) {
   if (
@@ -1451,32 +1482,37 @@ async function drill(items, e, session = null) {
   if (e?.detail === 0) menuEl?.querySelector("button:not(:disabled)")?.focus();
 }
 
-const sessionTag = (w, a) => {
-  const i = w.agents.indexOf(a);
-  return w.agents.length < 2
-    ? ""
-    : i === 0
-    ? "created"
-    : a.deep
-    ? "worked here"
-    : "mentioned";
-};
+const tagOf = (w, a) =>
+  sessionTag(
+    w.agents.findIndex((x) => sKey(x) === sKey(a)),
+    w.agents.length,
+    a.deep,
+  );
+
+async function showActions(w, a, e) {
+  await loadDetails(w);
+  drill(sessionActions(w, a), e, a);
+}
 
 // Earliest mention first: the first is most likely the session that created it.
 function sessionItems(w) {
+  loadDetails(w);
   const all = w.agents ?? [];
   const many = all.length > 1;
   return [
     { head: many ? "Agent sessions · most likely first" : "Agent session" },
-    ...all.map((a) => ({
-      agent: a,
-      label: clip(a.title || `Untitled ${a.label} session`),
-      tag: sessionTag(w, a),
-      sub: `${shortId(a.id)} · ${fmtAt(a.seenAt)}`,
-      tip: agentTip(a),
-      fn: (e) => resume(a, e),
-      more: (e) => drill(sessionActions(w, a), e, a),
-    })),
+    ...all.map((s) => {
+      const a = full(s);
+      return {
+        agent: a,
+        label: clip(a.title || `Untitled ${a.label} session`),
+        tag: tagOf(w, a),
+        sub: `${shortId(a.id)} · ${fmtAt(a.seenAt)}`,
+        tip: agentTip(a),
+        fn: (e) => resume(a, e),
+        more: (e) => showActions(w, s, e),
+      };
+    }),
     "-",
     {
       label: many ? `Copy ${all.length} session IDs` : "Copy session ID",
@@ -1491,8 +1527,9 @@ function sessionItems(w) {
   ];
 }
 
-function sessionActions(w, a) {
-  const tag = sessionTag(w, a);
+function sessionActions(w, s) {
+  const a = full(s);
+  const tag = tagOf(w, a);
   return [
     {
       agent: a,
@@ -1524,15 +1561,17 @@ function sessionActions(w, a) {
       label: "Copy resume link",
       kbd: kbdOf("session-copy-link"),
       sub: clip(a.url, 56),
-      fn: (e) => copy(e, a.url, "ctx", "resume link"),
+      fn: (e) => copy(e, full(a).url, "ctx", "resume link"),
     },
   ];
 }
 
 function agentItems(w) {
   if (w.isPrimary && !w.agents?.length) return [];
-  const [a, ...rest] = w.agents ?? [];
-  if (!a) return [{ label: "No agent session found", disabled: true }, "-"];
+  const [first, ...rest] = w.agents ?? [];
+  if (!first) return [{ label: "No agent session found", disabled: true }, "-"];
+  loadDetails(w);
+  const a = full(first);
   return [
     {
       agent: a,
@@ -1547,18 +1586,16 @@ function agentItems(w) {
       kbd: w === selWt && kbdOf("agent-sessions"),
       keep: true,
       fn: (e) =>
-        menu
-          ? drill(
-            rest.length ? sessionItems(w) : sessionActions(w, a),
-            e,
-            rest.length ? null : a,
-          )
-          : openSessions(w),
+        !menu
+          ? openSessions(w)
+          : rest.length
+          ? drill(sessionItems(w), e)
+          : showActions(w, first, e),
     },
     { label: "Copy session ID", fn: (e) => copy(e, a.id, "ctx") },
     {
       label: "Copy resume link",
-      fn: (e) => copy(e, a.url, "ctx", "resume link"),
+      fn: (e) => copy(e, full(a).url, "ctx", "resume link"),
     },
     "-",
   ];
@@ -1848,7 +1885,10 @@ const COMMANDS = [
     section: "Agent sessions",
     keys: "alt+cmd+a",
     when: () => liveWt()?.agents?.length,
-    run: (e) => resume(selWt.agents[0], e),
+    run: (e) => {
+      loadDetails(selWt);
+      resume(selWt.agents[0], e);
+    },
   },
   {
     id: "session-terminal",
@@ -1872,7 +1912,7 @@ const COMMANDS = [
     section: "Agent sessions",
     keys: "l",
     when: menuSession,
-    run: (e) => onSession((a) => copy(e, a.url, "kbd", "resume link")),
+    run: (e) => onSession((a) => copy(e, full(a).url, "kbd", "resume link")),
   },
   ...["Worktrees", "Files", "Source"].map((name, i) => ({
     id: `max-${name.toLowerCase()}`,
@@ -2341,7 +2381,7 @@ async function confirmDiscard() {
           dirName(w)}<span class="dir">{dirName(w)}</span>{/if}</span>
         <span class="ags">
           {#if w.agents?.length}
-            {@const a = w.agents[0]}
+            {@const a = full(w.agents[0])}
             {@const n = w.agents.filter((x) => x.deep).length}
             <button class="ag" style="--ag: var(--{a.tone})" aria-haspopup="menu"
                     title={badgeTip(w)}
@@ -2847,9 +2887,9 @@ async function confirmDiscard() {
     {/if}
     {#if opened}
       <button class="toast" onclick={(e) => {
-        copy(e, opened.command, "ctx", "resume command");
+        copy(e, full(opened).command, "ctx", "resume command");
         opened = null;
-      }}>Opened {clip(opened.title || "session", 40)} in {opened.label}
+      }}>Opened {clip(opened.title || "session", 40)} in {full(opened).label}
         <span class="dim">· click to copy resume command</span></button>
     {/if}
     {#if toast}

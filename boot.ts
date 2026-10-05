@@ -99,7 +99,7 @@ export function boot(opts: {
     afterMutation: () => watcher.afterMutation(),
     log: (o) => log.line(o),
   });
-  const tools = createTools({ store, files, settings, home });
+  const tools = createTools({ store, files, settings, home, sessions });
   const routes = createRoutes({
     settings,
     settingsPath: join(dir, "settings.json"),

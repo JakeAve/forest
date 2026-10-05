@@ -30,18 +30,24 @@ export type Worktree = {
 };
 
 // An agent session that mentions this worktree, earliest mention first: the
-// first one is most likely the session that created it.
+// first one is most likely the session that created it. Slim, since it rides
+// every snapshot; the `sessions` tool has the rest (SessionInfo).
 export type AgentSession = {
   agent: string;
-  label: string;
-  glyph: string;
-  tone: string;
   id: string;
   title: string;
-  cwd: string;
-  startedAt: number;
   seenAt: number; // first mention of this worktree
   deep: boolean; // worked inside it, not just named it (e.g. a listing)
+};
+
+export type SessionInfo = {
+  agent: string;
+  label: string;
+  id: string;
+  title: string;
+  cwd: string; // where it started; the resume command runs here
+  startedAt: number;
+  transcript: string; // the session's own transcript file
   url: string; // opens it in its app
   command: string; // resumes it in a terminal
 };

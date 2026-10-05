@@ -91,7 +91,13 @@ const make = (opts?: {
   } as unknown as PrsApi;
 
   const settings = { ...DEFAULTS };
-  const tools = createTools({ store, files, settings, home: HOME });
+  const tools = createTools({
+    store,
+    files,
+    settings,
+    home: HOME,
+    sessions: { all: () => new Map() },
+  });
   const routes = createRoutes({
     settings,
     settingsPath: "/tmp/forest-test/settings.json",

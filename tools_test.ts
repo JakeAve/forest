@@ -5,7 +5,7 @@ import { createFiles } from "./files.ts";
 import { createStore } from "./store.ts";
 import { createTools } from "./tools.ts";
 import { DEFAULTS } from "./settings.ts";
-import type { Pr, Repo, Worktree } from "./types.ts";
+import type { AgentSession, Pr, Repo, SessionInfo, Worktree } from "./types.ts";
 
 const HOME = "/home/jake";
 
@@ -15,10 +15,13 @@ const make = (
   repos: Repo[],
   settings = { ...DEFAULTS },
   table: Record<string, string> = {},
+  agents = new Map<string, AgentSession[]>(),
+  info = new Map<string, SessionInfo>(),
 ) => {
   const store = createStore({
     prFor: (_r, w) => w.pr,
     procs: () => new Map(),
+    agents: () => agents,
     onSnapshot: () => {},
     stats: newStats(),
   });
@@ -30,7 +33,13 @@ const make = (
     // deno-lint-ignore require-await
     mergeBase: async () => "HEAD",
   });
-  return createTools({ store, files, settings, home: HOME });
+  return createTools({
+    store,
+    files,
+    settings,
+    home: HOME,
+    sessions: { all: () => info },
+  });
 };
 
 Deno.test("wts filters by pr state and recent", async () => {
@@ -148,4 +157,104 @@ Deno.test("files lists changed files for a resolved worktree", async () => {
       unstaged: false,
     }],
   });
+});
+
+const info = (id: string, title: string): SessionInfo => ({
+  agent: "claude",
+  label: "Claude",
+  id,
+  title,
+  cwd: "/r/forest",
+  startedAt: 1,
+  transcript: `/h/.claude/projects/x/${id}.jsonl`,
+  url: `claude://resume?session=${id}`,
+  command: `cd '/r/forest' && claude --resume ${id}`,
+});
+
+const sessionsMake = () => {
+  const a = info("aaaa1111", "Make the feat branch");
+  const b = info("aaaa2222", "Audit every worktree");
+  const slim = (s: SessionInfo, seenAt: number, deep: boolean) => ({
+    agent: s.agent,
+    id: s.id,
+    title: s.title,
+    seenAt,
+    deep,
+  });
+  return {
+    a,
+    b,
+    t: make(
+      [mkRepo({
+        worktrees: [
+          worktree({ path: "/r/forest", isPrimary: true }),
+          worktree({ path: "/r/forest-feat", branch: "feat" }),
+          worktree({ path: "/r/forest-fix", branch: "fix" }),
+        ],
+      })],
+      undefined,
+      undefined,
+      new Map([
+        ["/r/forest-feat", [slim(a, 5, true), slim(b, 9, false)]],
+        ["/r/forest-fix", [slim(b, 9, false)]],
+      ]),
+      new Map([[`claude:${a.id}`, a], [`claude:${b.id}`, b]]),
+    ),
+  };
+};
+
+Deno.test("sessions by wt: full records, most likely creator first, tagged", async () => {
+  const { t, a, b } = sessionsMake();
+  assertEquals(await t.callTool("sessions", { wt: "feat" }), [
+    { ...a, seenAt: 5, tag: "created" },
+    { ...b, seenAt: 9, tag: "mentioned" },
+  ]);
+  assertEquals(await t.callTool("sessions", { wt: "fix" }), [
+    { ...b, seenAt: 9, tag: "" },
+  ]);
+});
+
+Deno.test("sessions by id prefix lists the worktrees it touched; ambiguous ids list candidates", async () => {
+  const { t, b } = sessionsMake();
+  assertEquals(await t.callTool("sessions", { id: "aaaa2" }), {
+    ...b,
+    wts: [
+      {
+        wt: "/r/forest-feat",
+        repo: "forest",
+        branch: "feat",
+        seenAt: 9,
+        tag: "mentioned",
+      },
+      {
+        wt: "/r/forest-fix",
+        repo: "forest",
+        branch: "fix",
+        seenAt: 9,
+        tag: "",
+      },
+    ],
+  });
+  const err = await t.callTool("sessions", { id: "aaaa" }).catch((e) =>
+    t.toolError(e)
+  );
+  assertEquals(err, {
+    error: "ambiguous session id",
+    candidates: [
+      { agent: "claude", id: "aaaa1111", title: "Make the feat branch" },
+      { agent: "claude", id: "aaaa2222", title: "Audit every worktree" },
+    ],
+  });
+});
+
+Deno.test("sessions q fuzzy-matches titles; no params is an error", async () => {
+  const { t, a } = sessionsMake();
+  const got = await t.callTool("sessions", { q: "feat branch" }) as {
+    id: string;
+  }[];
+  assertEquals(got[0].id, a.id);
+  assertEquals(
+    t.toolError(await t.callTool("sessions", {}).catch((e) => e)),
+    { error: "pass wt, id or q" },
+  );
 });
