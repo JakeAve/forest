@@ -77,7 +77,7 @@ fetch("/api/layout").then((r) => r.json()).then((l) => {
   if (l.closed) closed = l.closed;
   if (l.pinned) pinned = l.pinned;
   if (l.zoom) zoom = l.zoom;
-  if (l.theme) applyTheme(l.theme);
+  if (l.theme) applyTheme(l.theme, false);
 }).finally(() => (ready = true));
 
 let saveT;
@@ -185,7 +185,6 @@ let restoring = $state(initialParams.has("path") || initialParams.has("wt"));
 let markBooted;
 const booted = new Promise((r) => (markBooted = r));
 fetch("/api/themes").then((r) => r.json()).then((t) => (themes = t));
-fetch("/api/vscode-themes").then((r) => r.json()).then((t) => (vsThemes = t));
 
 const selWt = $derived(
   repos.flatMap((r) => r.worktrees).find((w) => w.path === sel),
@@ -908,7 +907,7 @@ const evItems = (ev) => [
 
 function notifySettings() {
   inboxEl?.hidePopover();
-  dlg.showModal();
+  openSettings();
   notifySec?.scrollIntoView({ block: "start" });
 }
 
@@ -1706,7 +1705,7 @@ function saveSettings() {
     }).then((r) => r.json()).then((s) => (settings = s)), 400);
 }
 
-async function applyTheme(name) {
+async function applyTheme(name, save = true) {
   const st = document.documentElement.style;
   let resolved = { vars: {}, dark: null };
   if (name !== "default") {
@@ -1729,8 +1728,11 @@ async function applyTheme(name) {
   if (resolved.dark !== null) {
     st.setProperty("color-scheme", resolved.dark ? "dark" : "light");
   }
+  try {
+    localStorage.setItem("forest-theme", JSON.stringify(resolved));
+  } catch {}
   theme = name;
-  saveLayout();
+  if (save) saveLayout();
 }
 
 async function importTheme(e) {
@@ -1814,7 +1816,13 @@ function onSession(fn) {
   menuEl?.hidePopover();
   fn(a);
 }
-const toggleSettings = () => (dlg.open ? dlg.close() : dlg.showModal());
+let vsLoad;
+function openSettings() {
+  vsLoad ??= fetch("/api/vscode-themes").then((r) => r.json())
+    .then((t) => (vsThemes = t));
+  dlg.showModal();
+}
+const toggleSettings = () => (dlg.open ? dlg.close() : openSettings());
 const COMMANDS = [
   {
     id: "palette",
@@ -2106,7 +2114,7 @@ const paletteItems = $derived.by(() => {
     ...COMMANDS.filter((c) => c.id !== "palette" && (!c.when || c.when()))
       .map((c) => cmd(c.label, c.run, kbdOf(c.id))),
     {
-      ...cmd("Theme…", () => dlg.showModal()),
+      ...cmd("Theme…", openSettings),
       sub: () =>
         ["default", ...themes].map((name) => cmd(name, () => applyTheme(name))),
     },
@@ -2175,7 +2183,7 @@ async function confirmDiscard() {
             aria-label={unread ? `Notifications, ${unread} unread` : "Notifications"}>
       <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
       {#if unread}<span class="n">{unread > 99 ? "99+" : unread}</span>{/if}</button>
-    <button class="circ" title="Settings {kbdOf('settings') ?? ''}" aria-label="Settings" onclick={() => dlg.showModal()}>
+    <button class="circ" title="Settings {kbdOf('settings') ?? ''}" aria-label="Settings" onclick={openSettings}>
       <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg></button>
   </div>
 

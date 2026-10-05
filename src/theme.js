@@ -103,13 +103,14 @@ export function mergeInclude(base, child) {
 }
 
 export function stripJsonc(text) {
-  let out = "", i = 0, str = false;
+  const out = [];
+  let i = 0, str = false, comma = -1;
   while (i < text.length) {
     const c = text[i];
     if (str) {
-      out += c;
+      out.push(c);
       if (c === "\\") {
-        out += text[i + 1] ?? "";
+        out.push(text[i + 1] ?? "");
         i += 2;
         continue;
       }
@@ -117,7 +118,8 @@ export function stripJsonc(text) {
       i++;
     } else if (c === '"') {
       str = true;
-      out += c;
+      comma = -1;
+      out.push(c);
       i++;
     } else if (c === "/" && text[i + 1] === "/") {
       while (i < text.length && text[i] !== "\n") i++;
@@ -126,12 +128,14 @@ export function stripJsonc(text) {
       while (i < text.length && !(text[i] === "*" && text[i + 1] === "/")) i++;
       i += 2;
     } else {
-      if (c === "}" || c === "]") out = out.replace(/,\s*$/, "");
-      out += c;
+      if ((c === "}" || c === "]") && comma >= 0) out[comma] = "";
+      if (c === ",") comma = out.length;
+      else if (!/\s/.test(c)) comma = -1;
+      out.push(c);
       i++;
     }
   }
-  return out;
+  return out.join("");
 }
 
 export const parseThemeText = (text) => JSON.parse(stripJsonc(text));
