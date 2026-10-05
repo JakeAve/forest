@@ -1,6 +1,14 @@
 import { ownerWorktree } from "./parse.ts";
 import type { Stats } from "./stats.ts";
-import type { AutoRebase, Pr, Procs, Repo, Worktree } from "./types.ts";
+import type { WtKey } from "./sessions.ts";
+import type {
+  AgentSession,
+  AutoRebase,
+  Pr,
+  Procs,
+  Repo,
+  Worktree,
+} from "./types.ts";
 
 export type StoreApi = {
   byPath: Map<string, Repo>;
@@ -22,6 +30,7 @@ export function createStore(
     prError = () => null,
     prListed,
     procs,
+    agents = () => new Map(),
     onSnapshot,
     stats,
   }: {
@@ -30,6 +39,7 @@ export function createStore(
     prError?: (repo: string) => string | null;
     prListed?: (repo: string) => boolean;
     procs: () => Map<string, Procs>;
+    agents?: (wts: WtKey[]) => Map<string, AgentSession[]>;
     onSnapshot: (json: string) => void;
     stats: Stats;
   },
@@ -68,6 +78,19 @@ export function createStore(
         }
       }
       const wtPaths = [...wtByPath.keys()];
+      const byWt = agents(
+        repos.flatMap((r) =>
+          r.worktrees.flatMap((w) =>
+            !w.isPrimary
+              ? [{ path: w.path }]
+              : w.branch && w.branch !== r.defaultBranch &&
+                  w.state !== "detached"
+              ? [{ path: w.path, branch: w.branch }]
+              : []
+          )
+        ),
+      );
+      for (const w of wtByPath.values()) w.agents = byWt.get(w.path) ?? [];
       for (const [cwd, ps] of procs()) {
         const w = wtByPath.get(ownerWorktree(cwd, wtPaths) ?? "");
         if (w) {

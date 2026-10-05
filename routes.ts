@@ -31,6 +31,7 @@ import { enc, type SseApi } from "./sse.ts";
 import type { WatcherApi } from "./watcher.ts";
 import type { AutoRebaseApi } from "./autorebase.ts";
 import type { StoreApi } from "./store.ts";
+import type { SessionsApi } from "./sessions.ts";
 import type { NotifyApi } from "./notify.ts";
 import { DEFAULTS, saveSettings, type Settings } from "./settings.ts";
 import { type Stats, statsLine } from "./stats.ts";
@@ -65,6 +66,7 @@ export function createRoutes(deps: {
   sse: SseApi;
   stats: Stats;
   tools: ReturnType<typeof createTools>;
+  sessions: SessionsApi;
   desktop: boolean;
 }) {
   const {
@@ -83,6 +85,7 @@ export function createRoutes(deps: {
     notify,
     sse,
     stats,
+    sessions,
     desktop,
   } = deps;
   const { exec, git, tryGit, gitIn } = deps.sh;
@@ -340,7 +343,9 @@ export function createRoutes(deps: {
         const noWt = url.pathname === "/api/wt-create" ||
           url.pathname === "/api/theme-import" ||
           url.pathname === "/api/wt-remove" ||
-          url.pathname === "/api/kill-pid";
+          url.pathname === "/api/kill-pid" ||
+          url.pathname === "/api/agent-resume" ||
+          url.pathname === "/api/agent-terminal";
         const wt = noWt
           ? ""
           : ["/api/save", "/api/new", "/api/rename", "/api/delete"]
@@ -458,6 +463,31 @@ export function createRoutes(deps: {
               throw new Error("not a known listening process");
             }
             Deno.kill(pid, "SIGTERM");
+            break;
+          }
+          case "/api/agent-resume":
+          case "/api/agent-terminal": {
+            const host = (info.remoteAddr as Deno.NetAddr).hostname;
+            if (!isLocalRequest(host, req.headers.get("host"))) {
+              throw new Error("Forest only opens sessions for this machine");
+            }
+            const s = sessions.find(String(b.agent), String(b.id));
+            if (!s) throw new Error("not a known agent session");
+            await exec(
+              HOME,
+              url.pathname === "/api/agent-resume" ? ["open", s.url] : [
+                "osascript",
+                "-e",
+                "on run argv",
+                "-e",
+                'tell application "Terminal" to do script (item 1 of argv)',
+                "-e",
+                'tell application "Terminal" to activate',
+                "-e",
+                "end run",
+                s.command,
+              ],
+            );
             break;
           }
           case "/api/wt-create": {

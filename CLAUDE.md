@@ -3,8 +3,8 @@
 Git worktree dashboard: Deno server, `boot.ts` (wires the module graph, starts
 nothing) and `main.ts` (starts it) plus `exec`, `repo`, `prs`, `ports`, `store`,
 `sse`, `watcher`, `files`, `themes`, `log`, `tools`, `notify`, `routes`,
-`stats`, `settings`, `types`, and a Svelte frontend in `src/`. See README.md for
-setup and the agent API.
+`stats`, `settings`, `agents`, `sessions`, `types`, and a Svelte frontend in
+`src/`. See README.md for setup and the agent API.
 
 ## Commands
 
@@ -36,6 +36,8 @@ deno task setup                # git hooks run check + test on commit/push
   checking `preset`.
 - UI text is sentence case; no `text-transform: uppercase`. Header height is
   `--head`, which collapsed panes and drag minimums depend on.
+- Coding agents (Claude, Codex, …) are entries in `PROVIDERS` in `agents.ts`;
+  `sessions.ts` and the UI never name a specific agent.
 - Ports: server `38471`, vite `38472`. `/mcp` only accepts `Host` of localhost
   or `forest-server.localhost`; keep that allowlist when touching the route.
 - Nothing under `/api/t/` or `/mcp` writes; agent tools stay read-only.

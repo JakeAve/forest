@@ -9,6 +9,8 @@ import { createSse } from "./sse.ts";
 import { createWatcher } from "./watcher.ts";
 import { createAutoRebase } from "./autorebase.ts";
 import { createStore } from "./store.ts";
+import { PROVIDERS } from "./agents.ts";
+import { createSessions, denoFs, type SessionFs } from "./sessions.ts";
 import { createNotify, memoryInbox } from "./notify.ts";
 import { createTools } from "./tools.ts";
 import { BW, createRoutes } from "./routes.ts";
@@ -23,6 +25,7 @@ export function boot(opts: {
   distDir: string;
   watchFs?: (root: string) => AsyncIterable<{ paths: string[] }>;
   notifyOs?: boolean;
+  sessionFs?: SessionFs;
 }) {
   const { settings, home, distDir } = opts;
   const dir = join(home, ".forest");
@@ -48,12 +51,19 @@ export function boot(opts: {
     stats,
     onChange: () => store.publish(),
   });
+  const sessions = createSessions({
+    home,
+    providers: PROVIDERS,
+    fs: opts.sessionFs ?? denoFs,
+    onChange: () => store.publish(),
+  });
   const store = createStore({
     prFor: (r, w) => prs.prFor(r, w),
     autoRebase: (wt) => autoRebase.status(wt),
     prError: (r) => prs.prError(r),
     procs: () => ports.current(),
     prListed: (r) => prs.listed(r),
+    agents: (wts) => sessions.forWts(wts),
     onSnapshot: (j) => {
       sse.broadcast(j);
       notify.observe(j);
@@ -109,7 +119,18 @@ export function boot(opts: {
     sse,
     stats,
     tools,
+    sessions,
     desktop: !!BW,
   });
-  return { root, stats, sse, log, watcher, autoRebase, notify, routes };
+  return {
+    root,
+    stats,
+    sse,
+    log,
+    watcher,
+    autoRebase,
+    notify,
+    sessions,
+    routes,
+  };
 }

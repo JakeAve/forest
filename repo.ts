@@ -170,6 +170,7 @@ export function createRepo(
       procs: [],
       pr: null,
       autoRebase: null,
+      agents: [],
     };
   }
 

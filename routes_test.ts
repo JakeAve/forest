@@ -11,6 +11,7 @@ import { createNotify, memoryInbox } from "./notify.ts";
 import { DEFAULTS } from "./settings.ts";
 import { newStats } from "./stats.ts";
 import type { PrsApi } from "./prs.ts";
+import type { SessionsApi } from "./sessions.ts";
 import type { WatcherApi } from "./watcher.ts";
 import type { Worktree } from "./types.ts";
 
@@ -117,6 +118,15 @@ const make = (opts?: {
     sse,
     stats,
     tools,
+    sessions: {
+      find: (agent: string, id: string) =>
+        agent === "claude" && id === "known"
+          ? {
+            url: "claude://resume?session=known",
+            command: "cd '/r' && claude --resume known",
+          }
+          : null,
+    } as unknown as SessionsApi,
     desktop: false,
   });
   return { routes, notify, sh, store, files, mutations, prCalls, settings };
@@ -343,6 +353,46 @@ Deno.test("POST /api/delete on an unknown wt is 400", async () => {
   assertEquals(res.status, 400);
   assertStringIncludes(await res.text(), "unknown worktree");
   assertEquals(mutations.length, 0);
+});
+
+Deno.test("POST /api/agent-resume opens only an indexed session's link, only for this machine", async () => {
+  const { routes, sh } = make({
+    table: { "open claude://resume?session=known": "" },
+  });
+  const ok = await routes(
+    post("/api/agent-resume", { agent: "claude", id: "known" }),
+    LOCAL,
+  );
+  assertEquals(ok.status, 200);
+  assertEquals(sh.calls, [`${HOME} $ open claude://resume?session=known`]);
+  const unknown = await routes(
+    post("/api/agent-resume", { agent: "claude", id: "x; rm -rf ~" }),
+    LOCAL,
+  );
+  assertEquals(unknown.status, 400);
+  const foreign = await routes(
+    post("/api/agent-resume", { agent: "claude", id: "known" }, "evil.com"),
+    FOREIGN,
+  );
+  assertEquals(foreign.status, 400);
+  assertEquals(sh.calls.length, 1);
+});
+
+Deno.test("POST /api/agent-terminal runs an indexed session's command in Terminal as an argument", async () => {
+  const run =
+    `osascript -e on run argv -e tell application "Terminal" to do script (item 1 of argv) -e tell application "Terminal" to activate -e end run cd '/r' && claude --resume known`;
+  const { routes, sh } = make({ table: { [run]: "" } });
+  const ok = await routes(
+    post("/api/agent-terminal", { agent: "claude", id: "known" }),
+    LOCAL,
+  );
+  assertEquals(ok.status, 200);
+  assertEquals(sh.calls, [`${HOME} $ ${run}`]);
+  const unknown = await routes(
+    post("/api/agent-terminal", { agent: "codex", id: "known" }),
+    LOCAL,
+  );
+  assertEquals(unknown.status, 400);
 });
 
 Deno.test("an unknown POST is 404", async () => {

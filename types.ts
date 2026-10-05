@@ -26,6 +26,24 @@ export type Worktree = {
   procs: Procs;
   pr: Pr | null;
   autoRebase: AutoRebase | null;
+  agents: AgentSession[];
+};
+
+// An agent session that mentions this worktree, earliest mention first: the
+// first one is most likely the session that created it.
+export type AgentSession = {
+  agent: string;
+  label: string;
+  glyph: string;
+  tone: string;
+  id: string;
+  title: string;
+  cwd: string;
+  startedAt: number;
+  seenAt: number; // first mention of this worktree
+  deep: boolean; // worked inside it, not just named it (e.g. a listing)
+  url: string; // opens it in its app
+  command: string; // resumes it in a terminal
 };
 
 export type AutoRebase = { on: true; error: string | null };

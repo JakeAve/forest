@@ -1094,6 +1094,8 @@ async function removeWts(wts, force) {
 }
 
 let menuReturn = null;
+let opened = $state(null); // the agent session just resumed, for its toast
+let openedT;
 
 async function openMenu(e, items, viaKey) {
   e.preventDefault();
@@ -1101,13 +1103,18 @@ async function openMenu(e, items, viaKey) {
   const box = e.currentTarget.getBoundingClientRect();
   menuReturn = viaKey ? e.currentTarget : null;
   menu = {
-    x: e.clientX ?? Math.round(box.left + 16),
-    y: e.clientY ?? Math.round(box.bottom),
+    x: (!viaKey && e.clientX) || Math.round(box.left + 16),
+    y: (!viaKey && e.clientY) || Math.round(box.bottom),
     items: trimSeps(items.filter(Boolean)),
   };
   await tick();
   if (!menuEl || !menu) return;
   menuEl.showPopover();
+  placeMenu();
+  if (viaKey) menuEl.querySelector("button")?.focus();
+}
+
+function placeMenu() {
   const r = menuEl.getBoundingClientRect();
   const p = clampMenu(
     menu.x,
@@ -1119,7 +1126,6 @@ async function openMenu(e, items, viaKey) {
   );
   menuEl.style.left = `${p.x}px`;
   menuEl.style.top = `${p.y}px`;
-  if (viaKey) menuEl.querySelector("button")?.focus();
 }
 
 function menuKey(e, items) {
@@ -1130,6 +1136,7 @@ function menuKey(e, items) {
 
 function closeMenu() {
   menu = null;
+  menuCur = null;
   menuReturn?.focus();
   menuReturn = null;
 }
@@ -1141,7 +1148,7 @@ $effect(() => {
     closeMenu();
   };
   const onDown = (ev) => !menuEl?.contains(ev.target) && hide();
-  const onKey = (ev) => ev.key === "Escape" && hide();
+  const onKey = (ev) => (ev.key === "Escape" ? hide() : menuNav(ev));
   addEventListener("pointerdown", onDown, true);
   addEventListener("keydown", onKey, true);
   addEventListener("scroll", hide, true);
@@ -1153,8 +1160,41 @@ $effect(() => {
 });
 
 function runItem(item, e) {
-  menuEl?.hidePopover();
+  if (!item.keep) menuEl?.hidePopover();
   item.fn(e);
+}
+
+// ← goes back, → opens a session's actions: the agent popover's drill-down.
+// The menu item under focus, else under the pointer; its session is what
+// t / c / l act on.
+let menuCur = $state(null);
+const curItem = () => {
+  const i = menuEl?.contains(document.activeElement) &&
+    document.activeElement.dataset.i;
+  return i ? menu?.items[+i] : menuCur;
+};
+const menuSession = () => menu && (menu.session ?? curItem()?.agent);
+
+// ↑ ↓ (and whatever moves between worktrees) step through items; → opens a
+// session's actions, ← goes back. Runs in capture so a menu opened with the
+// mouse navigates too, and j / k move here instead of between worktrees.
+function menuNav(e) {
+  const k = combo(e);
+  const step = k === "arrowdown" || keymap.byId["next-wt"]?.includes(k)
+    ? 1
+    : k === "arrowup" || keymap.byId["prev-wt"]?.includes(k)
+    ? -1
+    : 0;
+  const back = menu?.items.find((x) => x.back);
+  if (step) {
+    const bs = [...menuEl.querySelectorAll("button:not(:disabled):not(.more)")];
+    const i = bs.indexOf(document.activeElement);
+    bs.at(i < 0 ? (step > 0 ? 0 : -1) : (i + step) % bs.length)?.focus();
+  } else if (k === "arrowleft" && back) back.fn(e);
+  else if (k === "arrowright" && curItem()?.more) curItem().more(e);
+  else return;
+  e.preventDefault();
+  e.stopPropagation();
 }
 
 function showCard(w, e) {
@@ -1258,6 +1298,7 @@ function wtItems(w, solo = false) {
   return [
     !many && { label: "Open", fn: () => selectWt(w.path) },
     !many && "-",
+    ...(many ? [] : agentItems(w)),
     {
       label: many ? `Copy ${t.length} branch names` : "Copy branch name",
       fn: (e) =>
@@ -1358,6 +1399,168 @@ function wtItems(w, solo = false) {
       danger: true,
       fn: () => (confirming = t.filter((x) => !x.isPrimary)),
     },
+  ];
+}
+
+const agentTip = (a) =>
+  [
+    `${a.label} · ${a.title || "untitled"}`,
+    a.id,
+    `started in ${a.cwd}`,
+    `first mentioned this worktree ${ago(a.seenAt)} ago`,
+  ].join("\n");
+
+const badgeTip = (w) =>
+  `${w.agents[0].label} · ${w.agents[0].title || "untitled"}\n${
+    w.agents.length === 1 ? "1 session" : `${w.agents.length} sessions`
+  }, click to view`;
+
+const fmtAt = (ms) =>
+  new Date(ms).toLocaleString([], {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+
+// uuid v7 ids (Codex) start with a timestamp, so their tail tells them apart.
+const shortId = (id) => (id[14] === "7" ? id.slice(-8) : id.slice(0, 8));
+
+const clip = (t, n = 48) => (t.length > n ? t.slice(0, n - 1) + "…" : t);
+
+async function resume(a, e) {
+  if (
+    await act("agent-resume", { agent: a.agent, id: a.id }, "ag:" + a.id, e)
+  ) {
+    opened = a;
+    clearTimeout(openedT);
+    openedT = setTimeout(() => (opened = null), settings?.toastMs ?? 7000);
+  }
+}
+
+const terminal = (a, e) =>
+  act("agent-terminal", { agent: a.agent, id: a.id }, "at:" + a.id, e);
+
+// Swaps the open menu's items in place: the agent popover's drill-down.
+async function drill(items, e, session = null) {
+  if (!menu) return;
+  menuCur = null;
+  menu = { ...menu, session, items: trimSeps(items.filter(Boolean)) };
+  await tick();
+  placeMenu();
+  if (e?.detail === 0) menuEl?.querySelector("button:not(:disabled)")?.focus();
+}
+
+const sessionTag = (w, a) => {
+  const i = w.agents.indexOf(a);
+  return w.agents.length < 2
+    ? ""
+    : i === 0
+    ? "created"
+    : a.deep
+    ? "worked here"
+    : "mentioned";
+};
+
+// Earliest mention first: the first is most likely the session that created it.
+function sessionItems(w) {
+  const all = w.agents ?? [];
+  const many = all.length > 1;
+  return [
+    { head: many ? "Agent sessions · most likely first" : "Agent session" },
+    ...all.map((a) => ({
+      agent: a,
+      label: clip(a.title || `Untitled ${a.label} session`),
+      tag: sessionTag(w, a),
+      sub: `${shortId(a.id)} · ${fmtAt(a.seenAt)}`,
+      tip: agentTip(a),
+      fn: (e) => resume(a, e),
+      more: (e) => drill(sessionActions(w, a), e, a),
+    })),
+    "-",
+    {
+      label: many ? `Copy ${all.length} session IDs` : "Copy session ID",
+      fn: (e) =>
+        copy(
+          e,
+          all.map((a) => a.id).join("\n"),
+          "ctx",
+          many ? `${all.length} session IDs` : all[0].id,
+        ),
+    },
+  ];
+}
+
+function sessionActions(w, a) {
+  const tag = sessionTag(w, a);
+  return [
+    {
+      agent: a,
+      label: `‹ ${clip(a.title || `Untitled ${a.label} session`, 40)}`,
+      sub: [shortId(a.id), fmtAt(a.seenAt), tag].filter(Boolean).join(" · "),
+      tip: "Back to all sessions",
+      kbd: "←",
+      back: true,
+      keep: true,
+      fn: (e) => drill(sessionItems(w), e),
+    },
+    "-",
+    { label: `Open in ${a.label}`, kbd: "↩", fn: (e) => resume(a, e) },
+    {
+      label: "Resume in terminal",
+      kbd: kbdOf("session-terminal"),
+      sub: clip(a.command, 56),
+      tip: a.command,
+      fn: (e) => terminal(a, e),
+    },
+    "-",
+    {
+      label: "Copy session ID",
+      kbd: kbdOf("session-copy-id"),
+      sub: a.id,
+      fn: (e) => copy(e, a.id, "ctx"),
+    },
+    {
+      label: "Copy resume link",
+      kbd: kbdOf("session-copy-link"),
+      sub: clip(a.url, 56),
+      fn: (e) => copy(e, a.url, "ctx", "resume link"),
+    },
+  ];
+}
+
+function agentItems(w) {
+  if (w.isPrimary && !w.agents?.length) return [];
+  const [a, ...rest] = w.agents ?? [];
+  if (!a) return [{ label: "No agent session found", disabled: true }, "-"];
+  return [
+    {
+      agent: a,
+      label: `Resume ${a.label} session`,
+      kbd: w === selWt && kbdOf("agent-resume"),
+      sub: clip(a.title || shortId(a.id)),
+      tip: agentTip(a),
+      fn: (e) => resume(a, e),
+    },
+    {
+      label: rest.length ? "Agent sessions…" : "Session actions…",
+      kbd: w === selWt && kbdOf("agent-sessions"),
+      keep: true,
+      fn: (e) =>
+        menu
+          ? drill(
+            rest.length ? sessionItems(w) : sessionActions(w, a),
+            e,
+            rest.length ? null : a,
+          )
+          : openSessions(w),
+    },
+    { label: "Copy session ID", fn: (e) => copy(e, a.id, "ctx") },
+    {
+      label: "Copy resume link",
+      fn: (e) => copy(e, a.url, "ctx", "resume link"),
+    },
+    "-",
   ];
 }
 
@@ -1560,6 +1763,20 @@ function stepWt(d) {
   goWt(navWts[Math.max(0, Math.min(navWts.length - 1, i < 0 ? 0 : i + d))]);
 }
 const liveWt = () => !loose && selWt;
+
+// Opens the selected row's agent popover from its badge, as a click would.
+async function openSessions(w) {
+  await scrollRow(w.path);
+  document.querySelector(`.wt[data-path="${CSS.escape(w.path)}"] .ag`)
+    ?.click();
+}
+
+// Runs a t / c / l action on the popover's session, then closes the popover.
+function onSession(fn) {
+  const a = menuSession();
+  menuEl?.hidePopover();
+  fn(a);
+}
 const toggleSettings = () => (dlg.open ? dlg.close() : dlg.showModal());
 const COMMANDS = [
   {
@@ -1613,6 +1830,49 @@ const COMMANDS = [
       liveWt() && !selWt.isPrimary && !busy["ar:" + selWt.path] &&
       (selWt.autoRebase || selWt.pr?.state !== "MERGED"),
     run: (e) => toggleAutoRebase(selWt, e),
+  },
+  {
+    id: "agent-sessions",
+    label: "Agent sessions…",
+    section: "Agent sessions",
+    keys: "a",
+    when: () => liveWt()?.agents?.length,
+    run: () => openSessions(selWt),
+  },
+  {
+    id: "agent-resume",
+    get label() {
+      const a = liveWt()?.agents?.[0];
+      return `Resume ${a?.label ?? "agent"} session`;
+    },
+    section: "Agent sessions",
+    keys: "alt+cmd+a",
+    when: () => liveWt()?.agents?.length,
+    run: (e) => resume(selWt.agents[0], e),
+  },
+  {
+    id: "session-terminal",
+    label: "Resume session in terminal",
+    section: "Agent sessions",
+    keys: "t",
+    when: menuSession,
+    run: (e) => onSession((a) => terminal(a, e)),
+  },
+  {
+    id: "session-copy-id",
+    label: "Copy session ID",
+    section: "Agent sessions",
+    keys: "c",
+    when: menuSession,
+    run: (e) => onSession((a) => copy(e, a.id, "kbd")),
+  },
+  {
+    id: "session-copy-link",
+    label: "Copy session resume link",
+    section: "Agent sessions",
+    keys: "l",
+    when: menuSession,
+    run: (e) => onSession((a) => copy(e, a.url, "kbd", "resume link")),
   },
   ...["Worktrees", "Files", "Source"].map((name, i) => ({
     id: `max-${name.toLowerCase()}`,
@@ -2079,6 +2339,15 @@ async function confirmDiscard() {
           showRepo}<span class="rp">{w.repo}</span>{/if}{w.branch}{#if
           renamed(w)}<span class="rb">{renamed(w)}</span>{/if}{#if
           dirName(w)}<span class="dir">{dirName(w)}</span>{/if}</span>
+        <span class="ags">
+          {#if w.agents?.length}
+            {@const a = w.agents[0]}
+            {@const n = w.agents.filter((x) => x.deep).length}
+            <button class="ag" style="--ag: var(--{a.tone})" aria-haspopup="menu"
+                    title={badgeTip(w)}
+                    onclick={(e) => openMenu(e, sessionItems(w), e.detail === 0)}>{a.glyph}{#if n > 1}<i>{n}</i>{/if}</button>
+          {/if}
+        </span>
         <span class="prc">
           {#if w.pr}
             {@const s = prStatus(w.pr)}
@@ -2369,8 +2638,28 @@ async function confirmDiscard() {
     {#each menu?.items ?? [] as it, i (i)}
       {#if it === "-"}
         <hr>
+      {:else if it.head}
+        <div class="grp">{it.head}</div>
       {:else}
-        <button class:dg={it.danger} onclick={(e) => runItem(it, e)}>{it.label}{#if it.kbd}<kbd>{it.kbd}</kbd>{/if}</button>
+        {#snippet item()}
+          <button class:dg={it.danger} disabled={it.disabled} title={it.tip}
+                  onclick={(e) => runItem(it, e)}
+                  data-i={i}
+                  onpointerenter={() => (menuCur = it)}
+                  oncontextmenu={(e) => { if (it.more) { e.preventDefault(); it.more(e); } }}
+                  >{#if it.agent}<span class="ag"
+                  style="--ag: var(--{it.agent.tone})">{it.agent.glyph}</span>{/if}{it.label}{#if
+                  it.tag}<span class="mtag" class:lead={it.tag === "created"}>{it.tag}</span>{/if}{#if it.kbd}<kbd>{it.kbd}</kbd>{/if}{#if it.sub}<small>{it.sub}</small>{/if}</button>
+        {/snippet}
+        {#if it.more}
+          <div class="split">
+            {@render item()}
+            <button class="more" tabindex="-1" title="Session actions"
+                    aria-label="Session actions" onclick={(e) => it.more(e)}>›</button>
+          </div>
+        {:else}
+          {@render item()}
+        {/if}
       {/if}
     {/each}
   </div>
@@ -2555,6 +2844,13 @@ async function confirmDiscard() {
     {/each}
     {#if toasts.length > 3}
       <button class="toast" onclick={() => inboxEl.showPopover()}>+{toasts.length - 3} more</button>
+    {/if}
+    {#if opened}
+      <button class="toast" onclick={(e) => {
+        copy(e, opened.command, "ctx", "resume command");
+        opened = null;
+      }}>Opened {clip(opened.title || "session", 40)} in {opened.label}
+        <span class="dim">· click to copy resume command</span></button>
     {/if}
     {#if toast}
       <div class="toast" onclick={() => (toast = "")} role="presentation">
@@ -3323,7 +3619,7 @@ select.theme {
 .wt {
   display: grid;
   grid-template-columns:
-    0.75rem 1fr 5rem minmax(5.25rem, auto) 4.625rem 3.875rem 2.875rem;
+    0.75rem 1fr auto 5rem minmax(5.25rem, auto) 4.625rem 3.875rem 2.875rem;
   align-items: center;
   gap: 0.5rem;
   padding: 0.3125rem 0.625rem;
@@ -3376,6 +3672,28 @@ select.theme {
 }
 .wt .br .dir::after {
   content: ")";
+}
+.ag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.1875rem;
+  height: 1.125rem;
+  min-width: 1.125rem;
+  justify-content: center;
+  padding: 0 0.25rem;
+  border-radius: 999px;
+  font: 0.6875rem var(--mono);
+  color: var(--ag);
+  background: color-mix(in srgb, var(--ag) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ag) 35%, transparent);
+  cursor: pointer;
+}
+.ag:hover {
+  border-color: var(--ag);
+}
+.ag i {
+  font-style: normal;
+  font-size: 0.625rem;
 }
 .prc,
 .ports {
@@ -3741,6 +4059,72 @@ select.theme {
   background: var(--hl);
   color: var(--hlfg);
 }
+.ctx .split {
+  display: flex;
+  align-items: stretch;
+  gap: 0.125rem;
+}
+.ctx .split > button:first-child {
+  flex: 1;
+  min-width: 0;
+}
+.ctx .split .more {
+  flex: none;
+  width: 1.5rem;
+  padding: 0;
+  text-align: center;
+  color: var(--dim);
+  font-size: 0.875rem;
+  visibility: hidden;
+}
+.ctx .split:hover .more,
+.ctx .split:focus-within .more {
+  visibility: visible;
+}
+@media (hover: none) {
+  .ctx .split .more {
+    visibility: visible;
+  }
+}
+.ctx .grp {
+  padding: 0.3125rem 0.625rem 0.125rem;
+  color: var(--dimmer);
+  font-size: 0.6875rem;
+}
+.ctx button:disabled,
+.ctx button:disabled:hover {
+  background: none;
+  color: var(--dimmer);
+  cursor: default;
+}
+.ctx button .ag {
+  margin-right: 0.375rem;
+  cursor: inherit;
+}
+.mtag {
+  margin-left: 0.375rem;
+  padding: 0 0.375rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--dim);
+  font: 0.625rem var(--mono);
+}
+.mtag.lead {
+  color: var(--acc);
+  border-color: color-mix(in srgb, var(--acc) 35%, transparent);
+  background: color-mix(in srgb, var(--acc) 10%, transparent);
+}
+.ctx button small {
+  display: block;
+  max-width: 22rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--dim);
+  font: 0.6875rem var(--mono);
+}
+.ctx button:hover small {
+  color: var(--hlfg);
+}
 .ctx button.dg {
   color: var(--danger);
 }
@@ -4049,6 +4433,10 @@ select.theme {
   }
   .wt .ports {
     grid-area: 2 / 3;
+  }
+  .wt .ags {
+    grid-area: 2 / 4;
+    justify-self: start;
   }
   .wt .dirty {
     grid-area: 2 / 5;

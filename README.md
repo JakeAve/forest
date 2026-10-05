@@ -57,6 +57,23 @@ a PR draft or ready, close it, kill a process listening in it, turn on
 auto-rebase, or remove the worktree. Select several to copy or remove them
 together. Right-click a repo for new worktree.
 
+A badge on the row names the coding agent session that created the worktree.
+Forest finds it by reading agent transcripts (`~/.claude/projects`,
+`~/.codex/sessions`) for the earliest mention of the worktree's path (a main
+checkout on a feature branch instead matches sessions that ran in it on that
+branch); a count on the badge means several sessions worked inside it. Click the
+badge to list every session that mentions the worktree, most likely creator
+first, and pick one to open it in its desktop app (`claude://resume`,
+`codex://threads/`); right-click resumes the most likely one directly. A
+session's › (or right-click, or →) swaps the list for its actions: open in its
+app, resume in Terminal (`claude --resume` / `codex resume` in the directory it
+started in), copy its ID or its resume link. Keys: `a` opens the selected
+worktree's list and ⌥⌘A resumes its most likely session; in the list `↑`/`↓` (or
+whatever moves between worktrees) step, `↩` opens, `→`/`←` enter and leave a
+session's actions, and `t`, `c`, `l` resume in terminal, copy the ID, copy the
+link. They're rebindable under Agent sessions in the shortcuts overlay. Another
+agent is one entry in `PROVIDERS` in `agents.ts`.
+
 Auto-rebase keeps a worktree current with `origin/HEAD` on a timer
 (`autoRebaseMs`). A branch with an open PR is updated on GitHub, the same
 merge-from-base as the card's update-branch button, and fast-forwarded locally
@@ -255,8 +272,8 @@ Parsing is deliberately split out of `main.ts` into `parse.ts`, `src/theme.js`,
 and `src/filter.js` — that's the part with edge cases worth testing, and it's
 testable without spawning git. The rest of the server is split into per-system
 modules (`exec`, `repo`, `prs`, `ports`, `store`, `sse`, `watcher`, `files`,
-`themes`, `log`, `tools`, `routes`, `stats`, `settings`, `types`), each with its
-own `<module>_test.ts`.
+`themes`, `log`, `tools`, `routes`, `stats`, `settings`, `agents`, `sessions`,
+`types`), each with its own `<module>_test.ts`.
 
 ## Desktop app
 
