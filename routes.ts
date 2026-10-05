@@ -344,7 +344,8 @@ export function createRoutes(deps: {
           url.pathname === "/api/theme-import" ||
           url.pathname === "/api/wt-remove" ||
           url.pathname === "/api/kill-pid" ||
-          url.pathname === "/api/agent-resume";
+          url.pathname === "/api/agent-resume" ||
+          url.pathname === "/api/agent-terminal";
         const wt = noWt
           ? ""
           : ["/api/save", "/api/new", "/api/rename", "/api/delete"]
@@ -464,14 +465,29 @@ export function createRoutes(deps: {
             Deno.kill(pid, "SIGTERM");
             break;
           }
-          case "/api/agent-resume": {
+          case "/api/agent-resume":
+          case "/api/agent-terminal": {
             const host = (info.remoteAddr as Deno.NetAddr).hostname;
             if (!isLocalRequest(host, req.headers.get("host"))) {
               throw new Error("Forest only opens sessions for this machine");
             }
-            const link = sessions.url(String(b.agent), String(b.id));
-            if (!link) throw new Error("not a known agent session");
-            await exec(HOME, ["open", link]);
+            const s = sessions.find(String(b.agent), String(b.id));
+            if (!s) throw new Error("not a known agent session");
+            await exec(
+              HOME,
+              url.pathname === "/api/agent-resume" ? ["open", s.url] : [
+                "osascript",
+                "-e",
+                "on run argv",
+                "-e",
+                'tell application "Terminal" to do script (item 1 of argv)',
+                "-e",
+                'tell application "Terminal" to activate',
+                "-e",
+                "end run",
+                s.command,
+              ],
+            );
             break;
           }
           case "/api/wt-create": {

@@ -110,8 +110,12 @@ Deno.test("sessions rank by first mention and mark ones that worked inside", asy
     got.get(WT)![0].command,
     `cd '/h/Repos/app' && claude --resume ${B}`,
   );
-  assertEquals(s.url("codex", C), `codex://threads/${C}`);
-  assertEquals(s.url("codex", A), null);
+  assertEquals(got.get(WT)![2].url, `codex://threads/${C}`);
+  assertEquals(s.find("codex", C), {
+    url: `codex://threads/${C}`,
+    command: `cd '${WT}' && codex resume ${C}`,
+  });
+  assertEquals(s.find("codex", A), null);
 });
 
 Deno.test("refresh tails appended lines and waits for a partial line to finish", async () => {

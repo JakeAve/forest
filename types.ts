@@ -42,7 +42,8 @@ export type AgentSession = {
   startedAt: number;
   seenAt: number; // first mention of this worktree
   deep: boolean; // worked inside it, not just named it (e.g. a listing)
-  command: string;
+  url: string; // opens it in its app
+  command: string; // resumes it in a terminal
 };
 
 export type AutoRebase = { on: true; error: string | null };

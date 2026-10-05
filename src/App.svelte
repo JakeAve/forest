@@ -1110,6 +1110,11 @@ async function openMenu(e, items, viaKey) {
   await tick();
   if (!menuEl || !menu) return;
   menuEl.showPopover();
+  placeMenu();
+  if (viaKey) menuEl.querySelector("button")?.focus();
+}
+
+function placeMenu() {
   const r = menuEl.getBoundingClientRect();
   const p = clampMenu(
     menu.x,
@@ -1121,7 +1126,6 @@ async function openMenu(e, items, viaKey) {
   );
   menuEl.style.left = `${p.x}px`;
   menuEl.style.top = `${p.y}px`;
-  if (viaKey) menuEl.querySelector("button")?.focus();
 }
 
 function menuKey(e, items) {
@@ -1155,8 +1159,20 @@ $effect(() => {
 });
 
 function runItem(item, e) {
-  menuEl?.hidePopover();
+  if (!item.keep) menuEl?.hidePopover();
   item.fn(e);
+}
+
+// ← goes back, → opens a session's actions: the agent popover's drill-down.
+function menuNav(e, it) {
+  const back = menu?.items.find((x) => x.back);
+  if (e.key === "ArrowLeft" && back) {
+    e.preventDefault();
+    back.fn(e);
+  } else if (e.key === "ArrowRight" && it?.more) {
+    e.preventDefault();
+    it.more(e);
+  }
 }
 
 function showCard(w, e) {
@@ -1400,19 +1416,43 @@ async function resume(a, e) {
   }
 }
 
+const terminal = (a, e) =>
+  act("agent-terminal", { agent: a.agent, id: a.id }, "at:" + a.id, e);
+
+// Swaps the open menu's items in place: the agent popover's drill-down.
+async function drill(items, e) {
+  if (!menu) return;
+  menu = { ...menu, items: trimSeps(items.filter(Boolean)) };
+  await tick();
+  placeMenu();
+  if (e?.detail === 0) menuEl?.querySelector("button:not(:disabled)")?.focus();
+}
+
+const sessionTag = (w, a) => {
+  const i = w.agents.indexOf(a);
+  return w.agents.length < 2
+    ? ""
+    : i === 0
+    ? "created"
+    : a.deep
+    ? "worked here"
+    : "mentioned";
+};
+
 // Earliest mention first: the first is most likely the session that created it.
 function sessionItems(w) {
   const all = w.agents ?? [];
   const many = all.length > 1;
   return [
     { head: many ? "Agent sessions · most likely first" : "Agent session" },
-    ...all.map((a, i) => ({
+    ...all.map((a) => ({
       agent: a,
       label: clip(a.title || `Untitled ${a.label} session`),
-      tag: many && (i === 0 ? "created" : a.deep ? "worked here" : "mentioned"),
+      tag: sessionTag(w, a),
       sub: `${shortId(a.id)} · ${fmtAt(a.seenAt)}`,
       tip: agentTip(a),
       fn: (e) => resume(a, e),
+      more: (e) => drill(sessionActions(w, a), e),
     })),
     "-",
     {
@@ -1425,9 +1465,36 @@ function sessionItems(w) {
           many ? `${all.length} session IDs` : all[0].id,
         ),
     },
+  ];
+}
+
+function sessionActions(w, a) {
+  const tag = sessionTag(w, a);
+  return [
     {
-      label: "Copy resume command",
-      fn: (e) => copy(e, all[0].command, "ctx", "resume command"),
+      agent: a,
+      label: `‹ ${clip(a.title || `Untitled ${a.label} session`, 40)}`,
+      sub: [shortId(a.id), fmtAt(a.seenAt), tag].filter(Boolean).join(" · "),
+      tip: "Back to all sessions",
+      kbd: "←",
+      back: true,
+      keep: true,
+      fn: (e) => drill(sessionItems(w), e),
+    },
+    "-",
+    { label: `Open in ${a.label}`, kbd: "↩", fn: (e) => resume(a, e) },
+    {
+      label: "Resume in terminal",
+      sub: clip(a.command, 56),
+      tip: a.command,
+      fn: (e) => terminal(a, e),
+    },
+    "-",
+    { label: "Copy session ID", sub: a.id, fn: (e) => copy(e, a.id, "ctx") },
+    {
+      label: "Copy resume link",
+      sub: clip(a.url, 56),
+      fn: (e) => copy(e, a.url, "ctx", "resume link"),
     },
   ];
 }
@@ -1444,14 +1511,17 @@ function agentItems(w) {
       tip: agentTip(a),
       fn: (e) => resume(a, e),
     },
-    rest.length > 0 && {
-      label: `Agent sessions (${rest.length + 1})…`,
-      fn: (e) => openMenu(e, sessionItems(w)),
+    {
+      label: rest.length
+        ? `Agent sessions (${rest.length + 1})…`
+        : "Session actions…",
+      keep: true,
+      fn: (e) => drill(rest.length ? sessionItems(w) : sessionActions(w, a), e),
     },
     { label: "Copy session ID", fn: (e) => copy(e, a.id, "ctx") },
     {
-      label: "Copy resume command",
-      fn: (e) => copy(e, a.command, "ctx", "resume command"),
+      label: "Copy resume link",
+      fn: (e) => copy(e, a.url, "ctx", "resume link"),
     },
     "-",
   ];
@@ -2469,18 +2539,34 @@ async function confirmDiscard() {
   </div>
   </div>
   {/if}
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="ctx" popover="manual" bind:this={menuEl}
-       ontoggle={(e) => e.newState === "closed" && closeMenu()}>
+       ontoggle={(e) => e.newState === "closed" && closeMenu()}
+       onkeydown={(e) => menuNav(e)}>
     {#each menu?.items ?? [] as it, i (i)}
       {#if it === "-"}
         <hr>
       {:else if it.head}
         <div class="grp">{it.head}</div>
       {:else}
-        <button class:dg={it.danger} disabled={it.disabled} title={it.tip}
-                onclick={(e) => runItem(it, e)}>{#if it.agent}<span class="ag"
-                style="--ag: var(--{it.agent.tone})">{it.agent.glyph}</span>{/if}{it.label}{#if
-                it.tag}<span class="mtag" class:lead={it.tag === "created"}>{it.tag}</span>{/if}{#if it.kbd}<kbd>{it.kbd}</kbd>{/if}{#if it.sub}<small>{it.sub}</small>{/if}</button>
+        {#snippet item()}
+          <button class:dg={it.danger} disabled={it.disabled} title={it.tip}
+                  onclick={(e) => runItem(it, e)}
+                  onkeydown={(e) => { if (e.key === "ArrowRight") { e.stopPropagation(); menuNav(e, it); } }}
+                  oncontextmenu={(e) => { if (it.more) { e.preventDefault(); it.more(e); } }}
+                  >{#if it.agent}<span class="ag"
+                  style="--ag: var(--{it.agent.tone})">{it.agent.glyph}</span>{/if}{it.label}{#if
+                  it.tag}<span class="mtag" class:lead={it.tag === "created"}>{it.tag}</span>{/if}{#if it.kbd}<kbd>{it.kbd}</kbd>{/if}{#if it.sub}<small>{it.sub}</small>{/if}</button>
+        {/snippet}
+        {#if it.more}
+          <div class="split">
+            {@render item()}
+            <button class="more" tabindex="-1" title="Session actions"
+                    aria-label="Session actions" onclick={(e) => it.more(e)}>›</button>
+          </div>
+        {:else}
+          {@render item()}
+        {/if}
       {/if}
     {/each}
   </div>
@@ -3879,6 +3965,33 @@ select.theme {
 .ctx button:not(.btn):hover {
   background: var(--hl);
   color: var(--hlfg);
+}
+.ctx .split {
+  display: flex;
+  align-items: stretch;
+  gap: 0.125rem;
+}
+.ctx .split > button:first-child {
+  flex: 1;
+  min-width: 0;
+}
+.ctx .split .more {
+  flex: none;
+  width: 1.5rem;
+  padding: 0;
+  text-align: center;
+  color: var(--dim);
+  font-size: 0.875rem;
+  visibility: hidden;
+}
+.ctx .split:hover .more,
+.ctx .split:focus-within .more {
+  visibility: visible;
+}
+@media (hover: none) {
+  .ctx .split .more {
+    visibility: visible;
+  }
 }
 .ctx .grp {
   padding: 0.3125rem 0.625rem 0.125rem;

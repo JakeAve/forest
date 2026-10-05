@@ -63,9 +63,10 @@ Forest finds it by reading agent transcripts (`~/.claude/projects`,
 the badge means several sessions worked inside it. Click the badge to list every
 session that mentions the worktree, most likely creator first, and pick one to
 open it in its desktop app (`claude://resume`, `codex://threads/`); right-click
-resumes the most likely one directly. The menu also copies the session ID or a
-`claude --resume` / `codex resume` command for a terminal. Another agent is one
-entry in `PROVIDERS` in `agents.ts`.
+resumes the most likely one directly. A session's › (or right-click, or →) swaps
+the list for its actions: open in its app, resume in Terminal (`claude --resume`
+/ `codex resume` in the directory it started in), copy its ID or its resume
+link. Another agent is one entry in `PROVIDERS` in `agents.ts`.
 
 Auto-rebase keeps a worktree current with `origin/HEAD` on a timer
 (`autoRebaseMs`). A branch with an open PR is updated on GitHub, the same

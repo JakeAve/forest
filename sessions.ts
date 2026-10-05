@@ -224,6 +224,7 @@ export function createSessions(
                 startedAt: s.startedAt,
                 seenAt,
                 deep: deep.has(k),
+                url: s.p.url(s.id),
                 command: s.p.command(s),
               };
             },
@@ -234,11 +235,13 @@ export function createSessions(
       return out;
     },
 
-    // The deep link for a session Forest has indexed, so the resume route
-    // never opens a URL it built from request input alone.
-    url(agent: string, id: string): string | null {
+    // Only a session Forest has indexed, so a route never opens a link or
+    // runs a command built from request input alone.
+    find(agent: string, id: string): { url: string; command: string } | null {
       for (const s of scans.values()) {
-        if (s.p.agent === agent && s.id === id) return s.p.url(id);
+        if (s.p.agent === agent && s.id === id && s.cwd) {
+          return { url: s.p.url(id), command: s.p.command(s) };
+        }
       }
       return null;
     },

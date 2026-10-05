@@ -119,9 +119,12 @@ const make = (opts?: {
     stats,
     tools,
     sessions: {
-      url: (agent: string, id: string) =>
+      find: (agent: string, id: string) =>
         agent === "claude" && id === "known"
-          ? "claude://resume?session=known"
+          ? {
+            url: "claude://resume?session=known",
+            command: "cd '/r' && claude --resume known",
+          }
           : null,
     } as unknown as SessionsApi,
     desktop: false,
@@ -373,6 +376,23 @@ Deno.test("POST /api/agent-resume opens only an indexed session's link, only for
   );
   assertEquals(foreign.status, 400);
   assertEquals(sh.calls.length, 1);
+});
+
+Deno.test("POST /api/agent-terminal runs an indexed session's command in Terminal as an argument", async () => {
+  const run =
+    `osascript -e on run argv -e tell application "Terminal" to do script (item 1 of argv) -e tell application "Terminal" to activate -e end run cd '/r' && claude --resume known`;
+  const { routes, sh } = make({ table: { [run]: "" } });
+  const ok = await routes(
+    post("/api/agent-terminal", { agent: "claude", id: "known" }),
+    LOCAL,
+  );
+  assertEquals(ok.status, 200);
+  assertEquals(sh.calls, [`${HOME} $ ${run}`]);
+  const unknown = await routes(
+    post("/api/agent-terminal", { agent: "codex", id: "known" }),
+    LOCAL,
+  );
+  assertEquals(unknown.status, 400);
 });
 
 Deno.test("an unknown POST is 404", async () => {
