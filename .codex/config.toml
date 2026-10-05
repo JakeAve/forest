@@ -1,0 +1,2 @@
+[mcp_servers.forest]
+url = "http://forest-server.localhost:38471/mcp"
