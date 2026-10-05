@@ -77,7 +77,7 @@ fetch("/api/layout").then((r) => r.json()).then((l) => {
   if (l.closed) closed = l.closed;
   if (l.pinned) pinned = l.pinned;
   if (l.zoom) zoom = l.zoom;
-  if (l.theme) applyTheme(l.theme);
+  if (l.theme) applyTheme(l.theme, false);
 }).finally(() => (ready = true));
 
 let saveT;
@@ -1706,7 +1706,7 @@ function saveSettings() {
     }).then((r) => r.json()).then((s) => (settings = s)), 400);
 }
 
-async function applyTheme(name) {
+async function applyTheme(name, save = true) {
   const st = document.documentElement.style;
   let resolved = { vars: {}, dark: null };
   if (name !== "default") {
@@ -1730,7 +1730,7 @@ async function applyTheme(name) {
     st.setProperty("color-scheme", resolved.dark ? "dark" : "light");
   }
   theme = name;
-  saveLayout();
+  if (save) saveLayout();
 }
 
 async function importTheme(e) {
