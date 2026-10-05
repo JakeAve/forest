@@ -42,7 +42,7 @@ export function createWatcher(
     prs: Pick<PrsApi, "refreshPrs" | "pushSoon">;
     ports: { refresh(): Promise<void> };
     store: StoreApi;
-    sse: Pick<SseApi, "setStatus">;
+    sse: Pick<SseApi, "setStatus" | "emit">;
     stats: Stats;
     settings: Settings;
     root: string;
@@ -214,6 +214,19 @@ export function createWatcher(
     settings.watch && watcherUp && !storm ? "watch" : "poll";
   let watcherUp = false;
   const dirty = new Set<string>(); // repo paths
+  // worktree -> relative paths seen since the last drain, for the UI's file and
+  // tree panes. Flushed ahead of the backoff gate: a hot worktree still says
+  // what moved. ponytail: 200 paths per worktree per batch, the UI reloads the
+  // whole tree anyway
+  const changed = new Map<string, Set<string>>();
+  const FS_CAP = 200;
+
+  function emitChanged() {
+    for (const [wt, paths] of changed) {
+      sse.emit("fs", JSON.stringify({ wt, paths: [...paths] }));
+    }
+    changed.clear();
+  }
 
   // ---- storm mode: defence of last resort ----
   // A flood the ignore list did not anticipate. Above watchStormRate we stop
@@ -348,6 +361,7 @@ export function createWatcher(
     draining = true;
     const dt0 = performance.now();
     firstMarkAt = 0; // this batch is being consumed; the next mark starts a new one
+    emitChanged();
     try {
       if (rootDirty) {
         // a new directory under ROOT may be a new repo: only a full sweep knows
@@ -476,8 +490,13 @@ export function createWatcher(
       if (repo && bucket === "refs" && path.includes("/refs/remotes/")) {
         prs.pushSoon(repo, now);
       }
-      if (wt) markWt(wt);
-      else if (repo) markRepo(repo);
+      if (wt) {
+        const rel = path.slice(wt.length + 1);
+        const set = changed.get(wt) ?? new Set<string>();
+        if (rel && set.size < FS_CAP) set.add(rel);
+        changed.set(wt, set);
+        markWt(wt);
+      } else if (repo) markRepo(repo);
       else markRoot();
     }
   }

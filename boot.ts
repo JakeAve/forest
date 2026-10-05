@@ -60,10 +60,14 @@ export function boot(opts: {
     },
     stats,
   });
+  const watchFs = opts.watchFs ??
+    ((r: string) => Deno.watchFs(r, { recursive: true }));
   const files = createFiles({
     sh,
     known: store.known,
     mergeBase: repo.mergeBase,
+    watchFs,
+    onChange: (wt, paths) => sse.emit("fs", JSON.stringify({ wt, paths })),
   });
   const watcher = createWatcher({
     repo,
@@ -75,7 +79,7 @@ export function boot(opts: {
     settings,
     root,
     log: (o) => log.line(o),
-    watchFs: opts.watchFs ?? ((r) => Deno.watchFs(r, { recursive: true })),
+    watchFs,
   });
   const autoRebase = createAutoRebase({
     sh,
