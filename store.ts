@@ -91,7 +91,12 @@ export function createStore(
               ? [{ path: w.path }]
               : w.branch && w.branch !== r.defaultBranch &&
                   w.state !== "detached"
-              ? [{ path: w.path, branch: w.branch }]
+              ? [{
+                path: w.path,
+                branch: w.branch,
+                ...(w.ticket && !w.ticket.key.startsWith("#") &&
+                  { ticket: w.ticket.key }),
+              }]
               : []
           )
         ),

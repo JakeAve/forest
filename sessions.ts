@@ -29,24 +29,30 @@ type Scan = {
   prompt: string;
   seen: Map<string, number>; // path under home -> first mention
   ran: Map<string, number>; // `${cwd}\n${branch}` -> first line there
+  cds: Map<string, number>; // dir a command cd'd or `git -C`'d into -> first time
+  tickets: Map<string, number>; // upper-cased tracker key -> first mention
 };
 
 // What a worktree is matched by: its path, or for a main checkout on a
 // feature branch, sessions that ran inside it on that branch (every session
 // in the repo names the main checkout's path).
-export type WtKey = { path: string; branch?: string };
+export type WtKey = { path: string; branch?: string; ticket?: string };
 
-export const MAX_SHOWN = 5;
+export const MAX_SHOWN = 10;
+
+const CD_RX = /(?:\bcd|\bgit -C) +(?:\\"|["'])?(~?\/[^\s"'\\;&|)]*)/g;
+const TICKET_RX = /\b[A-Z][A-Z0-9]+-\d+\b/gi;
 
 // Earliest first, capped. The earliest always stays (likely the creator), then
 // sessions that worked inside the worktree beat ones that only named it.
 export function shown<T extends [string, number]>(
   sorted: T[],
   deep: Set<string>,
+  max = MAX_SHOWN,
 ): T[] {
   const [head, ...rest] = sorted;
   const keep = new Set(
-    [head, ...rest.filter((e) => deep.has(e[0])), ...rest].slice(0, MAX_SHOWN),
+    [head, ...rest.filter((e) => deep.has(e[0])), ...rest].slice(0, max),
   );
   return sorted.filter((e) => keep.has(e));
 }
@@ -70,11 +76,12 @@ const concat = (...parts: Uint8Array[]) => {
 };
 
 export function createSessions(
-  { home, providers, fs, onChange }: {
+  { home, providers, fs, onChange, max = () => MAX_SHOWN }: {
     home: string;
     providers: Provider[];
     fs: SessionFs;
     onChange: () => void;
+    max?: () => number;
   },
 ) {
   const scans = new Map<string, Scan>(); // file -> scan
@@ -131,6 +138,14 @@ export function createSessions(
     if (f.title) s.title = f.title;
     if (f.autoTitle) s.autoTitle = f.autoTitle;
     if (f.prompt && !s.prompt) s.prompt = promptTitle(f.prompt);
+    for (const m of l.matchAll(CD_RX)) {
+      const dir = m[1].replace(/^~/, home).replace(/\/+$/, "");
+      if (!s.cds.has(dir)) s.cds.set(dir, at);
+    }
+    for (const m of l.matchAll(TICKET_RX)) {
+      const k = m[0].toUpperCase();
+      if (!s.tickets.has(k)) s.tickets.set(k, at);
+    }
     for (const m of l.matchAll(pathRx)) {
       const path = m[0].replace(/\.+$/, "");
       if (!s.seen.has(path)) s.seen.set(path, at);
@@ -157,6 +172,8 @@ export function createSessions(
         prompt: "",
         seen: new Map(),
         ran: new Map(),
+        cds: new Map(),
+        tickets: new Map(),
       };
       scans.set(path, s);
     }
@@ -228,13 +245,14 @@ export function createSessions(
     // wt path -> sessions that mention it, earliest mention first. A session
     // is all its files: the transcript plus any subagent transcripts.
     forWts(wts: WtKey[]): Map<string, AgentSession[]> {
-      const key = `${version}\n${JSON.stringify(wts)}`;
+      const cap = max();
+      const key = `${version}\n${cap}\n${JSON.stringify(wts)}`;
       if (memo.key === key) return memo.value;
       const info = all();
       const out = new Map<string, AgentSession[]>();
       const under = (p: string, wt: string) =>
         p === wt || p.startsWith(wt + "/");
-      for (const { path: wt, branch } of wts) {
+      for (const { path: wt, branch, ticket } of wts) {
         const first = new Map<string, number>();
         const deep = new Set<string>();
         const hit = (k: string, at: number) => {
@@ -249,6 +267,9 @@ export function createSessions(
               deep.add(k);
               hit(k, at);
             }
+            for (const [dir, at] of s.cds) if (under(dir, wt)) hit(k, at);
+            const at = ticket && s.tickets.get(ticket);
+            if (at) hit(k, at);
             continue;
           }
           if (under(s.cwd, wt)) deep.add(k);
@@ -261,7 +282,7 @@ export function createSessions(
         if (!first.size) continue;
         out.set(
           wt,
-          shown([...first].sort((a, b) => a[1] - b[1]), deep).map(
+          shown([...first].sort((a, b) => a[1] - b[1]), deep, cap).map(
             ([k, seenAt]) => {
               const { agent, id, title } = info.get(k)!;
               return { agent, id, title, seenAt, deep: deep.has(k) };

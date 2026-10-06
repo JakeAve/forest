@@ -60,6 +60,7 @@ export function boot(opts: {
     providers: PROVIDERS,
     fs: opts.sessionFs ?? denoFs,
     onChange: () => store.publish(),
+    max: () => settings.agentsShown,
   });
   const store = createStore({
     prFor: (r, w) => prs.prFor(r, w),

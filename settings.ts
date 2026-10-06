@@ -17,6 +17,7 @@ export const DEFAULTS = {
   watchBackoffMaxMs: 30000,
   watchStormRate: 2000,
   recentCount: 10,
+  agentsShown: 10,
   agoRefreshMs: 30000,
   toastMs: 7000,
   collapseMargin: 3,
