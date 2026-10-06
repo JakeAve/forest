@@ -22,6 +22,7 @@ export const DEFAULTS = {
   collapseMargin: 3,
   collapseMinSize: 5,
   launchers: {} as Record<string, string>,
+  tickets: {} as Record<string, string>,
   keys: {} as Record<string, string>,
   notify: {} as Record<string, string>,
   notifyMuted: [] as string[],

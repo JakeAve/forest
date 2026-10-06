@@ -1593,3 +1593,38 @@ Deno.test("edges: a new reply in an existing thread fires new-comment", () => {
   assertEquals(kinds(at(0), at(1)), ["new-comment"]);
   assertEquals(kinds(at(1), at(2, base.author)), []);
 });
+
+import { sshHostName, ticketFor } from "./parse.ts";
+
+Deno.test("ticketFor: branch key, any case, through the template", () => {
+  assertEquals(
+    ticketFor("https://t/{key}", null, "jake/rom-1234-slug"),
+    { key: "ROM-1234", url: "https://t/ROM-1234" },
+  );
+});
+
+Deno.test("ticketFor: falls through branch, PR title, subject in order", () => {
+  assertEquals(
+    ticketFor("https://t/{key}", null, "feat/x", "ABC-9: thing", "DEF-1 fix"),
+    { key: "ABC-9", url: "https://t/ABC-9" },
+  );
+  assertEquals(ticketFor("https://t/{key}", null, "feat/x", null, "fix"), null);
+});
+
+Deno.test("ticketFor: #n links to repo issues, never the template", () => {
+  assertEquals(
+    ticketFor("https://t/{key}", "https://github.com/a/b", "fix #12 crash"),
+    { key: "#12", url: "https://github.com/a/b/issues/12" },
+  );
+  assertEquals(ticketFor(undefined, null, "fix #12 crash"), null);
+  assertEquals(ticketFor(undefined, null, "jake/rom-1234-slug"), null);
+  assertEquals(ticketFor("https://t/{key}", null, "see a#12 or x/#3"), null);
+});
+
+Deno.test("sshHostName reads the hostname line of ssh -G", () => {
+  assertEquals(
+    sshHostName("user git\nhostname github.com\nport 22\n"),
+    "github.com",
+  );
+  assertEquals(sshHostName(""), null);
+});

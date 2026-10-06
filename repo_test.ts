@@ -46,6 +46,17 @@ const make = (over?: Record<string, Entry>) => {
   return { sh, repo: createRepo({ sh, root: "/r" }) };
 };
 
+Deno.test("computeRepo resolves an ssh host alias through ssh -G", async () => {
+  const { sh, repo } = make({
+    [`${G} remote get-url origin`]: "git@github-personal:JakeAve/forest.git\n",
+    "ssh -G github-personal": "user git\nhostname github.com\nport 22\n",
+  });
+  const r = await repo.computeRepo("forest", REPO);
+  assertEquals(r?.webUrl, "https://github.com/JakeAve/forest");
+  await repo.computeRepo("forest", REPO);
+  assertEquals(sh.calls.filter((c) => c.includes("ssh -G")).length, 1);
+});
+
 Deno.test("computeRepo returns null when the first listed worktree is not the repo path", async () => {
   const { sh, repo } = make();
   assertEquals(await repo.computeRepo("other", "/r/other"), null);
