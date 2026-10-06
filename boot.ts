@@ -16,6 +16,7 @@ import { createNotify, fileInbox } from "./notify.ts";
 import { createTools } from "./tools.ts";
 import { BW, createRoutes } from "./routes.ts";
 import type { Settings } from "./settings.ts";
+import { ticketFor } from "./parse.ts";
 import { newStats } from "./stats.ts";
 
 // Builds the whole module graph and starts nothing: no timers, no watcher, no
@@ -62,6 +63,14 @@ export function boot(opts: {
   });
   const store = createStore({
     prFor: (r, w) => prs.prFor(r, w),
+    ticket: (r, w) =>
+      ticketFor(
+        settings.tickets[r.name] ?? settings.tickets["*"],
+        r.webUrl,
+        w.branch,
+        w.pr?.title,
+        w.subject,
+      ),
     autoRebase: (wt) => autoRebase.status(wt),
     prError: (r) => prs.prError(r),
     procs: () => ports.current(),

@@ -25,6 +25,7 @@ export type Worktree = {
   ports: number[];
   procs: Procs;
   pr: Pr | null;
+  ticket: Ticket | null;
   autoRebase: AutoRebase | null;
   agents: AgentSession[];
 };
@@ -98,5 +99,4 @@ export type Tree = { files: string[]; dirs: string[]; ignored: string[] };
 export type WtRow = Worktree & {
   webUrl: string | null;
   defaultBranch: string | null;
-  ticket: Ticket | null;
 };

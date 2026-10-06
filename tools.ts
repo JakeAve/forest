@@ -8,7 +8,6 @@ import {
   qnum,
   selectWt,
   sessionTag,
-  ticketFor,
 } from "./parse.ts";
 import type { FilesApi } from "./files.ts";
 import type { StoreApi } from "./store.ts";
@@ -45,13 +44,6 @@ export function createTools(deps: {
           ...w,
           webUrl: r.webUrl,
           defaultBranch: r.defaultBranch,
-          ticket: ticketFor(
-            settings.tickets[r.name] ?? settings.tickets["*"],
-            r.webUrl,
-            w.branch,
-            w.pr?.title,
-            w.subject,
-          ),
         }))
       )
       .sort((a, b) => b.lastActivity - a.lastActivity);

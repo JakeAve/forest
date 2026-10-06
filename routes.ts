@@ -155,6 +155,7 @@ export function createRoutes(deps: {
         if (req.method === "PUT") {
           Object.assign(SETTINGS, coerceSettings(DEFAULTS, await req.json()));
           await saveSettings(SETTINGS_PATH, SETTINGS);
+          store.publish();
           return json({ ...SETTINGS, desktop });
         }
         return json({ ...SETTINGS, desktop });

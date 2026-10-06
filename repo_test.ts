@@ -92,6 +92,7 @@ Deno.test("computeRepo builds one Worktree per porcelain entry with ahead/behind
     ports: [],
     procs: [],
     pr: null,
+    ticket: null,
     autoRebase: null,
     agents: [],
   });
