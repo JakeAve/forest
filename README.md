@@ -41,11 +41,13 @@ edit the file.
 
 ## What it shows
 
-Each worktree row carries its branch, dirty-file count, ahead/behind arrows,
-listening ports (linked, click to open), open PR number, and last activity —
-where activity means the newest of the HEAD commit and the mtime of any changed
-or untracked file, so a worktree you're editing sorts to the top before you
-commit anything.
+Each worktree row reads, under a header of column labels: branch, PR title,
+ticket, PR number with its status word and age (`#812 needs review 30m`),
+dirty-file count, ahead/behind arrows, the first listening port (linked, click
+to open) with `+n` for the rest, the coding agent badge, and last activity. Zero
+counts stay blank, and a merged or closed PR dims its whole row. Activity means
+the newest of the HEAD commit and the mtime of any changed or untracked file, so
+a worktree you're editing sorts to the top before you commit anything.
 
 The Recent group holds the most recently active worktrees; pin one from its
 right-click menu to keep it there. Fuzzy-filter by branch or repo name (`dc`

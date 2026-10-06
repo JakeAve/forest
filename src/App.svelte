@@ -7,6 +7,7 @@ import Hex from "./Hex.svelte";
 import { matchPath, matchWt, pathText, rank, wtText } from "./filter.js";
 import {
   ancestorDirs,
+  bucket,
   clampMenu,
   discardPrompt,
   isIgnoredPath,
@@ -820,6 +821,77 @@ function ago(ms) {
   if (s < 86400) return `${Math.floor(s / 3600)}h`;
   return `${Math.floor(s / 86400)}d`;
 }
+
+const COLUMNS = [
+  {
+    key: "branch",
+    label: "Branch",
+    align: "left",
+    stretch: true,
+    width: "12rem",
+  },
+  {
+    key: "title",
+    label: "Title",
+    align: "left",
+    stretch: true,
+    width: "13rem",
+  },
+  {
+    key: "ticket",
+    label: "Ticket",
+    align: "left",
+    stretch: true,
+    width: "4.5rem",
+  },
+  {
+    key: "pr",
+    label: "Pull request",
+    align: "left",
+    stretch: false,
+    width: "10.5rem",
+  },
+  {
+    key: "changes",
+    label: "Changes",
+    align: "right",
+    stretch: false,
+    width: "3.25rem",
+  },
+  {
+    key: "sync",
+    label: "Sync",
+    align: "right",
+    stretch: false,
+    width: "3.5rem",
+  },
+  {
+    key: "ports",
+    label: "Ports",
+    align: "left",
+    stretch: false,
+    width: "4.75rem",
+  },
+  {
+    key: "agent",
+    label: "Agent",
+    align: "left",
+    stretch: false,
+    width: "2.5rem",
+  },
+  {
+    key: "active",
+    label: "Active",
+    align: "right",
+    stretch: false,
+    width: "2.875rem",
+  },
+];
+const lead = $derived(COLUMNS.find((c) => c.stretch));
+const colTemplate = $derived(
+  ["0.75rem", ...COLUMNS.map((c) => c === lead ? "minmax(0, 1fr)" : c.width)]
+    .join(" "),
+);
 
 function splitPath(p) {
   const i = p.lastIndexOf("/");
@@ -2329,6 +2401,10 @@ async function confirmDiscard() {
       </div>
     {/if}
     <div class="body">
+      <div class="cols" style:grid-template-columns={colTemplate}>
+        <span></span>
+        {#each COLUMNS as col (col.key)}<span class:end={col.align === "right"}>{col.label}</span>{/each}
+      </div>
       {#if pinnedWts.length}
         <div class="repo st"><span class="rn">Pinned</span><span class="ct">{pinnedWts.length}</span></div>
         {#each pinnedWts as w (w.path)}
@@ -2396,6 +2472,7 @@ async function confirmDiscard() {
   {#snippet wtRow(w, showRepo)}
     {#key touched[w.path]}
       <div class="wt" class:sel={sel === w.path} class:touch={touched[w.path]} class:cached={repoOf(w)?.cached}
+           class:done={bucket(w) === "done"} style:grid-template-columns={colTemplate}
            role="button" tabindex="0" data-path={w.path} onclick={() => selectWt(w.path)}
            onkeydown={(e) => e.key === "Enter" ? selectWt(w.path) : menuKey(e, wtItems(w))}
            oncontextmenu={(e) => openMenu(e, wtItems(w))}>
@@ -2408,56 +2485,44 @@ async function confirmDiscard() {
                 onclick={(e) => toggleCheck(w, e)}
                 onkeydown={(e) => e.key === "Enter" && toggleCheck(w, e)}></span>
         {/if}
-        <span class="br" title={[w.branch, renamed(w) && `pushed as ${renamed(w)}`, dirName(w) &&
-          `in ${dirName(w)}/`, repoOf(w)?.cached && "last known state; refreshing"].filter(Boolean).join(" · ")}>{#if
-          showRepo}<span class="rp">{w.repo}</span>{/if}{w.branch}{#if
-          renamed(w)}<span class="rb">{renamed(w)}</span>{/if}{#if
-          dirName(w)}<span class="dir">{dirName(w)}</span>{/if}{#if
-          w.ticket}{@const t = w.ticket}<a class="port tk" href={t.url} target="_blank" rel="noreferrer"
-            title="open ticket {t.key}" onclick={(e) => e.stopPropagation()}>{t.key}</a>{/if}</span>
-        <span class="ags">
-          {#if w.agents?.length}
-            {@const a = full(w.agents[0])}
-            {@const n = w.agents.filter((x) => x.deep).length}
-            <button class="ag" style="--ag: var(--{a.tone})" aria-haspopup="menu"
-                    title={badgeTip(w)}
-                    onclick={(e) => openMenu(e, sessionItems(w), e.detail === 0)}>{a.glyph}{#if n > 1}<i>{n}</i>{/if}</button>
-          {/if}
-        </span>
-        <span class="prc">
-          {#if w.pr}
-            {@const s = prStatus(w.pr)}
-            <a class="port pr" data-tone={s.tone}
-               href={w.pr.url}
-               target="_blank" rel="noreferrer"
-               aria-label={[`${s.label}, PR #${w.pr.number}`, w.pr.title]
-                 .filter(Boolean).join(": ")}
-               onpointerenter={(e) => showCard(w, e)} onpointerleave={() => hideCard()}
-               onfocus={(e) => showCard(w, e)} onblur={() => hideCard()}
-               onclick={(e) => e.stopPropagation()}>{#if w.pr.autoMerge}<svg class="g am" viewBox="0 0 16 16">{@html AM_ICON}</svg>{/if}{#if w.autoRebase}<svg class="g ar" class:err={w.autoRebase.error} viewBox="0 0 16 16">{@html AR_ICON}</svg>{/if}#{w.pr.number}{#if s.glyph}<svg class="g" viewBox="0 0 16 16">{@html GLYPH[s.glyph]}</svg>{/if}</a>
-            <span class="prt {s.tone}" title="{s.sinceLabel} for {ago(s.since)}">{ago(s.since)}</span>
-          {:else if w.autoRebase}
-            <span class="port ar" class:err={w.autoRebase.error}
-                  title={w.autoRebase.error ?? "auto-rebase on"}><svg class="g ar" viewBox="0 0 16 16">{@html AR_ICON}</svg></span>
-          {/if}
-        </span>
-        <span class="ports">
-          {#each w.ports ?? [] as p}
-            <a class="port" href="http://localhost:{p}" target="_blank" rel="noreferrer"
-               title="running on port {p}" onclick={(e) => e.stopPropagation()}>:{p}</a>
-          {/each}
-        </span>
-        <span class="dirty" class:zero={!w.dirty}>{w.dirty ? "●" + w.dirty : "—"}</span>
-        <span class="ab" class:behind={prAb(w).behind > 0}
-              title={w.pr?.state === "OPEN"
-                ? `${prAb(w).behind} behind ${w.pr.baseRefName}, ${
-                  prAb(w).ahead
-                } ahead${
-                  prAb(w).behind > 0 ? " — right-click to update branch" : ""
-                }`
-                : null}>{(prAb(w).ahead ? `↑${prAb(w).ahead}` : "") +
-              (prAb(w).behind ? ` ↓${prAb(w).behind}` : "") || "—"}</span>
-        <span class="ago">{ago(w.lastActivity)}</span>
+        {#each COLUMNS as col (col.key)}
+          <span class="c" class:end={col.align === "right"} class:lead={col === lead} data-col={col.key}>{#if col.key === "branch"}<span class="br" title={[w.branch, renamed(w) && `pushed as ${renamed(w)}`, dirName(w) &&
+              `in ${dirName(w)}/`, repoOf(w)?.cached && "last known state; refreshing"].filter(Boolean).join(" · ")}>{#if
+              showRepo}<span class="rp">{w.repo}</span>{/if}{w.branch}{#if
+              renamed(w)}<span class="rb">{renamed(w)}</span>{/if}{#if
+              dirName(w)}<span class="dir">{dirName(w)}</span>{/if}</span>{:else if
+            col.key === "title"}{w.pr?.title || w.branch}{:else if
+            col.key === "ticket"}{#if w.ticket}<a href={w.ticket.url} target="_blank" rel="noreferrer"
+                title="open ticket {w.ticket.key}" onclick={(e) => e.stopPropagation()}>{w.ticket.key}</a>{/if}{:else if
+            col.key === "pr"}{#if w.pr}{@const s = prStatus(w.pr)}<a
+                href={w.pr.url}
+                target="_blank" rel="noreferrer"
+                aria-label={[`${s.label}, PR #${w.pr.number}`, w.pr.title]
+                  .filter(Boolean).join(": ")}
+                onpointerenter={(e) => showCard(w, e)} onpointerleave={() => hideCard()}
+                onfocus={(e) => showCard(w, e)} onblur={() => hideCard()}
+                onclick={(e) => e.stopPropagation()}>{#if w.pr.autoMerge}<svg class="g am" viewBox="0 0 16 16">{@html AM_ICON}</svg>{/if}{#if w.autoRebase}<svg class="g ar" class:err={w.autoRebase.error} viewBox="0 0 16 16">{@html AR_ICON}</svg>{/if}#{w.pr.number}</a> <span
+                class="pst" class:pill={s.weight === "loud"} data-tone={s.tone}
+                title="{s.sinceLabel} for {ago(s.since)}">{#if s.glyph}<svg class="g" viewBox="0 0 16 16">{@html GLYPH[s.glyph]}</svg>{/if}{s.label.toLowerCase()}{s.since ? ` ${ago(s.since)}` : ""}</span>{:else if
+              w.autoRebase}<span class="port ar" class:err={w.autoRebase.error}
+                title={w.autoRebase.error ?? "auto-rebase on"}><svg class="g ar" viewBox="0 0 16 16">{@html AR_ICON}</svg></span>{/if}{:else if
+            col.key === "changes"}{#if w.dirty}<span class="warn">●{w.dirty}</span>{/if}{:else if
+            col.key === "sync"}{@const ab = prAb(w)}{#if ab.ahead || ab.behind}<span class:warn={ab.behind > 0}
+                title={w.pr?.state === "OPEN"
+                  ? `${ab.behind} behind ${w.pr.baseRefName}, ${ab.ahead} ahead${
+                    ab.behind > 0 ? " — right-click to update branch" : ""
+                  }`
+                  : null}>{[ab.ahead && `↑${ab.ahead}`, ab.behind && `↓${ab.behind}`].filter(Boolean).join(" ")}</span>{/if}{:else if
+            col.key === "ports"}{#if w.ports?.length}<span title={w.ports.map((p) => `:${p}`).join(" ")}><a
+                href="http://localhost:{w.ports[0]}" target="_blank" rel="noreferrer"
+                onclick={(e) => e.stopPropagation()}>:{w.ports[0]}</a>{#if w.ports.length > 1}<span
+                class="more">+{w.ports.length - 1}</span>{/if}</span>{/if}{:else if
+            col.key === "agent"}{#if w.agents?.length}{@const a = full(w.agents[0])}{@const n = w.agents.filter((x) => x.deep).length}<button
+                class="ag" style="--ag: var(--{a.tone})" aria-haspopup="menu"
+                title={badgeTip(w)}
+                onclick={(e) => openMenu(e, sessionItems(w), e.detail === 0)}>{a.glyph}{#if n > 1}<i>{n}</i>{/if}</button>{/if}{:else if
+            col.key === "active"}{ago(w.lastActivity)}{/if}</span>
+        {/each}
       </div>
     {/key}
   {/snippet}
@@ -3712,10 +3777,31 @@ select.theme {
   color: var(--dimmer);
   font-size: 0.6875rem;
 }
+.cols {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: grid;
+  gap: 0.5rem;
+  padding: 0.25rem 0.625rem;
+  background: var(--bg2);
+  color: var(--dim);
+  font-size: 0.6875rem;
+  white-space: nowrap;
+}
+.cols > *,
+.wt .c {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cols .end,
+.wt .end {
+  text-align: right;
+}
 .wt {
   display: grid;
-  grid-template-columns:
-    0.75rem 1fr auto 5rem minmax(5.25rem, auto) 4.625rem 3.875rem 2.875rem;
   align-items: center;
   gap: 0.5rem;
   padding: 0.3125rem 0.625rem;
@@ -3727,32 +3813,80 @@ select.theme {
   background: var(--hov);
 }
 .wt.sel {
-  background: var(--hl);
+  background: color-mix(in srgb, var(--acc) 14%, var(--bg));
   box-shadow: inset 3px 0 0 var(--acc);
 }
 .wt .br {
   font-family: var(--mono);
   font-size: 0.71875rem;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
-.wt .br .tk {
-  margin-left: 0.375rem;
+.wt .c a {
+  font: 0.6875rem var(--mono);
+  color: var(--acc);
+  text-decoration: none;
+}
+.wt .c a:hover {
+  text-decoration: underline;
+}
+.wt .c .g {
+  width: 10px;
+  height: 10px;
+  vertical-align: -1px;
+}
+.wt .pst {
+  font: 0.625rem var(--mono);
   color: var(--dim);
-  background: transparent;
-  border-color: var(--line);
 }
-.wt .br .tk:hover {
-  color: var(--fg);
-  border-color: var(--dim);
+.wt .pill {
+  --tone: var(--fg);
+  padding: 0 0.375rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--tone) 15%, transparent);
+  color: var(--tone);
+}
+.pill[data-tone="ok"] {
+  --tone: var(--acc);
+}
+.pill[data-tone="warn"] {
+  --tone: var(--warn);
+}
+.pill[data-tone="bad"] {
+  --tone: var(--danger);
+}
+.pill[data-tone="merged"] {
+  --tone: var(--merged);
+}
+.pill[data-tone="draft"],
+.pill[data-tone="closed"] {
+  --tone: var(--dim);
+}
+.wt .more {
+  margin-left: 0.25rem;
+  font: 0.6875rem var(--mono);
+  color: var(--dim);
+}
+.wt [data-col="title"] {
+  color: var(--dim);
+}
+.wt [data-col="changes"],
+.wt [data-col="sync"],
+.wt [data-col="active"] {
+  font: 0.6875rem var(--mono);
+  color: var(--dim);
+}
+.wt [data-col="active"] {
+  color: var(--dimmer);
+}
+.wt .warn {
+  color: var(--warn);
+}
+.wt.done .c,
+.wt.done .c * {
+  color: var(--dim);
 }
 .wt.cached .br {
   color: var(--dim);
   font-style: italic;
-}
-.wt.sel .br {
-  color: var(--hlfg);
 }
 .repo.st {
   cursor: default;
@@ -3805,12 +3939,6 @@ select.theme {
   font-style: normal;
   font-size: 0.625rem;
 }
-.prc,
-.ports {
-  display: flex;
-  justify-content: center;
-  gap: 0.25rem;
-}
 .port {
   font: 0.625rem var(--mono);
   color: var(--acc);
@@ -3831,27 +3959,6 @@ select.theme {
   border-color: transparent;
   color: var(--bg);
   background: var(--acc);
-}
-.pr .g {
-  width: 10px;
-  height: 10px;
-}
-.prt {
-  font: 0.625rem var(--mono);
-  white-space: nowrap;
-  color: var(--dim);
-}
-.prt.ok {
-  color: var(--acc);
-}
-.prt.bad {
-  color: var(--danger);
-}
-.prt.warn {
-  color: var(--warn);
-}
-.prt.merged {
-  color: var(--merged);
 }
 .pr[data-tone="bad"] {
   background: var(--danger);
@@ -3879,22 +3986,6 @@ select.theme {
   filter: brightness(1.15);
   text-decoration: underline;
 }
-.wt .dirty {
-  font: 0.6875rem var(--mono);
-  color: var(--warn);
-  text-align: right;
-}
-.wt .dirty.zero {
-  color: var(--dimmer);
-}
-.wt .ab {
-  font: 0.6875rem var(--mono);
-  color: var(--dim);
-  text-align: right;
-}
-.wt .ab.behind {
-  color: var(--warn);
-}
 .port.ar {
   display: inline-flex;
   align-items: center;
@@ -3907,11 +3998,6 @@ select.theme {
 .g.ar.err,
 .port.ar.err {
   color: var(--danger);
-}
-.wt .ago {
-  font: 0.6875rem var(--mono);
-  color: var(--dimmer);
-  text-align: right;
 }
 @keyframes flash {
   0% {
@@ -4528,34 +4614,41 @@ select.theme {
     width: auto;
     min-width: 0;
   }
+  .cols {
+    display: none;
+  }
   .wt {
-    grid-template-columns: 0.75rem auto auto minmax(0, 1fr) auto auto;
+    display: flex;
+    flex-wrap: wrap;
     row-gap: 0.125rem;
   }
-  .wt .br {
-    grid-area: 1 / 2 / 2 / 6;
+  .wt > * {
+    order: 2;
   }
-  .wt .ago {
-    grid-area: 1 / 6;
+  .wt > :first-child,
+  .wt .lead,
+  .wt [data-col="active"] {
+    order: 0;
   }
-  .wt .prc {
-    grid-area: 2 / 2;
+  .wt::before {
+    content: "";
+    order: 1;
+    width: 0.75rem;
   }
-  .wt .ports {
-    grid-area: 2 / 3;
+  .wt [data-col="title"] {
+    flex: 1 1 0;
   }
-  .wt .ags {
-    grid-area: 2 / 4;
-    justify-self: start;
+  .wt > :first-child {
+    flex: 0 0 0.75rem;
   }
-  .wt .dirty {
-    grid-area: 2 / 5;
+  .wt [data-col="active"] {
+    flex: 0 0 2.875rem;
   }
-  .wt .ab {
-    grid-area: 2 / 6;
+  .wt .lead {
+    flex: 1 0 calc(100% - 4.7rem);
   }
-  .wt .dirty.zero {
-    visibility: hidden;
+  .wt .c:empty {
+    display: none;
   }
 }
 </style>
