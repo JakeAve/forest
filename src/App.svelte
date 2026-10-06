@@ -4070,6 +4070,10 @@ select.theme {
 .wt.done .c * {
   color: var(--dim);
 }
+.wt.done .ag {
+  background: color-mix(in srgb, var(--dim) 12%, transparent);
+  border-color: color-mix(in srgb, var(--dim) 35%, transparent);
+}
 .wt.cached .br {
   color: var(--dim);
   font-style: italic;
