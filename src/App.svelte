@@ -62,6 +62,7 @@ const MODES = {
 const MODE_LABEL = { text: "Text", preview: "Preview", hex: "Hex" };
 let modes = $state({ text: "text", markup: "text", media: "preview" });
 let closed = $state({});
+let widths = $state({});
 let pinned = $state({});
 let checked = $state({});
 let ready = $state(false);
@@ -78,6 +79,7 @@ fetch("/api/layout").then((r) => r.json()).then((l) => {
     if (MODES[k].includes(l.modes?.[k])) modes[k] = l.modes[k];
   }
   if (l.closed) closed = l.closed;
+  if (l.widths) widths = l.widths;
   if (l.pinned) pinned = l.pinned;
   if (l.zoom) zoom = l.zoom;
   if (l.theme) applyTheme(l.theme, false);
@@ -97,6 +99,7 @@ function saveLayout() {
         wrap,
         modes,
         closed,
+        widths,
         pinned,
         theme,
         zoom,
@@ -936,10 +939,117 @@ const lead = $derived(
 const colTemplate = $derived(
   [
     "calc(0.75rem + (2 - var(--depth, 0)) * var(--indent))",
-    ...visibleCols.map((c) => c === lead ? "minmax(0, 1fr)" : c.width),
+    ...visibleCols.map((c) =>
+      widths[c.key] ?? (c === lead ? "minmax(0, 1fr)" : c.width)
+    ),
+    ...(lead && !widths[lead.key] ? [] : ["minmax(0, 1fr)"]),
   ].join(" "),
 );
-let dragCol = null;
+let colsEl = $state();
+// a header gesture in flight: `size` drags a column edge, `move` drags a
+// column to a new slot. `x` is where the guide line is drawn.
+let colOp = $state(null);
+const movingCol = $derived(colOp?.kind === "move" ? colOp.key : null);
+
+function listBox() {
+  const r = colsEl.parentElement.getBoundingClientRect();
+  return { top: r.top, h: r.height };
+}
+
+const halfGap = () => parseFloat(getComputedStyle(colsEl).columnGap) / 2;
+
+function track(e, cls, move, done) {
+  const el = e.currentTarget;
+  el.setPointerCapture(e.pointerId);
+  document.documentElement.classList.add(cls);
+  const esc = (k) => k.key === "Escape" && end(null);
+  const end = (u) => {
+    el.removeEventListener("pointermove", move);
+    el.removeEventListener("pointerup", end);
+    el.removeEventListener("pointercancel", end);
+    removeEventListener("keydown", esc, true);
+    document.documentElement.classList.remove(cls);
+    done(u?.type === "pointerup" ? u : null);
+    colOp = null;
+  };
+  el.addEventListener("pointermove", move);
+  el.addEventListener("pointerup", end);
+  el.addEventListener("pointercancel", end);
+  addEventListener("keydown", esc, true);
+}
+
+function sizeCol(e, col) {
+  if (e.button !== 0) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const cell = e.currentTarget.parentElement;
+  const left = cell.getBoundingClientRect().left;
+  const w0 = cell.offsetWidth;
+  const prev = widths[col.key];
+  let moved = false;
+  const at = (w) =>
+    colOp = {
+      kind: "size",
+      key: col.key,
+      x: left + w + halfGap(),
+      ...listBox(),
+    };
+  at(w0);
+  track(e, "colsizing", (m) => {
+    moved = true;
+    const w = Math.max(24, Math.round(w0 + m.clientX - e.clientX));
+    widths[col.key] = w + "px";
+    at(w);
+  }, (u) => {
+    if (!moved) return;
+    if (u) return saveLayout();
+    if (prev) widths[col.key] = prev;
+    else delete widths[col.key];
+  });
+}
+
+function fitCol(key) {
+  const cells = [...b1El.querySelectorAll(`[data-col="${key}"]`)];
+  for (const c of cells) c.style.width = "max-content";
+  const w = Math.max(24, ...cells.map((c) => c.offsetWidth));
+  for (const c of cells) c.style.width = "";
+  widths[key] = Math.ceil(w) + "px";
+  saveLayout();
+}
+
+function resetWidths(key) {
+  if (key) delete widths[key];
+  else widths = {};
+  saveLayout();
+}
+
+function grabCol(e, col) {
+  if (e.button !== 0) return;
+  const cells = [...colsEl.querySelectorAll(".h")];
+  const from = visibleCols.indexOf(col);
+  const rects = cells.map((c) => c.getBoundingClientRect());
+  const r0 = rects[from];
+  const others = rects.filter((_, i) => i !== from);
+  const g = halfGap();
+  let to = from;
+  track(e, "colmoving", (m) => {
+    if (!colOp && Math.abs(m.clientX - e.clientX) < 4) return;
+    const x = m.clientX;
+    to = others.filter((r) => r.left + r.width / 2 < x).length;
+    colOp = {
+      kind: "move",
+      key: col.key,
+      label: col.label,
+      x: to < others.length ? others[to].left - g : others.at(-1).right + g,
+      ghost: Math.min(
+        Math.max(r0.left + x - e.clientX, rects[0].left),
+        rects.at(-1).right - r0.width,
+      ),
+      w: r0.width,
+      ...listBox(),
+    };
+  }, (u) => u && colOp && to !== from && moveCol(col.key, to));
+}
 
 function setCols(keys) {
   settings.columns = keys.length ? keys : ["none"];
@@ -957,11 +1067,17 @@ function moveCol(key, i) {
   setCols(keys);
 }
 
-const colItems = () =>
-  COLUMNS.map((c) => ({
+const colItems = (key) => [
+  key && { label: "Autofit width", fn: () => fitCol(key) },
+  key && widths[key] && { label: "Reset width", fn: () => resetWidths(key) },
+  Object.keys(widths).length &&
+  { label: "Reset all widths", fn: () => resetWidths() },
+  "-",
+  ...COLUMNS.map((c) => ({
     label: (visibleCols.includes(c) ? "✓ " : "") + c.label,
     fn: () => toggleCol(c.key),
-  }));
+  })),
+];
 
 function splitPath(p) {
   const i = p.lastIndexOf("/");
@@ -2502,18 +2618,26 @@ async function confirmDiscard() {
     {/if}
     <div class="body">
       <!-- svelte-ignore a11y_no_static_element_interactions, a11y_no_noninteractive_tabindex -->
-      <div class="cols" style:grid-template-columns={colTemplate} tabindex="0"
+      <div class="cols" style:grid-template-columns={colTemplate} tabindex="0" bind:this={colsEl}
            onkeydown={(e) => menuKey(e, colItems())}
-           oncontextmenu={(e) => openMenu(e, colItems())}>
+           oncontextmenu={(e) => openMenu(e, colItems(e.target.closest?.("[data-col]")?.dataset.col))}>
         <span></span>
-        {#each visibleCols as col (col.key)}<span class:end={col.align === "right"} draggable="true"
-              ondragstart={(e) => ((dragCol = col.key), e.dataTransfer.setData("text/plain", col.key))} ondragover={(e) => e.preventDefault()}
-              ondragend={() => (dragCol = null)}
-              ondrop={() => dragCol && dragCol !== col.key && moveCol(dragCol,
-                visibleCols.filter((c) => c.key !== dragCol).findIndex((c) => c.key === col.key) +
-                  (visibleCols.findIndex((c) => c.key === dragCol) < visibleCols.indexOf(col) ? 1 : 0))}
-            >{col.label}</span>{/each}
+        {#each visibleCols as col (col.key)}
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <span class="h" class:end={col.align === "right"} class:moving={movingCol === col.key} data-col={col.key}
+                onpointerdown={(e) => grabCol(e, col)}><span class="lbl">{col.label}</span><i
+                class="colsz" class:on={colOp?.kind === "size" && colOp.key === col.key}
+                title="Drag to resize · double-click to fit"
+                onpointerdown={(e) => sizeCol(e, col)} ondblclick={() => fitCol(col.key)}></i></span>
+        {/each}
       </div>
+      {#if colOp?.x != null}
+        <div class="colguide" style:left="{colOp.x}px" style:top="{colOp.top}px" style:height="{colOp.h}px"></div>
+      {/if}
+      {#if colOp?.ghost != null}
+        <div class="colghost" style:left="{colOp.ghost}px" style:top="{colOp.top}px"
+             style:width="{colOp.w}px" style:height="{colOp.h}px"><span>{colOp.label}</span></div>
+      {/if}
       {#if pinnedWts.length}
         {@render container("__pinned", "Pinned", pinnedWts.length, bucketSummary(pinnedWts),
           () => repoItems({ name: "__pinned", label: "Pinned" }, pinnedWts), pinnedWts)}
@@ -2601,7 +2725,7 @@ async function confirmDiscard() {
                 onkeydown={(e) => e.key === "Enter" && toggleCheck(w, e)}></span>
         {/if}
         {#each visibleCols as col (col.key)}
-          <span class="c" class:end={col.align === "right"} class:lead={col === lead} data-col={col.key}>{#if col.key === "branch"}<span class="br" title={[w.branch, renamed(w) && `pushed as ${renamed(w)}`, dirName(w) &&
+          <span class="c" class:end={col.align === "right"} class:lead={col === lead} class:moving={movingCol === col.key} data-col={col.key}>{#if col.key === "branch"}<span class="br" title={[w.branch, renamed(w) && `pushed as ${renamed(w)}`, dirName(w) &&
               `in ${dirName(w)}/`, repoOf(w)?.cached && "last known state; refreshing"].filter(Boolean).join(" · ")}>{#if
               showRepo}<span class="rp">{w.repo}</span>{/if}{w.branch}{#if
               renamed(w)}<span class="rb">{renamed(w)}</span>{/if}{#if
@@ -3197,7 +3321,7 @@ async function confirmDiscard() {
     </div>
   {/each}
   <div class="row">
-    <button class="btn" onclick={() => ((settings.columns = []), saveSettings())}>Reset columns</button>
+    <button class="btn" onclick={() => ((settings.columns = []), saveSettings(), resetWidths())}>Reset columns</button>
   </div>
 
   <div class="sec">Launchers</div>
@@ -3968,6 +4092,98 @@ select.theme {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.cols > .h {
+  position: relative;
+  overflow: visible;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: start;
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+.cols > .h.end {
+  justify-content: end;
+}
+.cols .lbl {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cols > .h:hover {
+  color: var(--fg);
+}
+.colsz {
+  position: absolute;
+  z-index: 1;
+  top: -0.25rem;
+  bottom: -0.25rem;
+  right: calc(-0.25rem - 0.3125rem);
+  width: 0.625rem;
+  cursor: col-resize;
+  touch-action: none;
+}
+.colsz::after {
+  content: "";
+  position: absolute;
+  left: calc(50% - 0.5px);
+  top: 0.375rem;
+  bottom: 0.375rem;
+  width: 1px;
+  background: var(--line);
+}
+.colsz:hover::after,
+.colsz.on::after {
+  left: calc(50% - 1px);
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--acc);
+}
+.colguide {
+  position: fixed;
+  z-index: 20;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--acc);
+  pointer-events: none;
+}
+.colghost {
+  position: fixed;
+  z-index: 19;
+  border: 1px solid var(--acc);
+  border-radius: 0.25rem;
+  background: color-mix(in srgb, var(--acc) 10%, transparent);
+  pointer-events: none;
+}
+.colghost span {
+  display: block;
+  height: var(--colsh, 1.375rem);
+  padding: 0 0.375rem;
+  line-height: var(--colsh, 1.375rem);
+  background: var(--bg3);
+  color: var(--fg);
+  font-size: 0.6875rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cols > .moving,
+.wt .moving {
+  background: color-mix(in srgb, var(--acc) 8%, transparent);
+  color: var(--dimmer);
+}
+:global(html.colsizing),
+:global(html.colsizing *) {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
+:global(html.colmoving),
+:global(html.colmoving *) {
+  cursor: grabbing !important;
+  user-select: none !important;
 }
 .cols .end,
 .wt .end {
