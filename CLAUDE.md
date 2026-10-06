@@ -44,4 +44,5 @@ deno task setup                # git hooks run check + test on commit/push
 - API first: a fact about a worktree or repo (a PR, a ticket, a port) is a field
   on the row, resolved in `store.publish()` from its deps, so the SSE snapshot,
   the boot cache and the agent tools carry one value. The UI and `tools.ts` read
-  rows; they never derive what the server could have.
+  rows; a fact computed only in one of them is invisible to the others. The boot
+  cache is stale rows the server built, not a place to compute new ones.
