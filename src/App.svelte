@@ -1010,9 +1010,11 @@ function sizeCol(e, col) {
 
 function fitCol(key) {
   const cells = [...b1El.querySelectorAll(`[data-col="${key}"]`)];
-  for (const c of cells) c.style.width = "max-content";
+  for (const c of cells) {
+    c.style.cssText = "width: max-content; container-type: normal";
+  }
   const w = Math.max(24, ...cells.map((c) => c.offsetWidth));
-  for (const c of cells) c.style.width = "";
+  for (const c of cells) c.style.cssText = "";
   widths[key] = Math.ceil(w) + "px";
   saveLayout();
 }
@@ -2752,14 +2754,15 @@ async function confirmDiscard() {
                     ab.behind > 0 ? " — right-click to update branch" : ""
                   }`
                   : null}>{[ab.ahead && `↑${ab.ahead}`, ab.behind && `↓${ab.behind}`].filter(Boolean).join(" ")}</span>{/if}{:else if
-            col.key === "ports"}{#if w.ports?.length}<span title={w.ports.map((p) => `:${p}`).join(" ")}><a
-                href="http://localhost:{w.ports[0]}" target="_blank" rel="noreferrer"
-                onclick={(e) => e.stopPropagation()}>:{w.ports[0]}</a>{#if w.ports.length > 1}<button
-                class="more" aria-haspopup="menu" title="all ports"
+            col.key === "ports"}{#if w.ports?.length}<span class="pts" style:counter-reset="more {w.ports.length}"
+                title={w.ports.map((p) => `:${p}`).join(" ")}>{#each w.ports as p (p)}<a
+                href="http://localhost:{p}" target="_blank" rel="noreferrer"
+                onclick={(e) => e.stopPropagation()}>:{p}</a>{/each}{#if w.ports.length > 1}<button
+                class="more" aria-haspopup="menu" aria-label="all ports" title="all ports"
                 onclick={(e) => openMenu(e, w.ports.map((p) => ({
                   label: `Open :${p}`,
                   fn: () => open(`http://localhost:${p}`, "_blank", "noreferrer"),
-                })), e.detail === 0)}>+{w.ports.length - 1}</button>{/if}</span>{/if}{:else if
+                })), e.detail === 0)}></button>{/if}</span>{/if}{:else if
             col.key === "agent"}{#if w.agents?.length}{@const a = full(w.agents[0])}{@const n = w.agents.filter((x) => x.deep).length}<button
                 class="ag" style="--ag: var(--{a.tone})" aria-haspopup="menu"
                 title={badgeTip(w)}
@@ -4273,6 +4276,83 @@ select.theme {
 .wt .more:hover {
   color: var(--fg);
   text-decoration: underline;
+}
+/* each port is ~7ch with its gap, "+n" ~3ch; show the ports that fit */
+.wt .c[data-col="ports"] {
+  container: ports / inline-size;
+  font: 0.6875rem var(--mono);
+}
+.wt .pts {
+  display: flex;
+  gap: 1ch;
+}
+.wt .pts a {
+  counter-increment: more -1;
+}
+.wt .pts .more {
+  display: none;
+  margin: 0;
+}
+.wt .pts .more::after {
+  content: "+" counter(more);
+}
+.wt .pts a:nth-of-type(n + 6) {
+  display: none;
+}
+.wt .pts:has(a:nth-of-type(6)) .more {
+  display: block;
+}
+@container ports (width < 16ch) {
+  .wt .pts a:nth-of-type(2):not(:last-of-type) {
+    display: none;
+  }
+}
+@container ports (width < 13ch) {
+  .wt .pts a:nth-of-type(2) {
+    display: none;
+  }
+  .wt .pts:has(a:nth-of-type(2):last-of-type) .more {
+    display: block;
+  }
+}
+@container ports (width < 23ch) {
+  .wt .pts a:nth-of-type(3):not(:last-of-type) {
+    display: none;
+  }
+}
+@container ports (width < 20ch) {
+  .wt .pts a:nth-of-type(3) {
+    display: none;
+  }
+  .wt .pts:has(a:nth-of-type(3):last-of-type) .more {
+    display: block;
+  }
+}
+@container ports (width < 30ch) {
+  .wt .pts a:nth-of-type(4):not(:last-of-type) {
+    display: none;
+  }
+}
+@container ports (width < 27ch) {
+  .wt .pts a:nth-of-type(4) {
+    display: none;
+  }
+  .wt .pts:has(a:nth-of-type(4):last-of-type) .more {
+    display: block;
+  }
+}
+@container ports (width < 37ch) {
+  .wt .pts a:nth-of-type(5):not(:last-of-type) {
+    display: none;
+  }
+}
+@container ports (width < 34ch) {
+  .wt .pts a:nth-of-type(5) {
+    display: none;
+  }
+  .wt .pts:has(a:nth-of-type(5):last-of-type) .more {
+    display: block;
+  }
 }
 .wt [data-col="title"],
 .wt [data-col="branch"] {
