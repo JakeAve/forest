@@ -68,6 +68,8 @@ const CHAINS = {
   "--tk-op": ["--acc"],
   "--tk-bad": ["--danger"],
   "--merged": ["charts.purple", "terminal.ansiMagenta", "--tk-kw"],
+  "--agent-a": ["terminal.ansiRed", "--tk-num"],
+  "--agent-b": ["terminal.ansiBlue", "--tk-fn"],
 };
 
 // Surfaces may legitimately equal --bg; anything drawn on a surface may not.
@@ -94,6 +96,8 @@ const LIGHT = {
   "--tk-op": "#0550ae",
   "--tk-bad": "#cf222e",
   "--merged": "#8250df",
+  "--agent-a": "#bc4c00",
+  "--agent-b": "#0550ae",
 };
 
 // VS Code themes may "include" a base file; the child's colors win.
@@ -205,9 +209,15 @@ export function resolveTheme(theme) {
   if (same(b3raw, b2raw)) vars["--bg3"] = shift(vars["--bg2"], 0.02, dark);
   if (!vars["--hl"]) vars["--hl"] = shift(vars["--bg"], 0.16, dark);
   if (!vars["--hov"]) vars["--hov"] = vars["--bg3"];
+  if (!vars["--line"] || contrast(vars["--line"], vars["--bg"]) > 3) {
+    vars["--line"] = shift(vars["--bg"], 0.08, dark);
+  }
   if (!dark) { for (const [k, c] of Object.entries(LIGHT)) vars[k] ??= c; }
   if (vars["--fg"]) {
     const f = parseColor(vars["--fg"]), g = parseColor(vars["--bg"]);
+    for (const k of ["--dim", "--dimmer"]) {
+      if (vars[k] && contrast(vars[k], vars["--fg"]) < 1.3) delete vars[k];
+    }
     if (!vars["--dim"]) vars["--dim"] = toHex(mix(f, g, 0.42));
     if (!vars["--dimmer"]) vars["--dimmer"] = toHex(mix(f, g, 0.62));
     vars["--tk-cm"] = toHex(mix(f, g, 0.5));

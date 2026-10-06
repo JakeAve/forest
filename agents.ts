@@ -50,7 +50,7 @@ export const PROVIDERS: Provider[] = [
     agent: "claude",
     label: "Claude",
     glyph: "✳",
-    tone: "tk-num",
+    tone: "agent-a",
     root: ".claude/projects",
     sessionOf: (rel) =>
       rel.match(
@@ -71,7 +71,7 @@ export const PROVIDERS: Provider[] = [
     agent: "codex",
     label: "Codex",
     glyph: "◎",
-    tone: "tk-fn",
+    tone: "agent-b",
     root: ".codex/sessions",
     sessionOf: (rel) =>
       rel.match(

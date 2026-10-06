@@ -23,6 +23,11 @@ vars through `resolveTheme` in `src/theme.js`; the mapping lives in its `CHAINS`
   not reach 1.5:1 against `--bg` is skipped automatically; do not special-case a theme.
 - Missing keys are repaired, not defaulted: derive from a sibling var (`shift`, `mix`,
   alpha) so the result follows the theme's own palette.
+- Unusable keys count as missing. `--dim`/`--dimmer` under 1.3:1 against `--fg` are
+  re-mixed from `--fg`, so text keeps three steps. `--line` over 3:1 against `--bg` (or
+  absent) becomes `shift(--bg, 0.08)`, so borders stay hairlines.
+- Agent badges use `--agent-a`/`--agent-b`, named by `tone` in `PROVIDERS` (`agents.ts`).
+  A new provider takes one of these or a new `--agent-*` var, never a `--tk-*` one.
 
 ## Check a theme
 
