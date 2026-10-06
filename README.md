@@ -44,12 +44,12 @@ edit the file.
 Each worktree row reads, under a header of column labels: branch, PR title,
 ticket, PR number with its status word and age (`#812 needs review 30m`),
 dirty-file count, ahead/behind arrows, the first listening port (linked, click
-to open) with `+n` for the rest, the coding agent badge, and last activity. Zero
-counts stay blank, and a merged or closed PR dims its whole row. Right-click the
-header row to show or hide columns, drag a header to reorder, or use the Columns
-section in ⚙. Activity means the newest of the HEAD commit and the mtime of any
-changed or untracked file, so a worktree you're editing sorts to the top before
-you commit anything.
+to open) with `+n` for the rest (click it to open any of them), the coding agent
+badge, and last activity. Zero counts stay blank, and a merged or closed PR dims
+its whole row. Right-click the header row to show or hide columns, drag a header
+to reorder, or use the Columns section in ⚙. Activity means the newest of the
+HEAD commit and the mtime of any changed or untracked file, so a worktree you're
+editing sorts to the top before you commit anything.
 
 Pinned, Recent and All worktrees are collapsible containers, and each repo nests
 under All. Recent holds the most recently active worktrees; pin one from its

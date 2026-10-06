@@ -2630,8 +2630,12 @@ async function confirmDiscard() {
                   : null}>{[ab.ahead && `↑${ab.ahead}`, ab.behind && `↓${ab.behind}`].filter(Boolean).join(" ")}</span>{/if}{:else if
             col.key === "ports"}{#if w.ports?.length}<span title={w.ports.map((p) => `:${p}`).join(" ")}><a
                 href="http://localhost:{w.ports[0]}" target="_blank" rel="noreferrer"
-                onclick={(e) => e.stopPropagation()}>:{w.ports[0]}</a>{#if w.ports.length > 1}<span
-                class="more">+{w.ports.length - 1}</span>{/if}</span>{/if}{:else if
+                onclick={(e) => e.stopPropagation()}>:{w.ports[0]}</a>{#if w.ports.length > 1}<button
+                class="more" aria-haspopup="menu" title="all ports"
+                onclick={(e) => openMenu(e, w.ports.map((p) => ({
+                  label: `Open :${p}`,
+                  fn: () => open(`http://localhost:${p}`, "_blank", "noreferrer"),
+                })), e.detail === 0)}>+{w.ports.length - 1}</button>{/if}</span>{/if}{:else if
             col.key === "agent"}{#if w.agents?.length}{@const a = full(w.agents[0])}{@const n = w.agents.filter((x) => x.deep).length}<button
                 class="ag" style="--ag: var(--{a.tone})" aria-haspopup="menu"
                 title={badgeTip(w)}
@@ -4045,6 +4049,14 @@ select.theme {
   margin-left: 0.25rem;
   font: 0.6875rem var(--mono);
   color: var(--dim);
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+.wt .more:hover {
+  color: var(--fg);
+  text-decoration: underline;
 }
 .wt [data-col="title"],
 .wt [data-col="branch"] {
