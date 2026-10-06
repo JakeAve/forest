@@ -876,6 +876,7 @@ export type PrStatus = {
   tone: "ok" | "bad" | "warn" | "review" | "draft" | "merged" | "closed";
   glyph: "" | "conflict" | "fail" | "changes" | "behind";
   label: string;
+  weight: "loud" | "quiet";
   since: number | null;
   sinceLabel: string;
 };
@@ -904,6 +905,7 @@ export function prStatus(pr: {
       tone: "merged",
       glyph: "",
       label: "Merged",
+      weight: "quiet",
       ...at(pr.stateSince, "merged"),
     };
   }
@@ -912,20 +914,34 @@ export function prStatus(pr: {
       tone: "closed",
       glyph: "",
       label: "Closed",
+      weight: "quiet",
       ...at(pr.stateSince, "closed"),
     };
   }
   if (pr.isDraft || pr.mergeState === "DRAFT") {
-    return { tone: "draft", glyph: "", label: "Draft", ...open };
+    return {
+      tone: "draft",
+      glyph: "",
+      label: "Draft",
+      weight: "quiet",
+      ...open,
+    };
   }
   if (pr.mergeable === "CONFLICTING" || pr.mergeState === "DIRTY") {
-    return { tone: "bad", glyph: "conflict", label: "Conflicts", ...open };
+    return {
+      tone: "bad",
+      glyph: "conflict",
+      label: "Conflicts",
+      weight: "loud",
+      ...open,
+    };
   }
   if (pr.reviewDecision === "CHANGES_REQUESTED") {
     return {
       tone: "bad",
       glyph: "changes",
       label: "Changes requested",
+      weight: "loud",
       ...at(pr.reviewSince, "changes requested"),
     };
   }
@@ -934,6 +950,7 @@ export function prStatus(pr: {
       tone: "bad",
       glyph: "fail",
       label: "Checks failing",
+      weight: "loud",
       ...at(pr.ciSince, "failing"),
     };
   }
@@ -942,22 +959,36 @@ export function prStatus(pr: {
       tone: "ok",
       glyph: "",
       label: "Ready to merge",
+      weight: "loud",
       ...(pr.reviewDecision === "APPROVED"
         ? at(pr.reviewSince, "approved")
         : open),
     };
   }
   if (pr.mergeState === "BEHIND") {
-    return { tone: "bad", glyph: "behind", label: "Behind base", ...open };
+    return {
+      tone: "bad",
+      glyph: "behind",
+      label: "Behind base",
+      weight: "quiet",
+      ...open,
+    };
   }
   if (pr.reviewDecision === "REVIEW_REQUIRED") {
-    return { tone: "review", glyph: "", label: "Needs review", ...open };
+    return {
+      tone: "review",
+      glyph: "",
+      label: "Needs review",
+      weight: "loud",
+      ...open,
+    };
   }
   if (pr.ci.state === "pending") {
     return {
       tone: "warn",
       glyph: "",
       label: "Checks running",
+      weight: "quiet",
       ...at(pr.ciSince, "running"),
     };
   }
@@ -966,10 +997,63 @@ export function prStatus(pr: {
       tone: "bad",
       glyph: "",
       label: "Blocked by branch rules",
+      weight: "quiet",
       ...open,
     };
   }
-  return { tone: "warn", glyph: "", label: "Checking", ...open };
+  return {
+    tone: "warn",
+    glyph: "",
+    label: "Checking",
+    weight: "quiet",
+    ...open,
+  };
+}
+
+export type Bucket = "attention" | "inflight" | "done" | "none";
+
+type Ranked = {
+  pr: Worktree["pr"];
+  dirty: number;
+  behindMain: number | null;
+};
+
+export function bucket(w: Ranked): Bucket {
+  const pr = w.pr;
+  if (!pr) return "none";
+  if (pr.state !== "OPEN") return "done";
+  const s = prStatus(pr);
+  const hot = s.glyph === "conflict" || s.glyph === "changes" ||
+    s.glyph === "fail";
+  return hot || (w.behindMain ?? 0) > 0 ? "attention" : "inflight";
+}
+
+const BUCKET_ORDER: Bucket[] = ["attention", "inflight", "done", "none"];
+
+export function orderWts<T extends Ranked & { lastActivity: number }>(
+  wts: T[],
+): T[] {
+  return [...wts].sort((a, b) =>
+    BUCKET_ORDER.indexOf(bucket(a)) - BUCKET_ORDER.indexOf(bucket(b)) ||
+    b.lastActivity - a.lastActivity
+  );
+}
+
+const SUMMARY: [(s: PrStatus) => boolean, string][] = [
+  [(s) => s.glyph === "fail", "failing"],
+  [(s) => s.glyph === "conflict", "conflicts"],
+  [(s) => s.glyph === "changes", "changes requested"],
+  [(s) => s.tone === "review", "in review"],
+  [(s) => s.tone === "ok", "ready"],
+];
+
+export function bucketSummary(wts: Ranked[]): string {
+  const sts = wts.flatMap((w) => w.pr ? [prStatus(w.pr)] : [])
+    .filter((s) => s.weight === "loud");
+  return SUMMARY.flatMap(([is, label]) => {
+    const n = sts.filter(is).length;
+    return n ? [`${n} ${label}`] : [];
+  }).join(" · ");
 }
 
 /** Reviewers whose latest verdict is APPROVED; a comment does not change a verdict. */

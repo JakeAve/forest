@@ -26,6 +26,7 @@ export const DEFAULTS = {
   keys: {} as Record<string, string>,
   notify: {} as Record<string, string>,
   notifyMuted: [] as string[],
+  columns: [] as string[],
   notifyMax: 200,
   notifyCiStuckMin: 30,
   notifyHalfDoneMin: 15,

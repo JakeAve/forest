@@ -118,6 +118,8 @@ const EIGHT_BIT = {
     "diffEditor.insertedTextBorder": "#0F0",
     "diffEditor.removedTextBorder": "#F00",
     "terminal.ansiYellow": "#FF0",
+    "terminal.ansiRed": "#F00",
+    "terminal.ansiBlue": "#00F",
   },
   light: {
     "editor.background": "#FFF",
@@ -134,6 +136,8 @@ const EIGHT_BIT = {
     "diffEditor.insertedTextBorder": "#0B0",
     "diffEditor.removedTextBorder": "#F00",
     "terminal.ansiYellow": "#FF0",
+    "terminal.ansiRed": "#F00",
+    "terminal.ansiBlue": "#00F",
   },
 };
 const TEXT = [
@@ -145,6 +149,8 @@ const TEXT = [
   "--danger",
   "--merged",
   "--tk-cm",
+  "--agent-a",
+  "--agent-b",
 ];
 const SURFACE = ["--bg", "--bg2", "--bg3", "--input", "--hov"];
 
@@ -160,6 +166,13 @@ for (const [name, colors] of Object.entries(EIGHT_BIT)) {
     if (contrast(vars["--hlfg"], vars["--hl"]) < 1.8) {
       throw new Error("hlfg on hl");
     }
+  });
+
+  Deno.test(`8bit ${name}: dim steps below fg, line is a hairline`, () => {
+    const { vars } = t(colors);
+    assert(contrast(vars["--dim"], vars["--fg"]) >= 1.3);
+    assert(contrast(vars["--dimmer"], vars["--fg"]) >= 1.3);
+    assert(contrast(vars["--line"], vars["--bg"]) <= 3);
   });
 }
 

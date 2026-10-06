@@ -7,10 +7,13 @@ import Hex from "./Hex.svelte";
 import { matchPath, matchWt, pathText, rank, wtText } from "./filter.js";
 import {
   ancestorDirs,
+  bucket,
+  bucketSummary,
   clampMenu,
   discardPrompt,
   isIgnoredPath,
   KINDS,
+  orderWts,
   prStatus,
   rawUrl,
   removeSummary,
@@ -174,6 +177,7 @@ let busy = $state({});
 let pendingLine = $state(0);
 let removing = $state(false);
 let confirming = $state(null);
+let confirmSel = $state(false);
 let menu = $state(null);
 let menuEl = $state();
 let card = $state(null); // { path, x, y }: PR hover card anchored under a pill
@@ -343,6 +347,10 @@ const repoOf = (w) => repos.find((r) => r.name === w.repo);
 const shownWts = $derived(allWts.filter((w) => match(repoOf(w), w)));
 const pinnedWts = $derived(shownWts.filter((w) => pinned[w.path]));
 const checkedWts = $derived(allWts.filter((w) => checked[w.path]));
+const selecting = $derived(checkedWts.length > 0);
+const hiddenChecked = $derived(
+  checkedWts.filter((w) => !match(repoOf(w), w)).length,
+);
 const selectable = $derived(shownWts.filter((w) => !w.isPrimary));
 const allShownChecked = $derived(
   selectable.length > 0 && selectable.every((w) => checked[w.path]),
@@ -353,7 +361,21 @@ const recentWts = $derived(
     .sort((a, b) => b.lastActivity - a.lastActivity)
     .slice(0, settings?.recentCount ?? 10),
 );
-const allClosed = $derived(closed.__all ?? true);
+const isClosed = (k) => closed[k] ?? k === "__all";
+const isOpen = (k) => filtering || !isClosed(k);
+const allClosed = $derived(isClosed("__all"));
+const repoWts = $derived.by(() => {
+  const top = new Set(
+    [
+      ...(isOpen("__pinned") ? pinnedWts : []),
+      ...(isOpen("__recent") ? recentWts : []),
+    ].map((w) => w.path),
+  );
+  return Object.fromEntries(repos.map((r) => [
+    r.name,
+    orderWts(r.worktrees.filter((w) => match(r, w) && !top.has(w.path))),
+  ]));
+});
 
 $effect(() => {
   const es = new EventSource("/api/events");
@@ -725,19 +747,31 @@ function toggleAllShown() {
   }
 }
 
+let lastToggled = null;
 function toggleCheck(w, e) {
   e.stopPropagation();
+  lastToggled = w.path;
   if (checked[w.path]) delete checked[w.path];
   else checked[w.path] = true;
 }
 
+function checkRange(w) {
+  const j = navWts.findIndex((x) => x.path === w.path);
+  let i = navWts.findIndex((x) => x.path === lastToggled);
+  if (i < 0) i = j;
+  for (const x of navWts.slice(Math.min(i, j), Math.max(i, j) + 1)) {
+    if (!x.isPrimary) checked[x.path] = true;
+  }
+  lastToggled = w.path;
+}
+
 function toggleAll() {
-  closed.__all = !allClosed;
-  saveLayout();
+  toggleRepo("__all");
 }
 
 function toggleRepo(name) {
-  closed[name] = !closed[name];
+  if (filtering) return;
+  closed[name] = !isClosed(name);
   saveLayout();
 }
 
@@ -820,6 +854,114 @@ function ago(ms) {
   if (s < 86400) return `${Math.floor(s / 3600)}h`;
   return `${Math.floor(s / 86400)}d`;
 }
+
+const COLUMNS = [
+  {
+    key: "branch",
+    label: "Branch",
+    align: "left",
+    stretch: true,
+    width: "12rem",
+  },
+  {
+    key: "title",
+    label: "Title",
+    align: "left",
+    stretch: true,
+    width: "13rem",
+  },
+  {
+    key: "ticket",
+    label: "Ticket",
+    align: "left",
+    stretch: true,
+    width: "4.5rem",
+  },
+  {
+    key: "pr",
+    label: "Pull request",
+    align: "left",
+    stretch: false,
+    width: "8.5rem",
+  },
+  {
+    key: "changes",
+    label: "Changes",
+    align: "right",
+    stretch: false,
+    width: "3.25rem",
+  },
+  {
+    key: "sync",
+    label: "Sync",
+    align: "right",
+    stretch: false,
+    width: "3.5rem",
+  },
+  {
+    key: "ports",
+    label: "Ports",
+    align: "left",
+    stretch: false,
+    width: "4rem",
+  },
+  {
+    key: "agent",
+    label: "Agent",
+    align: "left",
+    stretch: false,
+    width: "2.5rem",
+  },
+  {
+    key: "active",
+    label: "Active",
+    align: "right",
+    stretch: false,
+    width: "2.875rem",
+  },
+];
+const visibleCols = $derived(
+  [
+    ...new Set(
+      settings?.columns?.length
+        ? settings.columns
+        : COLUMNS.filter((c) => c.key !== "title").map((c) => c.key),
+    ),
+  ].map((k) => COLUMNS.find((c) => c.key === k)).filter(Boolean),
+);
+const lead = $derived(
+  ["title", "branch", "ticket"].map((k) => visibleCols.find((c) => c.key === k))
+    .find(Boolean),
+);
+const colTemplate = $derived(
+  [
+    "calc(0.75rem + (2 - var(--depth, 0)) * var(--indent))",
+    ...visibleCols.map((c) => c === lead ? "minmax(0, 1fr)" : c.width),
+  ].join(" "),
+);
+let dragCol = null;
+
+function setCols(keys) {
+  settings.columns = keys.length ? keys : ["none"];
+  saveSettings();
+}
+
+function toggleCol(key) {
+  const keys = visibleCols.map((c) => c.key);
+  setCols(keys.includes(key) ? keys.filter((k) => k !== key) : [...keys, key]);
+}
+
+function moveCol(key, i) {
+  const keys = visibleCols.map((c) => c.key).filter((k) => k !== key);
+  keys.splice(i, 0, key);
+  setCols(keys);
+}
+
+const colItems = () =>
+  COLUMNS.map((c) => ({
+    label: (visibleCols.includes(c) ? "✓ " : "") + c.label,
+    fn: () => toggleCol(c.key),
+  }));
 
 function splitPath(p) {
   const i = p.lastIndexOf("/");
@@ -1407,7 +1549,12 @@ function wtItems(w, solo = false) {
     !w.isPrimary && {
       label: many ? `Remove ${t.length} worktrees…` : "Remove worktree…",
       danger: true,
-      fn: () => (confirming = t.filter((x) => !x.isPrimary)),
+      fn: () => {
+        confirmSel = false;
+        confirming = t.filter((x) =>
+          !x.isPrimary && (x === w || match(repoOf(x), x))
+        );
+      },
     },
   ];
 }
@@ -1613,7 +1760,7 @@ function agentItems(w) {
 function repoItems(r, shown) {
   const wts = shown.filter((w) => !w.isPrimary);
   return [
-    {
+    r.path && {
       label: "New worktree…",
       fn: () => {
         creating = r.name;
@@ -1631,14 +1778,16 @@ function repoItems(r, shown) {
           `${shown.length} branch names`,
         ),
     },
-    { label: "Copy repo path", fn: (e) => copy(e, r.path, "ctx") },
+    r.path && { label: "Copy repo path", fn: (e) => copy(e, r.path, "ctx") },
     "-",
     {
-      label: closed[r.name] ? "Expand" : "Collapse",
+      label: isOpen(r.name) ? "Collapse" : "Expand",
       fn: () => toggleRepo(r.name),
     },
     wts.length > 0 && {
-      label: `Select ${wts.length} worktree${wts.length === 1 ? "" : "s"}`,
+      label: r.path
+        ? `Select ${wts.length} worktree${wts.length === 1 ? "" : "s"}`
+        : `Select all in ${r.label}`,
       fn: () => {
         for (const w of wts) checked[w.path] = true;
       },
@@ -1647,7 +1796,7 @@ function repoItems(r, shown) {
     wts.length > 0 && {
       label: `Remove ${wts.length} worktree${wts.length === 1 ? "" : "s"}…`,
       danger: true,
-      fn: () => (confirming = wts),
+      fn: () => ((confirmSel = false), (confirming = wts)),
     },
   ];
 }
@@ -1802,14 +1951,21 @@ let palTree = $state({ of: null, files: [], dirs: [] });
 const desktop = () => settings?.desktop;
 const hasFile = () => sel && file;
 const navWts = $derived([
-  ...new Map(
-    [
-      ...pinnedWts,
-      ...recentWts,
-      ...(allClosed ? [] : shownWts.filter((w) => !closed[w.repo])),
-    ].map((w) => [w.path, w]),
-  ).values(),
+  ...(isOpen("__pinned") ? pinnedWts : []),
+  ...(isOpen("__recent") ? recentWts : []),
+  ...(isOpen("__all")
+    ? repos.flatMap((r) => isOpen(r.name) ? repoWts[r.name] : [])
+    : []),
 ]);
+const allItems = () => [
+  { label: allClosed ? "Expand all" : "Collapse all", fn: toggleAll },
+  {
+    label: "Select all shown",
+    fn: () => {
+      for (const w of selectable) checked[w.path] = true;
+    },
+  },
+];
 function goWt(w) {
   selectWt(w.path);
   scrollRow(w.path);
@@ -1819,6 +1975,11 @@ function stepWt(d) {
   goWt(navWts[Math.max(0, Math.min(navWts.length - 1, i < 0 ? 0 : i + d))]);
 }
 const liveWt = () => !loose && selWt;
+const focusedWt = () => {
+  const el = document.activeElement;
+  const path = el?.matches(".wt, .wt .cbx") && el.closest(".wt").dataset.path;
+  return path && allWts.find((w) => w.path === path && !w.isPrimary);
+};
 
 // Opens the selected row's agent popover from its badge, as a click would.
 async function openSessions(w) {
@@ -1892,6 +2053,17 @@ const COMMANDS = [
       liveWt() && !selWt.isPrimary && !busy["ar:" + selWt.path] &&
       (selWt.autoRebase || selWt.pr?.state !== "MERGED"),
     run: (e) => toggleAutoRebase(selWt, e),
+  },
+  {
+    id: "toggle-select",
+    label: "Select worktree",
+    section: "Worktrees",
+    keys: "space",
+    when: () => !!focusedWt(),
+    run: (e) => {
+      const w = focusedWt();
+      if (w) toggleCheck(w, e);
+    },
   },
   {
     id: "copy-ticket",
@@ -2236,7 +2408,7 @@ async function confirmDiscard() {
             onclick={() => toggleMax(n)}>{max === n ? "⤡" : "⤢"}</button>
   {/snippet}
   <div class="panes {preset}" class:max style:--b1={paneSize(1)} style:--b2={paneSize(2)}>
-  <div class="band wts" class:maxed={max === 1} bind:this={b1El}>
+  <div class="band wts" class:maxed={max === 1} class:selecting bind:this={b1El}>
     <div class="bhead">
       {#if selectable.length}
         <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
@@ -2279,6 +2451,9 @@ async function confirmDiscard() {
               : "s"}?</b>
           <span class="meta names">{confirming.map((w) => w.branch).join(", ")}
           </span>
+          {#if confirmSel && hiddenChecked}
+            <span class="meta">{hiddenChecked} hidden by the filter are kept</span>
+          {/if}
           <span class="sp"></span>
           <button
             class="btn dg"
@@ -2290,10 +2465,6 @@ async function confirmDiscard() {
           >
         {:else}
           <b>{checkedWts.length} selected</b>
-          {#if checkedWts.some((w) => !match(repoOf(w), w))}
-            <span class="meta">{checkedWts.filter((w) => !match(repoOf(w), w))
-                .length} hidden by the filter</span>
-          {/if}
           <span class="sp"></span>
           <button
             class="btn"
@@ -2315,7 +2486,8 @@ async function confirmDiscard() {
                 `${checkedWts.length} paths`,
               )}>Copy paths</button
           >
-          <button class="btn dg" onclick={() => (confirming = checkedWts)}
+          <button class="btn dg" disabled={hiddenChecked === checkedWts.length}
+                  onclick={() => ((confirmSel = true), (confirming = checkedWts.filter((w) => match(repoOf(w), w))))}
             >Remove</button
           >
           <button
@@ -2329,25 +2501,27 @@ async function confirmDiscard() {
       </div>
     {/if}
     <div class="body">
+      <!-- svelte-ignore a11y_no_static_element_interactions, a11y_no_noninteractive_tabindex -->
+      <div class="cols" style:grid-template-columns={colTemplate} tabindex="0"
+           onkeydown={(e) => menuKey(e, colItems())}
+           oncontextmenu={(e) => openMenu(e, colItems())}>
+        <span></span>
+        {#each visibleCols as col (col.key)}<span class:end={col.align === "right"} draggable="true"
+              ondragstart={(e) => ((dragCol = col.key), e.dataTransfer.setData("text/plain", col.key))} ondragover={(e) => e.preventDefault()}
+              ondragend={() => (dragCol = null)}
+              ondrop={() => dragCol && dragCol !== col.key && moveCol(dragCol,
+                visibleCols.filter((c) => c.key !== dragCol).findIndex((c) => c.key === col.key) +
+                  (visibleCols.findIndex((c) => c.key === dragCol) < visibleCols.indexOf(col) ? 1 : 0))}
+            >{col.label}</span>{/each}
+      </div>
       {#if pinnedWts.length}
-        <div class="repo st"><span class="rn">Pinned</span><span class="ct">{pinnedWts.length}</span></div>
-        {#each pinnedWts as w (w.path)}
-          {@render wtRow(w, true)}
-        {/each}
+        {@render container("__pinned", "Pinned", pinnedWts.length, bucketSummary(pinnedWts),
+          () => repoItems({ name: "__pinned", label: "Pinned" }, pinnedWts), pinnedWts)}
       {/if}
       {#if recentWts.length}
-        <div class="repo st"><span class="rn">Recent</span><span class="ct">{recentWts.length}</span></div>
-        {#each recentWts as w (w.path)}
-          {@render wtRow(w, true)}
-        {/each}
+        {@render container("__recent", "Recent", recentWts.length, bucketSummary(recentWts),
+          () => repoItems({ name: "__recent", label: "Recent" }, recentWts), recentWts)}
       {/if}
-      <div class="repo" role="button" tabindex="0"
-           onclick={toggleAll}
-           onkeydown={(e) => e.key === "Enter" && toggleAll()}>
-        <span class="car">{allClosed ? "▶" : "▼"}</span>
-        <span class="rn">All worktrees</span>
-        <span class="ct">{shownWts.length}</span>
-      </div>
       {#if boot.phase !== "ready"}
         <div class="boot">
           <span class="spin"></span>
@@ -2358,45 +2532,63 @@ async function confirmDiscard() {
           {/if}
         </div>
       {/if}
-      {#if !allClosed}
-      {#each repos as r (r.name)}
-        {@const wts = r.worktrees.filter((w) => match(r, w))}
-        {#if wts.length || !filtering}
-          <div class="repo" role="button" tabindex="0" data-repo={r.name}
-               onclick={() => toggleRepo(r.name)}
-               onkeydown={(e) => e.key === "Enter" ? toggleRepo(r.name) : menuKey(e, repoItems(r, wts))}
-               oncontextmenu={(e) => openMenu(e, repoItems(r, wts))}>
-            <span class="car">{closed[r.name] ? "▶" : "▼"}</span>
-            <span class="rn">{r.name}</span>
-            <span class="ct">{r.worktrees.length} worktree{r.worktrees.length > 1 ? "s" : ""}</span>
-            {#if r.cached}<span class="ct late" title="Last known state; refreshing"><span class="spin"></span> cached</span>{/if}
-            <span class="sp"></span>
-            <button class="cbtn plus" title="new worktree"
-                    onclick={(e) => { e.stopPropagation(); creating = creating === r.name ? null : r.name; slug = ""; }}>New</button>
-          </div>
-          {#if creating === r.name}
-            <div class="newwt">
-              <!-- svelte-ignore a11y_autofocus -->
-              <input class="filter" autofocus placeholder="Branch or slug" bind:value={slug}
-                     onkeydown={(e) => { if (e.key === "Enter") createWt(r); if (e.key === "Escape") creating = null; }}>
-              <button class="btn" disabled={busy["new:" + r.name]} onclick={() => createWt(r)}>
-                {busy["new:" + r.name] ? "Creating…" : "Create"}</button>
-            </div>
-          {/if}
-          {#if !closed[r.name]}
-            {#each wts as w (w.path)}
-              {@render wtRow(w, false)}
-            {/each}
-          {/if}
-        {/if}
-      {/each}
+      {#if !filtering || repos.some((r) => repoWts[r.name].length)}
+        {@render container("__all", "All worktrees", shownWts.length, bucketSummary(shownWts), allItems, [], allRepos)}
       {/if}
     </div>
   </div>
+  {#snippet allRepos()}
+    {#each repos as r (r.name)}
+      {#if repoWts[r.name].length || !filtering}
+        {@const shown = r.worktrees.filter((w) => match(r, w))}
+        {@render container(r.name, r.name, r.worktrees.length, bucketSummary(shown),
+          () => repoItems(r, shown), repoWts[r.name], null, r)}
+      {/if}
+    {/each}
+  {/snippet}
+  {#snippet container(key, label, count, summary, items, wts, inner, r)}
+    <div class="box">
+      <div class="repo" role="button" tabindex="0" data-repo={r?.name}
+           onclick={() => toggleRepo(key)}
+           onkeydown={(e) => e.key === "Enter" ? toggleRepo(key) : menuKey(e, items())}
+           oncontextmenu={(e) => openMenu(e, items())}>
+        <span class="car">{isOpen(key) ? "▼" : "▶"}</span>
+        <span class="rn">{label}</span>
+        <span class="ct">{count}{#if summary}<span class="sum">{` · ${summary}`}</span>{/if}</span>
+        {#if r}
+          {#if r.cached}<span class="ct late" title="Last known state; refreshing"><span class="spin"></span> cached</span>{/if}
+          <span class="sp"></span>
+          <button class="cbtn plus" title="new worktree"
+                  onclick={(e) => { e.stopPropagation(); creating = creating === r.name ? null : r.name; slug = ""; }}>New</button>
+        {/if}
+      </div>
+      {#if r && creating === r.name}
+        <div class="newwt">
+          <!-- svelte-ignore a11y_autofocus -->
+          <input class="filter" autofocus placeholder="Branch or slug" bind:value={slug}
+                 onkeydown={(e) => { if (e.key === "Enter") createWt(r); if (e.key === "Escape") creating = null; }}>
+          <button class="btn" disabled={busy["new:" + r.name]} onclick={() => createWt(r)}>
+            {busy["new:" + r.name] ? "Creating…" : "Create"}</button>
+        </div>
+      {/if}
+      {#if isOpen(key)}
+        <div class="kids">
+          {#each wts as w (w.path)}
+            {@render wtRow(w, !r)}
+          {/each}
+          {@render inner?.()}
+        </div>
+      {/if}
+    </div>
+  {/snippet}
   {#snippet wtRow(w, showRepo)}
     {#key touched[w.path]}
       <div class="wt" class:sel={sel === w.path} class:touch={touched[w.path]} class:cached={repoOf(w)?.cached}
-           role="button" tabindex="0" data-path={w.path} onclick={() => selectWt(w.path)}
+           class:done={bucket(w) === "done"} style:grid-template-columns={colTemplate}
+           role="button" tabindex="0" data-path={w.path}
+           onclick={(e) => w.isPrimary || !(e.metaKey || e.shiftKey) ? selectWt(w.path)
+             : e.metaKey ? toggleCheck(w, e) : checkRange(w)}
+           onmousedown={(e) => e.shiftKey && e.preventDefault()}
            onkeydown={(e) => e.key === "Enter" ? selectWt(w.path) : menuKey(e, wtItems(w))}
            oncontextmenu={(e) => openMenu(e, wtItems(w))}>
         {#if w.isPrimary}
@@ -2408,56 +2600,48 @@ async function confirmDiscard() {
                 onclick={(e) => toggleCheck(w, e)}
                 onkeydown={(e) => e.key === "Enter" && toggleCheck(w, e)}></span>
         {/if}
-        <span class="br" title={[w.branch, renamed(w) && `pushed as ${renamed(w)}`, dirName(w) &&
-          `in ${dirName(w)}/`, repoOf(w)?.cached && "last known state; refreshing"].filter(Boolean).join(" · ")}>{#if
-          showRepo}<span class="rp">{w.repo}</span>{/if}{w.branch}{#if
-          renamed(w)}<span class="rb">{renamed(w)}</span>{/if}{#if
-          dirName(w)}<span class="dir">{dirName(w)}</span>{/if}{#if
-          w.ticket}{@const t = w.ticket}<a class="port tk" href={t.url} target="_blank" rel="noreferrer"
-            title="open ticket {t.key}" onclick={(e) => e.stopPropagation()}>{t.key}</a>{/if}</span>
-        <span class="ags">
-          {#if w.agents?.length}
-            {@const a = full(w.agents[0])}
-            {@const n = w.agents.filter((x) => x.deep).length}
-            <button class="ag" style="--ag: var(--{a.tone})" aria-haspopup="menu"
-                    title={badgeTip(w)}
-                    onclick={(e) => openMenu(e, sessionItems(w), e.detail === 0)}>{a.glyph}{#if n > 1}<i>{n}</i>{/if}</button>
-          {/if}
-        </span>
-        <span class="prc">
-          {#if w.pr}
-            {@const s = prStatus(w.pr)}
-            <a class="port pr" data-tone={s.tone}
-               href={w.pr.url}
-               target="_blank" rel="noreferrer"
-               aria-label={[`${s.label}, PR #${w.pr.number}`, w.pr.title]
-                 .filter(Boolean).join(": ")}
-               onpointerenter={(e) => showCard(w, e)} onpointerleave={() => hideCard()}
-               onfocus={(e) => showCard(w, e)} onblur={() => hideCard()}
-               onclick={(e) => e.stopPropagation()}>{#if w.pr.autoMerge}<svg class="g am" viewBox="0 0 16 16">{@html AM_ICON}</svg>{/if}{#if w.autoRebase}<svg class="g ar" class:err={w.autoRebase.error} viewBox="0 0 16 16">{@html AR_ICON}</svg>{/if}#{w.pr.number}{#if s.glyph}<svg class="g" viewBox="0 0 16 16">{@html GLYPH[s.glyph]}</svg>{/if}</a>
-            <span class="prt {s.tone}" title="{s.sinceLabel} for {ago(s.since)}">{ago(s.since)}</span>
-          {:else if w.autoRebase}
-            <span class="port ar" class:err={w.autoRebase.error}
-                  title={w.autoRebase.error ?? "auto-rebase on"}><svg class="g ar" viewBox="0 0 16 16">{@html AR_ICON}</svg></span>
-          {/if}
-        </span>
-        <span class="ports">
-          {#each w.ports ?? [] as p}
-            <a class="port" href="http://localhost:{p}" target="_blank" rel="noreferrer"
-               title="running on port {p}" onclick={(e) => e.stopPropagation()}>:{p}</a>
-          {/each}
-        </span>
-        <span class="dirty" class:zero={!w.dirty}>{w.dirty ? "●" + w.dirty : "—"}</span>
-        <span class="ab" class:behind={prAb(w).behind > 0}
-              title={w.pr?.state === "OPEN"
-                ? `${prAb(w).behind} behind ${w.pr.baseRefName}, ${
-                  prAb(w).ahead
-                } ahead${
-                  prAb(w).behind > 0 ? " — right-click to update branch" : ""
-                }`
-                : null}>{(prAb(w).ahead ? `↑${prAb(w).ahead}` : "") +
-              (prAb(w).behind ? ` ↓${prAb(w).behind}` : "") || "—"}</span>
-        <span class="ago">{ago(w.lastActivity)}</span>
+        {#each visibleCols as col (col.key)}
+          <span class="c" class:end={col.align === "right"} class:lead={col === lead} data-col={col.key}>{#if col.key === "branch"}<span class="br" title={[w.branch, renamed(w) && `pushed as ${renamed(w)}`, dirName(w) &&
+              `in ${dirName(w)}/`, repoOf(w)?.cached && "last known state; refreshing"].filter(Boolean).join(" · ")}>{#if
+              showRepo}<span class="rp">{w.repo}</span>{/if}{w.branch}{#if
+              renamed(w)}<span class="rb">{renamed(w)}</span>{/if}{#if
+              dirName(w)}<span class="dir">{dirName(w)}</span>{/if}</span>{:else if
+            col.key === "title"}{w.pr?.title || w.branch}{:else if
+            col.key === "ticket"}{#if w.ticket}<a href={w.ticket.url} target="_blank" rel="noreferrer"
+                title="open ticket {w.ticket.key}" onclick={(e) => e.stopPropagation()}>{w.ticket.key}</a>{/if}{:else if
+            col.key === "pr"}{#if w.pr}{@const s = prStatus(w.pr)}<a
+                href={w.pr.url}
+                target="_blank" rel="noreferrer"
+                aria-label={[`${s.label}, PR #${w.pr.number}`, w.pr.title]
+                  .filter(Boolean).join(": ")}
+                onpointerenter={(e) => showCard(w, e)} onpointerleave={() => hideCard()}
+                onfocus={(e) => showCard(w, e)} onblur={() => hideCard()}
+                onclick={(e) => e.stopPropagation()}>{#if w.pr.autoMerge}<svg class="g am" viewBox="0 0 16 16">{@html AM_ICON}</svg>{/if}{#if w.autoRebase}<svg class="g ar" class:err={w.autoRebase.error} viewBox="0 0 16 16">{@html AR_ICON}</svg>{/if}#{w.pr.number}</a> <span
+                class="pst" class:pill={s.weight === "loud"} data-tone={s.tone}
+                title="{s.sinceLabel} for {ago(s.since)}">{#if s.glyph}<svg class="g" viewBox="0 0 16 16">{@html GLYPH[s.glyph]}</svg>{/if}{s.label.toLowerCase()}{s.since ? ` ${ago(s.since)}` : ""}</span>{:else if
+              w.autoRebase}<span class="port ar" class:err={w.autoRebase.error}
+                title={w.autoRebase.error ?? "auto-rebase on"}><svg class="g ar" viewBox="0 0 16 16">{@html AR_ICON}</svg></span>{/if}{:else if
+            col.key === "changes"}{#if w.dirty}<span class="warn">●{w.dirty}</span>{/if}{:else if
+            col.key === "sync"}{@const ab = prAb(w)}{#if ab.ahead || ab.behind}<span class:warn={ab.behind > 0}
+                title={w.pr?.state === "OPEN"
+                  ? `${ab.behind} behind ${w.pr.baseRefName}, ${ab.ahead} ahead${
+                    ab.behind > 0 ? " — right-click to update branch" : ""
+                  }`
+                  : null}>{[ab.ahead && `↑${ab.ahead}`, ab.behind && `↓${ab.behind}`].filter(Boolean).join(" ")}</span>{/if}{:else if
+            col.key === "ports"}{#if w.ports?.length}<span title={w.ports.map((p) => `:${p}`).join(" ")}><a
+                href="http://localhost:{w.ports[0]}" target="_blank" rel="noreferrer"
+                onclick={(e) => e.stopPropagation()}>:{w.ports[0]}</a>{#if w.ports.length > 1}<button
+                class="more" aria-haspopup="menu" title="all ports"
+                onclick={(e) => openMenu(e, w.ports.map((p) => ({
+                  label: `Open :${p}`,
+                  fn: () => open(`http://localhost:${p}`, "_blank", "noreferrer"),
+                })), e.detail === 0)}>+{w.ports.length - 1}</button>{/if}</span>{/if}{:else if
+            col.key === "agent"}{#if w.agents?.length}{@const a = full(w.agents[0])}{@const n = w.agents.filter((x) => x.deep).length}<button
+                class="ag" style="--ag: var(--{a.tone})" aria-haspopup="menu"
+                title={badgeTip(w)}
+                onclick={(e) => openMenu(e, sessionItems(w), e.detail === 0)}>{a.glyph}{#if n > 1}<i>{n}</i>{/if}</button>{/if}{:else if
+            col.key === "active"}{ago(w.lastActivity)}{/if}</span>
+        {/each}
       </div>
     {/key}
   {/snippet}
@@ -2997,6 +3181,25 @@ async function confirmDiscard() {
     {/if}
   {/each}
 
+  <div class="sec">Columns</div>
+  {#each [...visibleCols, ...COLUMNS.filter((c) => !visibleCols.includes(c))] as c, i (c.key)}
+    {@const on = visibleCols.includes(c)}
+    <div class="row">
+      <label class="colck">
+        <input type="checkbox" class="cbxin" checked={on} onchange={() => toggleCol(c.key)}>
+        <span class="cbx" class:on></span>{c.label}
+      </label>
+      {#if on}
+        <button class="btn" aria-label="Move up" disabled={i === 0} onclick={() => moveCol(c.key, i - 1)}>↑</button>
+        <button class="btn" aria-label="Move down" disabled={i === visibleCols.length - 1}
+                onclick={() => moveCol(c.key, i + 1)}>↓</button>
+      {/if}
+    </div>
+  {/each}
+  <div class="row">
+    <button class="btn" onclick={() => ((settings.columns = []), saveSettings())}>Reset columns</button>
+  </div>
+
   <div class="sec">Launchers</div>
   {#each Object.entries(settings?.launchers ?? {}) as [repo] (repo)}
     <div class="row">
@@ -3258,6 +3461,12 @@ dialog.settings::backdrop {
   color: var(--dim);
   font: 0.8125rem var(--mono);
 }
+.row .colck {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+}
 .row input {
   background: var(--input);
   border: 1px solid var(--line);
@@ -3470,6 +3679,9 @@ dialog.settings::backdrop {
   outline-offset: 1px;
 }
 .body {
+  --colsh: 1.375rem;
+  --repoh: 1.75rem;
+  --indent: 0.875rem;
   flex: 1;
   overflow: auto;
   min-height: 0;
@@ -3686,15 +3898,39 @@ select.theme {
 }
 
 .repo {
+  position: sticky;
+  top: var(--colsh);
+  scroll-margin-top: var(--colsh);
+  z-index: 1;
+  height: var(--repoh);
   display: flex;
   align-items: center;
   gap: 0.375rem;
   padding: 0.3125rem 0.625rem;
   border-radius: 0.5rem;
+  background: var(--bg2);
   cursor: pointer;
   color: var(--dim);
   font-size: 0.75rem;
   user-select: none;
+}
+.body > .box {
+  margin-top: 0.375rem;
+}
+.kids {
+  --depth: 1;
+  margin-left: calc(var(--indent) - 1px);
+  border-left: 1px solid var(--line);
+}
+.kids .kids {
+  --depth: 2;
+}
+.kids .repo {
+  top: calc(var(--colsh) + var(--repoh));
+  scroll-margin-top: calc(var(--colsh) + var(--repoh));
+}
+.repo .sum {
+  color: var(--dim);
 }
 .repo:hover {
   background: var(--hov);
@@ -3712,10 +3948,34 @@ select.theme {
   color: var(--dimmer);
   font-size: 0.6875rem;
 }
-.wt {
+.cols {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  height: var(--colsh);
+  align-items: center;
   display: grid;
-  grid-template-columns:
-    0.75rem 1fr auto 5rem minmax(5.25rem, auto) 4.625rem 3.875rem 2.875rem;
+  gap: 0.5rem;
+  padding: 0.25rem 0.625rem;
+  background: var(--bg2);
+  color: var(--dim);
+  font-size: 0.6875rem;
+  white-space: nowrap;
+}
+.cols > *,
+.wt .c {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cols .end,
+.wt .end {
+  text-align: right;
+}
+.wt {
+  scroll-margin-top: calc(var(--colsh) + var(--depth) * var(--repoh));
+  display: grid;
   align-items: center;
   gap: 0.5rem;
   padding: 0.3125rem 0.625rem;
@@ -3727,39 +3987,108 @@ select.theme {
   background: var(--hov);
 }
 .wt.sel {
-  background: var(--hl);
+  background: color-mix(in srgb, var(--acc) 14%, var(--bg));
   box-shadow: inset 3px 0 0 var(--acc);
 }
 .wt .br {
   font-family: var(--mono);
   font-size: 0.71875rem;
-  white-space: nowrap;
+}
+.wt .c a {
+  font: 0.6875rem var(--mono);
+  color: var(--acc);
+  text-decoration: none;
+}
+.wt .c a:hover {
+  text-decoration: underline;
+}
+.wt .c .g {
+  width: 10px;
+  height: 10px;
+  vertical-align: -1px;
+}
+.wt .pst {
+  font: 0.625rem var(--mono);
+  color: var(--dim);
+}
+.wt .c[data-col="pr"] {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+.wt .pill {
+  --tone: var(--fg);
+  display: inline-block;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+  padding: 0 0.375rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--tone) 15%, transparent);
+  color: var(--tone);
 }
-.wt .br .tk {
-  margin-left: 0.375rem;
+.pill[data-tone="ok"] {
+  --tone: var(--acc);
+}
+.pill[data-tone="warn"] {
+  --tone: var(--warn);
+}
+.pill[data-tone="bad"] {
+  --tone: var(--danger);
+}
+.pill[data-tone="merged"] {
+  --tone: var(--merged);
+}
+.pill[data-tone="draft"],
+.pill[data-tone="closed"] {
+  --tone: var(--dim);
+}
+.wt .more {
+  margin-left: 0.25rem;
+  font: 0.6875rem var(--mono);
   color: var(--dim);
-  background: transparent;
-  border-color: var(--line);
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
 }
-.wt .br .tk:hover {
+.wt .more:hover {
   color: var(--fg);
-  border-color: var(--dim);
+  text-decoration: underline;
+}
+.wt [data-col="title"],
+.wt [data-col="branch"] {
+  color: var(--dim);
+}
+.wt .lead,
+.wt .lead a {
+  color: var(--fg);
+}
+.wt [data-col="changes"],
+.wt [data-col="sync"],
+.wt [data-col="active"] {
+  font: 0.6875rem var(--mono);
+  color: var(--dim);
+}
+.wt [data-col="active"] {
+  color: var(--dimmer);
+}
+.wt .warn {
+  color: var(--warn);
+}
+.wt.done .c,
+.wt.done .c * {
+  color: var(--dim);
+}
+.wt.done .ag {
+  background: color-mix(in srgb, var(--dim) 12%, transparent);
+  border-color: color-mix(in srgb, var(--dim) 35%, transparent);
 }
 .wt.cached .br {
   color: var(--dim);
   font-style: italic;
-}
-.wt.sel .br {
-  color: var(--hlfg);
-}
-.repo.st {
-  cursor: default;
-  padding: 0.625rem 0.625rem 0.25rem 1.1875rem;
-}
-.repo.st:hover {
-  background: none;
 }
 .wt .br .rp {
   color: var(--dim);
@@ -3805,12 +4134,6 @@ select.theme {
   font-style: normal;
   font-size: 0.625rem;
 }
-.prc,
-.ports {
-  display: flex;
-  justify-content: center;
-  gap: 0.25rem;
-}
 .port {
   font: 0.625rem var(--mono);
   color: var(--acc);
@@ -3831,27 +4154,6 @@ select.theme {
   border-color: transparent;
   color: var(--bg);
   background: var(--acc);
-}
-.pr .g {
-  width: 10px;
-  height: 10px;
-}
-.prt {
-  font: 0.625rem var(--mono);
-  white-space: nowrap;
-  color: var(--dim);
-}
-.prt.ok {
-  color: var(--acc);
-}
-.prt.bad {
-  color: var(--danger);
-}
-.prt.warn {
-  color: var(--warn);
-}
-.prt.merged {
-  color: var(--merged);
 }
 .pr[data-tone="bad"] {
   background: var(--danger);
@@ -3879,22 +4181,6 @@ select.theme {
   filter: brightness(1.15);
   text-decoration: underline;
 }
-.wt .dirty {
-  font: 0.6875rem var(--mono);
-  color: var(--warn);
-  text-align: right;
-}
-.wt .dirty.zero {
-  color: var(--dimmer);
-}
-.wt .ab {
-  font: 0.6875rem var(--mono);
-  color: var(--dim);
-  text-align: right;
-}
-.wt .ab.behind {
-  color: var(--warn);
-}
 .port.ar {
   display: inline-flex;
   align-items: center;
@@ -3907,11 +4193,6 @@ select.theme {
 .g.ar.err,
 .port.ar.err {
   color: var(--danger);
-}
-.wt .ago {
-  font: 0.6875rem var(--mono);
-  color: var(--dimmer);
-  text-align: right;
 }
 @keyframes flash {
   0% {
@@ -4047,6 +4328,16 @@ select.theme {
   cursor: pointer;
   position: relative;
   justify-self: center;
+}
+.wt .cbx {
+  visibility: hidden;
+  justify-self: start;
+}
+.wt:hover .cbx,
+.wt:focus-within .cbx,
+.wt .cbx.on,
+.selecting .wt .cbx {
+  visibility: visible;
 }
 .cbx.on {
   background: var(--acc);
@@ -4528,34 +4819,49 @@ select.theme {
     width: auto;
     min-width: 0;
   }
+  .body {
+    --colsh: 0px;
+  }
+  .cols {
+    display: none;
+  }
   .wt {
-    grid-template-columns: 0.75rem auto auto minmax(0, 1fr) auto auto;
-    row-gap: 0.125rem;
+    display: flex;
+    flex-wrap: wrap;
+    row-gap: 0.0625rem;
   }
-  .wt .br {
-    grid-area: 1 / 2 / 2 / 6;
+  .wt > * {
+    order: 3;
   }
-  .wt .ago {
-    grid-area: 1 / 6;
+  .wt > :first-child,
+  .wt .lead {
+    order: 0;
   }
-  .wt .prc {
-    grid-area: 2 / 2;
+  .wt [data-col="active"] {
+    order: 1;
   }
-  .wt .ports {
-    grid-area: 2 / 3;
+  .wt::before,
+  .wt::after {
+    content: "";
+    order: 2;
+    width: 0.75rem;
   }
-  .wt .ags {
-    grid-area: 2 / 4;
-    justify-self: start;
+  .wt::before {
+    flex-basis: 100%;
   }
-  .wt .dirty {
-    grid-area: 2 / 5;
+  .wt [data-col="title"],
+  .wt .lead {
+    flex: 1 1 0;
   }
-  .wt .ab {
-    grid-area: 2 / 6;
+  .wt > :first-child {
+    flex: 0 0 0.75rem;
   }
-  .wt .dirty.zero {
-    visibility: hidden;
+  .wt [data-col="active"] {
+    flex: 0 0 2.875rem;
+    margin-left: auto;
+  }
+  .wt .c:empty {
+    display: none;
   }
 }
 </style>

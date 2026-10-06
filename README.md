@@ -41,21 +41,29 @@ edit the file.
 
 ## What it shows
 
-Each worktree row carries its branch, dirty-file count, ahead/behind arrows,
-listening ports (linked, click to open), open PR number, and last activity —
-where activity means the newest of the HEAD commit and the mtime of any changed
-or untracked file, so a worktree you're editing sorts to the top before you
-commit anything.
+Each worktree row reads, under a header of column labels: branch, PR title,
+ticket, PR number with its status word and age (`#812 needs review 30m`),
+dirty-file count, ahead/behind arrows, the first listening port (linked, click
+to open) with `+n` for the rest (click it to open any of them), the coding agent
+badge, and last activity. Zero counts stay blank, and a merged or closed PR dims
+its whole row. Right-click the header row to show or hide columns, drag a header
+to reorder, or use the Columns section in ⚙. Activity means the newest of the
+HEAD commit and the mtime of any changed or untracked file, so a worktree you're
+editing sorts to the top before you commit anything.
 
-The Recent group holds the most recently active worktrees; pin one from its
-right-click menu to keep it there. Fuzzy-filter by branch or repo name (`dc`
-finds `discount-codes`), or narrow to dirty-only / running-only.
+Pinned, Recent and All worktrees are collapsible containers, and each repo nests
+under All. Recent holds the most recently active worktrees; pin one from its
+right-click menu to keep it in Pinned. A worktree shown in Pinned or Recent is
+not repeated under its repo, and a collapsed container shows its count and a
+summary of PRs that need attention (`25 · 1 failing`). Fuzzy-filter by branch or
+repo name (`dc` finds `discount-codes`), or narrow to dirty-only / running-only.
 
 Right-click a worktree to open it, copy its path or branch, view or create its
 PR, push, rebase onto `origin/HEAD`, update the branch, enable auto-merge, mark
 a PR draft or ready, close it, kill a process listening in it, turn on
 auto-rebase, or remove the worktree. Select several to copy or remove them
-together. Right-click a repo for new worktree.
+together. Right-click a repo for new worktree. Hover a row for its checkbox, or
+⌘-click, ⇧-click, or press Space to add it to the selection.
 
 A badge on the row names the coding agent session that created the worktree.
 Forest finds it by reading agent transcripts (`~/.claude/projects`,
@@ -183,30 +191,31 @@ claude mcp add --transport http forest http://forest-server.localhost:38471/mcp
 Stored at `~/.forest/settings.json` — only values that differ from the defaults
 are written.
 
-| key                 | default     |                                                                  |
-| ------------------- | ----------- | ---------------------------------------------------------------- |
-| `port`              | `38471`     | server port (restart)                                            |
-| `host`              | `127.0.0.1` | address the server binds (restart)                               |
-| `root`              | `~/Repos`   | directory scanned for repos (restart)                            |
-| `pollMs`            | `5000`      | rescan tick; with `watch` on, ports and PRs only                 |
-| `prPollMs`          | `60000`     | PR refresh for a repo with an open PR                            |
-| `prIdleMs`          | `300000`    | PR refresh for a repo without one                                |
-| `autoRebaseMs`      | `300000`    | how often auto-rebase worktrees follow `origin/HEAD`             |
-| `watch`             | `true`      | recompute on file events instead of polling (restart to turn on) |
-| `watchDebounceMs`   | `300`       | quiet time after an event before recomputing                     |
-| `watchMaxWaitMs`    | `2000`      | longest a steady event stream defers a recompute                 |
-| `watchSweepMs`      | `300000`    | full rescan anyway, in case events were dropped                  |
-| `watchHotThreshold` | `10`        | recomputes per minute before a repo backs off                    |
-| `watchBackoffMaxMs` | `30000`     | longest backoff for a hot repo                                   |
-| `watchStormRate`    | `2000`      | events/sec past which forest falls back to polling               |
-| `recentCount`       | `10`        | rows in the Recent group                                         |
-| `agoRefreshMs`      | `30000`     | how often relative times re-render                               |
-| `toastMs`           | `7000`      | toast lifetime                                                   |
-| `collapseMargin`    | `3`         | context lines kept around a hunk                                 |
-| `collapseMinSize`   | `5`         | shortest run of unchanged lines that collapses                   |
-| `launchers`         | `{}`        | per-repo worktree-creation commands                              |
-| `tickets`           | `{}`        | per-repo ticket URL templates                                    |
-| `keys`              | `{}`        | keyboard shortcut overrides                                      |
+| key                 | default     |                                                                     |
+| ------------------- | ----------- | ------------------------------------------------------------------- |
+| `port`              | `38471`     | server port (restart)                                               |
+| `host`              | `127.0.0.1` | address the server binds (restart)                                  |
+| `root`              | `~/Repos`   | directory scanned for repos (restart)                               |
+| `pollMs`            | `5000`      | rescan tick; with `watch` on, ports and PRs only                    |
+| `prPollMs`          | `60000`     | PR refresh for a repo with an open PR                               |
+| `prIdleMs`          | `300000`    | PR refresh for a repo without one                                   |
+| `autoRebaseMs`      | `300000`    | how often auto-rebase worktrees follow `origin/HEAD`                |
+| `watch`             | `true`      | recompute on file events instead of polling (restart to turn on)    |
+| `watchDebounceMs`   | `300`       | quiet time after an event before recomputing                        |
+| `watchMaxWaitMs`    | `2000`      | longest a steady event stream defers a recompute                    |
+| `watchSweepMs`      | `300000`    | full rescan anyway, in case events were dropped                     |
+| `watchHotThreshold` | `10`        | recomputes per minute before a repo backs off                       |
+| `watchBackoffMaxMs` | `30000`     | longest backoff for a hot repo                                      |
+| `watchStormRate`    | `2000`      | events/sec past which forest falls back to polling                  |
+| `recentCount`       | `10`        | rows in the Recent group                                            |
+| `agoRefreshMs`      | `30000`     | how often relative times re-render                                  |
+| `toastMs`           | `7000`      | toast lifetime                                                      |
+| `collapseMargin`    | `3`         | context lines kept around a hunk                                    |
+| `collapseMinSize`   | `5`         | shortest run of unchanged lines that collapses                      |
+| `launchers`         | `{}`        | per-repo worktree-creation commands                                 |
+| `tickets`           | `{}`        | per-repo ticket URL templates                                       |
+| `keys`              | `{}`        | keyboard shortcut overrides                                         |
+| `columns`           | `[]`        | worktree columns shown, in order; empty = default (all but `title`) |
 
 `host` defaults to loopback for a reason: setting it to `0.0.0.0` serves your
 repositories unauthenticated to everything on the LAN, including file contents
