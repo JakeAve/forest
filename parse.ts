@@ -260,6 +260,23 @@ export async function pool<T, R>(
   return out;
 }
 
+// pool's bound, shared across callers that start at different times
+export function limiter(n: number) {
+  let active = 0;
+  const waiting: (() => void)[] = [];
+  return async <T>(fn: () => Promise<T>): Promise<T> => {
+    if (active < n) active++;
+    else await new Promise<void>((r) => waiting.push(r));
+    try {
+      return await fn();
+    } finally {
+      const next = waiting.shift();
+      if (next) next();
+      else active--;
+    }
+  };
+}
+
 // ---- fs-watch classifier ----
 
 // gitignored everywhere here, so they can never change a value Forest shows.
