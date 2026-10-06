@@ -245,19 +245,21 @@ substituted; `*` is the fallback for repos without their own entry.
 A worktree card links the first ticket key found in its branch name, PR title or
 last commit subject: Jira, Linear and Shipyard-style keys (`ROM-123`, any case)
 and GitHub issue numbers (`#123`). Give each repo the URL template its tracker
-uses; `{key}` is the key without any `#`, `*` is the fallback.
+uses for the former; `{key}` is substituted, `*` is the fallback.
 
 ```json
 {
   "tickets": {
-    "twilight": "https://shipyard.podium.com/tasks/{key}",
+    "twilight": "https://shipyard.podium.com/t/{key}",
     "*": "https://linear.app/acme/issue/{key}"
   }
 }
 ```
 
-Without a template a `#123` still links to the repo's own GitHub issues, and a
-bare key shows nothing rather than guess a tracker.
+A `#123` always links to the repo's own GitHub issues; a tracker key with no
+template shows nothing rather than guess. The resolved `ticket` (`{key, url}` or
+`null`) rides every worktree row: the SSE snapshot, the boot cache, and the
+agent `snapshot`, `wts`, `whoami` and `sessions` tools.
 
 ### Keyboard shortcuts
 
