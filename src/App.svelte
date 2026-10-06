@@ -16,7 +16,6 @@ import {
   removeSummary,
   sessionTag,
   snoozeKey,
-  ticketFor,
   TREE_CAP,
   treeRows,
   trimSeps,
@@ -330,15 +329,6 @@ const branchUrl = (w) =>
       w.remote.split("/").map(encodeURIComponent).join("/")
     }`
     : null;
-
-const ticketOf = (w) =>
-  ticketFor(
-    settings?.tickets?.[w.repo] ?? settings?.tickets?.["*"],
-    repoOf(w)?.webUrl,
-    w.branch,
-    w.pr?.title,
-    w.subject,
-  );
 
 const dirName = (w) => {
   const d = w.path.split("/").pop();
@@ -1336,14 +1326,14 @@ function wtItems(w, solo = false) {
       label: `View pull request #${w.pr.number}`,
       fn: () => open(w.pr.url, "_blank", "noreferrer"),
     },
-    !many && ticketOf(w) && {
-      label: `Open ticket ${ticketOf(w).key}`,
-      fn: () => open(ticketOf(w).url, "_blank", "noreferrer"),
+    !many && w.ticket && {
+      label: `Open ticket ${w.ticket.key}`,
+      fn: () => open(w.ticket.url, "_blank", "noreferrer"),
     },
-    !many && ticketOf(w) && {
+    !many && w.ticket && {
       label: "Copy ticket link",
       kbd: w === selWt && kbdOf("copy-ticket"),
-      fn: (e) => copy(e, ticketOf(w).url, "ctx"),
+      fn: (e) => copy(e, w.ticket.url, "ctx"),
     },
     !many && repoOf(w)?.webUrl && (!w.remote || w.ahead > 0) && {
       label: w.remote ? `Push (↑${w.ahead})` : "Push branch to remote",
@@ -1908,8 +1898,8 @@ const COMMANDS = [
     label: "Copy ticket link",
     section: "Worktrees",
     keys: "alt+cmd+t",
-    when: () => liveWt() && ticketOf(liveWt()),
-    run: (e) => copy(e, ticketOf(liveWt()).url, "kbd"),
+    when: () => liveWt() && liveWt().ticket,
+    run: (e) => copy(e, liveWt().ticket.url, "kbd"),
   },
   {
     id: "agent-sessions",
@@ -2423,7 +2413,7 @@ async function confirmDiscard() {
           showRepo}<span class="rp">{w.repo}</span>{/if}{w.branch}{#if
           renamed(w)}<span class="rb">{renamed(w)}</span>{/if}{#if
           dirName(w)}<span class="dir">{dirName(w)}</span>{/if}{#if
-          ticketOf(w)}{@const t = ticketOf(w)}<a class="port tk" href={t.url} target="_blank" rel="noreferrer"
+          w.ticket}{@const t = w.ticket}<a class="port tk" href={t.url} target="_blank" rel="noreferrer"
             title="open ticket {t.key}" onclick={(e) => e.stopPropagation()}>{t.key}</a>{/if}</span>
         <span class="ags">
           {#if w.agents?.length}

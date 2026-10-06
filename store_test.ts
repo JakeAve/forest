@@ -170,3 +170,19 @@ Deno.test("publish keeps a row's agents until sessions have loaded, across a rec
   store.publish();
   assertEquals(agentsOf(), [[], []]);
 });
+
+Deno.test("publish resolves each worktree's ticket after its PR", () => {
+  const store = createStore({
+    prFor: () => ({ title: "ABC-7: thing" } as Pr),
+    ticket: (_r, w) => ({ key: w.pr?.title.slice(0, 5) ?? "", url: "u" }),
+    procs: () => new Map(),
+    onSnapshot: () => {},
+    stats: newStats(),
+  });
+  store.byPath.set("/r/forest", repo({ worktrees: [worktree()] }));
+  store.publish();
+  assertEquals(store.byPath.get("/r/forest")?.worktrees[0].ticket, {
+    key: "ABC-7",
+    url: "u",
+  });
+});

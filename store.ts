@@ -1,4 +1,4 @@
-import { ownerWorktree } from "./parse.ts";
+import { ownerWorktree, type Ticket } from "./parse.ts";
 import type { Stats } from "./stats.ts";
 import type { WtKey } from "./sessions.ts";
 import type {
@@ -26,6 +26,7 @@ export type StoreApi = {
 export function createStore(
   {
     prFor,
+    ticket = () => null,
     autoRebase,
     prError = () => null,
     prListed,
@@ -35,6 +36,7 @@ export function createStore(
     stats,
   }: {
     prFor: (repo: string, w: Worktree) => Pr | null;
+    ticket?: (repo: Repo, w: Worktree) => Ticket | null;
     autoRebase?: (wt: string) => AutoRebase | null;
     prError?: (repo: string) => string | null;
     prListed?: (repo: string) => boolean;
@@ -75,6 +77,7 @@ export function createStore(
           known.set(w.path, r.path);
           wtByPath.set(w.path, w);
           w.pr = prFor(r.path, w);
+          w.ticket = ticket(r, w);
           w.autoRebase = autoRebase?.(w.path) ?? null;
           w.ports = []; // recomputed from scratch: publish() runs on live objects
           w.procs = [];
