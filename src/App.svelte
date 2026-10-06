@@ -183,9 +183,9 @@ let confirming = $state(null);
 let confirmSel = $state(false);
 let menu = $state(null);
 let menuEl = $state();
-let card = $state(null); // { path, x, y }: PR hover card anchored under a pill
+let card = $state(null); // { path, x, y }: PR card anchored under a pill
 let cardEl = $state();
-let cardT;
+let cardReturn;
 const cardWt = $derived(card && allWts.find((w) => w.path === card.path));
 let restored = false;
 const initialParams = new URLSearchParams(location.search);
@@ -1256,7 +1256,7 @@ const prState = (w, action, e) =>
     e,
   );
 
-// The PR actions available on w. One list so the hover card's buttons and the
+// The PR actions available on w. One list so the card's buttons and the
 // context menu can't drift: `label` is the card's, `menu` the wordier one, and
 // `confirm` is the question the card asks before an irreversible action.
 function prActions(w) {
@@ -1314,13 +1314,11 @@ function runAction(a, w, e) {
 
 // A menu pick of a confirmable action opens the card on its question, so there
 // is one confirm UI however you got there -- and no merge on a single misclick.
-async function askInCard(w, a, e) {
+function askInCard(w, a, e) {
   asking = { path: w.path, key: a.key };
-  card = { path: w.path, x: e?.clientX ?? 0, y: e?.clientY ?? 0 };
-  await tick();
-  if (!cardEl || !card) return;
-  if (!cardEl.matches(":popover-open")) cardEl.showPopover();
-  placeCard();
+  if (e?.detail !== 0) return showCard(w, e?.clientX ?? 0, e?.clientY ?? 0);
+  menuReturn = null;
+  clickCell(w, "pr");
 }
 
 async function removeWts(wts, force) {
@@ -1361,18 +1359,20 @@ let openedT;
 async function openMenu(e, items, viaKey) {
   e.preventDefault();
   e.stopPropagation();
+  if (card) hideCard();
   const box = e.currentTarget.getBoundingClientRect();
   menuReturn = viaKey ? e.currentTarget : null;
   menu = {
     x: (!viaKey && e.clientX) || Math.round(box.left + 16),
     y: (!viaKey && e.clientY) || Math.round(box.bottom),
     items: trimSeps(items.filter(Boolean)),
+    closable: e.type !== "contextmenu",
   };
   await tick();
   if (!menuEl || !menu) return;
   menuEl.showPopover();
   placeMenu();
-  if (viaKey) menuEl.querySelector("button")?.focus();
+  if (viaKey) menuEl.querySelector("button:not(.x)")?.focus();
 }
 
 function placeMenu() {
@@ -1402,21 +1402,22 @@ function closeMenu() {
   menuReturn = null;
 }
 
+function hideMenu() {
+  menuEl?.hidePopover();
+  closeMenu();
+}
+
 $effect(() => {
   if (!menu) return;
-  const hide = () => {
-    menuEl?.hidePopover();
-    closeMenu();
-  };
-  const onDown = (ev) => !menuEl?.contains(ev.target) && hide();
-  const onKey = (ev) => (ev.key === "Escape" ? hide() : menuNav(ev));
+  const onDown = (ev) => !menuEl?.contains(ev.target) && hideMenu();
+  const onKey = (ev) => (ev.key === "Escape" ? hideMenu() : menuNav(ev));
   addEventListener("pointerdown", onDown, true);
   addEventListener("keydown", onKey, true);
-  addEventListener("scroll", hide, true);
+  addEventListener("scroll", hideMenu, true);
   return () => {
     removeEventListener("pointerdown", onDown, true);
     removeEventListener("keydown", onKey, true);
-    removeEventListener("scroll", hide, true);
+    removeEventListener("scroll", hideMenu, true);
   };
 });
 
@@ -1448,7 +1449,7 @@ function menuNav(e) {
     : 0;
   const back = menu?.items.find((x) => x.back);
   if (step) {
-    const bs = [...menuEl.querySelectorAll("button:not(:disabled):not(.more)")];
+    const bs = [...menuEl.querySelectorAll("button:not(:disabled, .more, .x)")];
     const i = bs.indexOf(document.activeElement);
     bs.at(i < 0 ? (step > 0 ? 0 : -1) : (i + step) % bs.length)?.focus();
   } else if (k === "arrowleft" && back) back.fn(e);
@@ -1458,20 +1459,26 @@ function menuNav(e) {
   e.stopPropagation();
 }
 
-function showCard(w, e) {
-  clearTimeout(cardT);
+async function showCard(w, x, y) {
+  card = { path: w.path, x, y };
+  await tick();
+  if (!cardEl || !card) return;
+  if (!cardEl.matches(":popover-open")) cardEl.showPopover();
+  placeCard();
+}
+// A plain click on the PR pill opens its card, as the agent badge opens its
+// menu; a modified click still follows the link to GitHub.
+async function openCard(w, e) {
+  e.stopPropagation();
+  if (e.metaKey || e.ctrlKey || e.shiftKey) return;
+  e.preventDefault();
+  if (menu) hideMenu();
   const box = e.currentTarget.getBoundingClientRect();
-  cardT = setTimeout(async () => {
-    card = {
-      path: w.path,
-      x: Math.round(box.left),
-      y: Math.round(box.bottom + 4),
-    };
-    await tick();
-    if (!cardEl || !card) return;
-    if (!cardEl.matches(":popover-open")) cardEl.showPopover();
-    placeCard();
-  }, 250);
+  cardReturn = e.detail === 0 ? e.currentTarget : null;
+  await showCard(w, Math.round(box.left), Math.round(box.bottom + 4));
+  if (cardReturn) {
+    cardEl?.querySelector(asking ? ".practs .btn" : "a, button")?.focus();
+  }
 }
 function placeCard() {
   if (!cardEl || !card) return;
@@ -1487,27 +1494,25 @@ function placeCard() {
   cardEl.style.left = `${p.x}px`;
   cardEl.style.top = `${p.y}px`;
 }
-const holdCard = () => clearTimeout(cardT);
-function hideCard(now) {
-  clearTimeout(cardT);
-  const close = () => {
-    cardEl?.hidePopover();
-    card = null;
-    asking = null;
-  };
-  if (now) close();
-  else cardT = setTimeout(close, 200);
+function hideCard() {
+  cardEl?.hidePopover();
+  card = null;
+  asking = null;
+  cardReturn?.focus();
+  cardReturn = null;
 }
 
 $effect(() => {
   if (!card) return;
-  const onKey = (ev) => ev.key === "Escape" && hideCard(true);
-  const onScroll = (ev) => !cardEl?.contains(ev.target) && hideCard(true);
+  const outside = (ev) => !cardEl?.contains(ev.target) && hideCard();
+  const onKey = (ev) => ev.key === "Escape" && hideCard();
+  addEventListener("pointerdown", outside, true);
   addEventListener("keydown", onKey, true);
-  addEventListener("scroll", onScroll, true);
+  addEventListener("scroll", outside, true);
   return () => {
+    removeEventListener("pointerdown", outside, true);
     removeEventListener("keydown", onKey, true);
-    removeEventListener("scroll", onScroll, true);
+    removeEventListener("scroll", outside, true);
   };
 });
 
@@ -1753,7 +1758,9 @@ async function drill(items, e, session = null) {
   menu = { ...menu, session, items: trimSeps(items.filter(Boolean)) };
   await tick();
   placeMenu();
-  if (e?.detail === 0) menuEl?.querySelector("button:not(:disabled)")?.focus();
+  if (e?.detail === 0) {
+    menuEl?.querySelector("button:not(:disabled, .x)")?.focus();
+  }
 }
 
 const tagOf = (w, a) =>
@@ -1805,6 +1812,7 @@ function sessionActions(w, s) {
   const a = full(s);
   const tag = tagOf(w, a);
   return [
+    { head: "Session actions" },
     {
       agent: a,
       label: `‹ ${clip(a.title || `Untitled ${a.label} session`, 40)}`,
@@ -1861,7 +1869,7 @@ function agentItems(w) {
       keep: true,
       fn: (e) =>
         !menu
-          ? openSessions(w)
+          ? clickCell(w, "agent")
           : rest.length
           ? drill(sessionItems(w), e)
           : showActions(w, first, e),
@@ -2099,11 +2107,12 @@ const focusedWt = () => {
   return path && allWts.find((w) => w.path === path && !w.isPrimary);
 };
 
-// Opens the selected row's agent popover from its badge, as a click would.
-async function openSessions(w) {
+// Opens a row's agent menu or PR card from its cell, as a click would.
+async function clickCell(w, col) {
   await scrollRow(w.path);
-  document.querySelector(`.wt[data-path="${CSS.escape(w.path)}"] .ag`)
-    ?.click();
+  document.querySelector(
+    `.wt[data-path="${CSS.escape(w.path)}"] [data-col="${col}"] :is(a, button)`,
+  )?.click();
 }
 
 // Runs a t / c / l action on the popover's session, then closes the popover.
@@ -2197,7 +2206,15 @@ const COMMANDS = [
     section: "Agent sessions",
     keys: "a",
     when: () => liveWt()?.agents?.length,
-    run: () => openSessions(selWt),
+    run: () => clickCell(selWt, "agent"),
+  },
+  {
+    id: "pr-card",
+    label: "Pull request…",
+    section: "Worktrees",
+    keys: "p",
+    when: () => liveWt()?.pr,
+    run: () => clickCell(selWt, "pr"),
   },
   {
     id: "agent-resume",
@@ -2736,15 +2753,14 @@ async function confirmDiscard() {
             col.key === "ticket"}{#if w.ticket}<a href={w.ticket.url} target="_blank" rel="noreferrer"
                 title="open ticket {w.ticket.key}" onclick={(e) => e.stopPropagation()}>{w.ticket.key}</a>{/if}{:else if
             col.key === "pr"}{#if w.pr}{@const s = prStatus(w.pr)}<a
-                href={w.pr.url}
+                class="prl" href={w.pr.url}
                 target="_blank" rel="noreferrer"
                 aria-label={[`${s.label}, PR #${w.pr.number}`, w.pr.title]
                   .filter(Boolean).join(": ")}
-                onpointerenter={(e) => showCard(w, e)} onpointerleave={() => hideCard()}
-                onfocus={(e) => showCard(w, e)} onblur={() => hideCard()}
-                onclick={(e) => e.stopPropagation()}>{#if w.pr.autoMerge}<svg class="g am" viewBox="0 0 16 16">{@html AM_ICON}</svg>{/if}{#if w.autoRebase}<svg class="g ar" class:err={w.autoRebase.error} viewBox="0 0 16 16">{@html AR_ICON}</svg>{/if}#{w.pr.number}</a> <span
+                aria-haspopup="dialog" title="⌘-click to open on GitHub"
+                onclick={(e) => openCard(w, e)}>{#if w.pr.autoMerge}<svg class="g am" viewBox="0 0 16 16">{@html AM_ICON}</svg>{/if}{#if w.autoRebase}<svg class="g ar" class:err={w.autoRebase.error} viewBox="0 0 16 16">{@html AR_ICON}</svg>{/if}#{w.pr.number}<span
                 class="pst" class:pill={s.weight === "loud"} data-tone={s.tone}
-                title="{s.sinceLabel} for {ago(s.since)}">{#if s.glyph}<svg class="g" viewBox="0 0 16 16">{@html GLYPH[s.glyph]}</svg>{/if}{s.label.toLowerCase()}{s.since ? ` ${ago(s.since)}` : ""}</span>{:else if
+                title="{s.sinceLabel} for {ago(s.since)}">{#if s.glyph}<svg class="g" viewBox="0 0 16 16">{@html GLYPH[s.glyph]}</svg>{/if}{s.label.toLowerCase()}{s.since ? ` ${ago(s.since)}` : ""}</span></a>{:else if
               w.autoRebase}<span class="port ar" class:err={w.autoRebase.error}
                 title={w.autoRebase.error ?? "auto-rebase on"}><svg class="g ar" viewBox="0 0 16 16">{@html AR_ICON}</svg></span>{/if}{:else if
             col.key === "changes"}{#if w.dirty}<span class="warn">●{w.dirty}</span>{/if}{:else if
@@ -3020,13 +3036,16 @@ async function confirmDiscard() {
   </div>
   </div>
   {/if}
+  {#snippet closeX(fn)}
+    <button class="circ x" title="Close (Esc)" aria-label="Close" onclick={fn}>✕</button>
+  {/snippet}
   <div class="ctx" popover="manual" bind:this={menuEl}
        ontoggle={(e) => e.newState === "closed" && closeMenu()}>
     {#each menu?.items ?? [] as it, i (i)}
       {#if it === "-"}
         <hr>
       {:else if it.head}
-        <div class="grp">{it.head}</div>
+        <div class="grp">{it.head}{#if i === 0 && menu.closable}{@render closeX(hideMenu)}{/if}</div>
       {:else}
         {#snippet item()}
           <button class:dg={it.danger} disabled={it.disabled} title={it.tip}
@@ -3050,8 +3069,8 @@ async function confirmDiscard() {
       {/if}
     {/each}
   </div>
-  <div class="ctx card" popover="manual" bind:this={cardEl}
-       onpointerenter={holdCard} onpointerleave={() => hideCard()}>
+  <div class="ctx card" popover="manual" role="dialog" aria-label="Pull request"
+       bind:this={cardEl}>
     {#if cardWt?.pr}
       {@const w = cardWt}
       {@const p = w.pr}
@@ -3059,9 +3078,10 @@ async function confirmDiscard() {
       {@const s = prStatus(p)}
       <div class="top">
         <div class="r">
-          <a class="port pr" data-tone={s.tone} href={p.url} target="_blank" rel="noreferrer">#{p.number}</a>
+          <a class="port pr" data-tone={s.tone} href={p.url} target="_blank" rel="noreferrer">#{p.number} ↗</a>
           <span class="st {s.tone}">{s.label}</span>
           {#if c}<span class="dim t">by {c.author} · {ago(c.createdAt)}</span><span class="ago">updated {ago(c.updatedAt)}</span>{/if}
+          {@render closeX(hideCard)}
         </div>
         <div class="ttl">{p.title}</div>
         {#if c}
@@ -3464,6 +3484,21 @@ async function confirmDiscard() {
 }
 .circ:hover {
   color: var(--acc);
+}
+.circ.x {
+  width: 1.25rem;
+  height: 1.25rem;
+  font-size: 0.5625rem;
+  margin-left: auto;
+}
+.card .ago + .x {
+  margin-left: 0;
+}
+.ctx .grp:has(.x) {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding-top: 0.25rem;
 }
 .bell {
   position: relative;
@@ -4230,10 +4265,15 @@ select.theme {
   font: 0.625rem var(--mono);
   color: var(--dim);
 }
-.wt .c[data-col="pr"] {
+.wt .c[data-col="pr"],
+.wt .prl {
   display: flex;
   align-items: center;
-  gap: 0.25rem;
+  gap: 0.375rem;
+  min-width: 0;
+}
+.wt .c .prl:hover {
+  text-decoration: none;
 }
 .wt .pill {
   --tone: var(--fg);
@@ -4733,7 +4773,7 @@ select.theme {
   border-radius: 0.625rem;
   box-shadow: 0 0.5rem 1.5rem color-mix(in srgb, var(--bg) 70%, transparent);
 }
-.ctx button:not(.btn) {
+.ctx button:not(.btn, .circ) {
   display: block;
   width: 100%;
   text-align: left;
@@ -4752,7 +4792,7 @@ select.theme {
   color: var(--dimmer);
   font: 0.6875rem var(--mono);
 }
-.ctx button:not(.btn):hover {
+.ctx button:not(.btn, .circ):hover {
   background: var(--hl);
   color: var(--hlfg);
 }
@@ -4866,6 +4906,11 @@ select.theme {
   padding: 0 0.4375rem;
   font-size: 0.6875rem;
   color: var(--acc);
+}
+.card .st,
+.card .top .port {
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 .card .st.draft,
 .card .st.closed {
