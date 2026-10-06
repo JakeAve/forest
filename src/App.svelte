@@ -887,11 +887,48 @@ const COLUMNS = [
     width: "2.875rem",
   },
 ];
-const lead = $derived(COLUMNS.find((c) => c.stretch));
-const colTemplate = $derived(
-  ["0.75rem", ...COLUMNS.map((c) => c === lead ? "minmax(0, 1fr)" : c.width)]
-    .join(" "),
+const visibleCols = $derived(
+  [
+    ...new Set(
+      settings?.columns?.length
+        ? settings.columns
+        : COLUMNS.filter((c) => c.key !== "title").map((c) => c.key),
+    ),
+  ].map((k) => COLUMNS.find((c) => c.key === k)).filter(Boolean),
 );
+const lead = $derived(
+  ["title", "branch", "ticket"].map((k) => visibleCols.find((c) => c.key === k))
+    .find(Boolean),
+);
+const colTemplate = $derived(
+  [
+    "0.75rem",
+    ...visibleCols.map((c) => c === lead ? "minmax(0, 1fr)" : c.width),
+  ].join(" "),
+);
+let dragCol = null;
+
+function setCols(keys) {
+  settings.columns = keys.length ? keys : ["none"];
+  saveSettings();
+}
+
+function toggleCol(key) {
+  const keys = visibleCols.map((c) => c.key);
+  setCols(keys.includes(key) ? keys.filter((k) => k !== key) : [...keys, key]);
+}
+
+function moveCol(key, i) {
+  const keys = visibleCols.map((c) => c.key).filter((k) => k !== key);
+  keys.splice(i, 0, key);
+  setCols(keys);
+}
+
+const colItems = () =>
+  COLUMNS.map((c) => ({
+    label: (visibleCols.includes(c) ? "✓ " : "") + c.label,
+    fn: () => toggleCol(c.key),
+  }));
 
 function splitPath(p) {
   const i = p.lastIndexOf("/");
@@ -2401,9 +2438,16 @@ async function confirmDiscard() {
       </div>
     {/if}
     <div class="body">
-      <div class="cols" style:grid-template-columns={colTemplate}>
+      <!-- svelte-ignore a11y_no_static_element_interactions, a11y_no_noninteractive_tabindex -->
+      <div class="cols" style:grid-template-columns={colTemplate} tabindex="0"
+           onkeydown={(e) => menuKey(e, colItems())}
+           oncontextmenu={(e) => openMenu(e, colItems())}>
         <span></span>
-        {#each COLUMNS as col (col.key)}<span class:end={col.align === "right"}>{col.label}</span>{/each}
+        {#each visibleCols as col (col.key)}<span class:end={col.align === "right"} draggable="true"
+              ondragstart={(e) => ((dragCol = col.key), e.dataTransfer.setData("text/plain", col.key))} ondragover={(e) => e.preventDefault()}
+              ondrop={() => dragCol && dragCol !== col.key &&
+                moveCol(dragCol, visibleCols.filter((c) => c.key !== dragCol).findIndex((c) => c.key === col.key))}
+            >{col.label}</span>{/each}
       </div>
       {#if pinnedWts.length}
         <div class="repo st"><span class="rn">Pinned</span><span class="ct">{pinnedWts.length}</span></div>
@@ -2485,7 +2529,7 @@ async function confirmDiscard() {
                 onclick={(e) => toggleCheck(w, e)}
                 onkeydown={(e) => e.key === "Enter" && toggleCheck(w, e)}></span>
         {/if}
-        {#each COLUMNS as col (col.key)}
+        {#each visibleCols as col (col.key)}
           <span class="c" class:end={col.align === "right"} class:lead={col === lead} data-col={col.key}>{#if col.key === "branch"}<span class="br" title={[w.branch, renamed(w) && `pushed as ${renamed(w)}`, dirName(w) &&
               `in ${dirName(w)}/`, repoOf(w)?.cached && "last known state; refreshing"].filter(Boolean).join(" · ")}>{#if
               showRepo}<span class="rp">{w.repo}</span>{/if}{w.branch}{#if
@@ -3062,6 +3106,25 @@ async function confirmDiscard() {
     {/if}
   {/each}
 
+  <div class="sec">Columns</div>
+  {#each [...visibleCols, ...COLUMNS.filter((c) => !visibleCols.includes(c))] as c, i (c.key)}
+    {@const on = visibleCols.includes(c)}
+    <div class="row">
+      <label class="colck">
+        <input type="checkbox" class="cbxin" checked={on} onchange={() => toggleCol(c.key)}>
+        <span class="cbx" class:on></span>{c.label}
+      </label>
+      {#if on}
+        <button class="btn" aria-label="Move up" disabled={i === 0} onclick={() => moveCol(c.key, i - 1)}>↑</button>
+        <button class="btn" aria-label="Move down" disabled={i === visibleCols.length - 1}
+                onclick={() => moveCol(c.key, i + 1)}>↓</button>
+      {/if}
+    </div>
+  {/each}
+  <div class="row">
+    <button class="btn" onclick={() => ((settings.columns = []), saveSettings())}>Reset columns</button>
+  </div>
+
   <div class="sec">Launchers</div>
   {#each Object.entries(settings?.launchers ?? {}) as [repo] (repo)}
     <div class="row">
@@ -3322,6 +3385,12 @@ dialog.settings::backdrop {
   width: 9.5rem;
   color: var(--dim);
   font: 0.8125rem var(--mono);
+}
+.row .colck {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
 }
 .row input {
   background: var(--input);
@@ -3865,8 +3934,13 @@ select.theme {
   font: 0.6875rem var(--mono);
   color: var(--dim);
 }
-.wt [data-col="title"] {
+.wt [data-col="title"],
+.wt [data-col="branch"] {
   color: var(--dim);
+}
+.wt .lead,
+.wt .lead a {
+  color: var(--fg);
 }
 .wt [data-col="changes"],
 .wt [data-col="sync"],
@@ -4620,22 +4694,29 @@ select.theme {
   .wt {
     display: flex;
     flex-wrap: wrap;
-    row-gap: 0.125rem;
+    row-gap: 0.0625rem;
   }
   .wt > * {
-    order: 2;
+    order: 3;
   }
   .wt > :first-child,
-  .wt .lead,
-  .wt [data-col="active"] {
+  .wt .lead {
     order: 0;
   }
-  .wt::before {
-    content: "";
+  .wt [data-col="active"] {
     order: 1;
+  }
+  .wt::before,
+  .wt::after {
+    content: "";
+    order: 2;
     width: 0.75rem;
   }
-  .wt [data-col="title"] {
+  .wt::before {
+    flex-basis: 100%;
+  }
+  .wt [data-col="title"],
+  .wt .lead {
     flex: 1 1 0;
   }
   .wt > :first-child {
@@ -4643,9 +4724,7 @@ select.theme {
   }
   .wt [data-col="active"] {
     flex: 0 0 2.875rem;
-  }
-  .wt .lead {
-    flex: 1 0 calc(100% - 4.7rem);
+    margin-left: auto;
   }
   .wt .c:empty {
     display: none;
