@@ -79,3 +79,48 @@ Deno.test("boot wires the real module graph end to end", async () => {
     await Deno.remove(home, { recursive: true });
   }
 });
+
+Deno.test("boot: primary on the default branch has no ticket", async () => {
+  const home = await Deno.realPath(await Deno.makeTempDir());
+  try {
+    const root = join(home, "Repos");
+    const origin = join(home, "origin.git");
+    const demo = join(root, "demo");
+    await Deno.mkdir(demo, { recursive: true });
+    await git(home, "init", "-q", "--bare", "-b", "main", origin);
+    await git(demo, "init", "-q", "-b", "main");
+    await git(demo, "commit", "-q", "--allow-empty", "-m", "ROM-12 init");
+    await git(demo, "remote", "add", "origin", origin);
+    await git(demo, "push", "-q", "origin", "main");
+    await git(demo, "remote", "set-head", "origin", "main");
+    await git(demo, "worktree", "add", "-q", "-b", "rom-7-x", join(root, "x"));
+    const app = boot({
+      settings: {
+        ...DEFAULTS,
+        root,
+        watch: false,
+        tickets: { "*": "t/{key}" },
+      },
+      home,
+      distDir: home,
+      notifyOs: false,
+    });
+    await app.watcher.poll();
+    const snap = await app.routes(
+      new Request("http://localhost/api/t/snapshot"),
+      info,
+    ).then((r) => r.json());
+    const tickets = Object.fromEntries(
+      snap[0].worktrees.map((w: { branch: string; ticket: unknown }) => [
+        w.branch,
+        w.ticket,
+      ]),
+    );
+    assertEquals(tickets, {
+      main: null,
+      "rom-7-x": { key: "ROM-7", url: "t/ROM-7" },
+    });
+  } finally {
+    await Deno.remove(home, { recursive: true });
+  }
+});

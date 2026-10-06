@@ -67,9 +67,9 @@ export function boot(opts: {
       ticketFor(
         settings.tickets[r.name] ?? settings.tickets["*"],
         r.webUrl,
-        w.branch,
-        w.pr?.title,
-        w.subject,
+        ...(w.isPrimary && w.branch === r.defaultBranch
+          ? []
+          : [w.branch, w.pr?.title, w.subject]),
       ),
     autoRebase: (wt) => autoRebase.status(wt),
     prError: (r) => prs.prError(r),

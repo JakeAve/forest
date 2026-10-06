@@ -4,6 +4,8 @@ import {
   ancestorDirs,
   approvals,
   backoffOver,
+  bucket,
+  bucketSummary,
   byteChar,
   byteClass,
   ciSince,
@@ -18,6 +20,7 @@ import {
   isLocalRequest,
   limiter,
   normPath,
+  orderWts,
   ownerWorktree,
   parseDiffHunks,
   parseGrep,
@@ -1627,4 +1630,100 @@ Deno.test("sshHostName reads the hostname line of ssh -G", () => {
     "github.com",
   );
   assertEquals(sshHostName(""), null);
+});
+
+Deno.test("prStatus: weight", () => {
+  const w = (o: Partial<Pr>) => prStatus(pr(o)).weight;
+  assertEquals(w({ state: "MERGED" }), "quiet");
+  assertEquals(w({ state: "CLOSED" }), "quiet");
+  assertEquals(w({ isDraft: true }), "quiet");
+  assertEquals(w({ mergeable: "CONFLICTING" }), "loud");
+  assertEquals(w({ reviewDecision: "CHANGES_REQUESTED" }), "loud");
+  assertEquals(w({ ci: { state: "fail", failing: [] } }), "loud");
+  assertEquals(w({ mergeState: "CLEAN", reviewDecision: "APPROVED" }), "loud");
+  assertEquals(w({ reviewDecision: "REVIEW_REQUIRED" }), "loud");
+  assertEquals(w({ reviewDecision: "APPROVED" }), "quiet");
+  assertEquals(w({ mergeState: "BEHIND" }), "quiet");
+});
+
+const rank = (p: Pr | null, behindMain: number | null = 0) => ({
+  pr: p,
+  dirty: 0,
+  behindMain,
+});
+
+Deno.test("bucket", () => {
+  assertEquals(bucket(rank(null)), "none");
+  assertEquals(bucket(rank(pr({ state: "MERGED" }))), "done");
+  assertEquals(bucket(rank(pr({ state: "CLOSED" }))), "done");
+  assertEquals(bucket(rank(pr({ mergeable: "CONFLICTING" }))), "attention");
+  assertEquals(
+    bucket(rank(pr({ reviewDecision: "CHANGES_REQUESTED" }))),
+    "attention",
+  );
+  assertEquals(
+    bucket(rank(pr({ ci: { state: "fail", failing: [] } }))),
+    "attention",
+  );
+  assertEquals(bucket(rank(pr(), 3)), "attention");
+  assertEquals(bucket(rank(null, 3)), "none");
+  assertEquals(bucket(rank(pr({ state: "MERGED" }), 3)), "done");
+  assertEquals(bucket(rank(pr(), null)), "inflight");
+  assertEquals(bucket(rank(pr({ isDraft: true }))), "inflight");
+  assertEquals(
+    bucket(rank(pr({ reviewDecision: "REVIEW_REQUIRED" }))),
+    "inflight",
+  );
+});
+
+Deno.test("orderWts: bucket then activity, stable", () => {
+  const a = (id: string, lastActivity: number, p: Pr | null) => ({
+    id,
+    lastActivity,
+    ...rank(p),
+  });
+  const input = [
+    a("none-new", 9, null),
+    a("done", 8, pr({ state: "MERGED" })),
+    a("flight-old", 1, pr()),
+    a("hot-old", 2, pr({ mergeable: "CONFLICTING" })),
+    a("flight-new", 5, pr()),
+    a("hot-new", 6, pr({ mergeable: "CONFLICTING" })),
+    a("tie-1", 3, null),
+    a("tie-2", 3, null),
+  ];
+  const copy = [...input];
+  assertEquals(orderWts(input).map((w) => w.id), [
+    "hot-new",
+    "hot-old",
+    "flight-new",
+    "flight-old",
+    "done",
+    "none-new",
+    "tie-1",
+    "tie-2",
+  ]);
+  assertEquals(input, copy);
+});
+
+Deno.test("bucketSummary", () => {
+  const fail = rank(pr({ ci: { state: "fail", failing: [] } }));
+  const review = rank(pr({ reviewDecision: "REVIEW_REQUIRED" }));
+  assertEquals(bucketSummary([]), "");
+  assertEquals(bucketSummary([rank(null), rank(pr({ isDraft: true }))]), "");
+  assertEquals(
+    bucketSummary([review, fail, review]),
+    "1 failing · 2 in review",
+  );
+  assertEquals(
+    bucketSummary([
+      rank(pr({ mergeState: "CLEAN", reviewDecision: "APPROVED" })),
+      rank(pr({ reviewDecision: "CHANGES_REQUESTED" })),
+      rank(pr({ mergeable: "CONFLICTING" })),
+      review,
+      fail,
+      rank(pr({ state: "MERGED" })),
+    ]),
+    "1 failing · 1 conflicts · 1 changes requested · 1 in review · 1 ready",
+  );
 });
