@@ -235,7 +235,21 @@ Deno.test("a main checkout on a branch matches sessions that ran in it on that b
   await s.refresh();
   const got = s.forWts([{ path: MAIN, branch: "feat/x" }]).get(MAIN)!;
   assertEquals(got.map((a) => [a.id, a.seenAt, a.deep]), [
+    [B, ms(2), false],
     [A, ms(3), true],
     [C, ms(5), true],
   ]);
+});
+
+Deno.test("a main checkout on a branch also matches its ticket key and respects the cap", async () => {
+  const MAIN = "/h/Repos/app";
+  const files = new Map([
+    [claudeFile(A), line({ timestamp: at(1), content: "working on rom-12" })],
+    [claudeFile(B), line({ timestamp: at(2), content: "ROM-12 and ROM-13" })],
+    [claudeFile(C), line({ timestamp: at(3), content: "ROM-99" })],
+  ]);
+  const { s } = make(files);
+  await s.refresh();
+  const wt = [{ path: MAIN, branch: "feat/x", ticket: "ROM-12" }];
+  assertEquals(s.forWts(wt).get(MAIN)!.map((a) => a.id), [A, B]);
 });
