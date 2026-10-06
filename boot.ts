@@ -67,7 +67,7 @@ export function boot(opts: {
       ticketFor(
         settings.tickets[r.name] ?? settings.tickets["*"],
         r.webUrl,
-        ...(w.isPrimary && w.branch === r.defaultBranch
+        ...(w.branch === r.defaultBranch
           ? []
           : [w.branch, w.pr?.title, w.subject]),
       ),

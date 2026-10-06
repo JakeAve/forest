@@ -80,7 +80,7 @@ Deno.test("boot wires the real module graph end to end", async () => {
   }
 });
 
-Deno.test("boot: primary on the default branch has no ticket", async () => {
+Deno.test("boot: worktrees on the default branch have no ticket", async () => {
   const home = await Deno.realPath(await Deno.makeTempDir());
   try {
     const root = join(home, "Repos");
@@ -94,6 +94,8 @@ Deno.test("boot: primary on the default branch has no ticket", async () => {
     await git(demo, "push", "-q", "origin", "main");
     await git(demo, "remote", "set-head", "origin", "main");
     await git(demo, "worktree", "add", "-q", "-b", "rom-7-x", join(root, "x"));
+    await git(demo, "checkout", "-q", "-b", "rom-9-y");
+    await git(demo, "worktree", "add", "-q", join(root, "m"), "main");
     const app = boot({
       settings: {
         ...DEFAULTS,
@@ -118,6 +120,7 @@ Deno.test("boot: primary on the default branch has no ticket", async () => {
     );
     assertEquals(tickets, {
       main: null,
+      "rom-9-y": { key: "ROM-9", url: "t/ROM-9" },
       "rom-7-x": { key: "ROM-7", url: "t/ROM-7" },
     });
   } finally {
