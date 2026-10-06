@@ -4007,10 +4007,15 @@ select.theme {
   font: 0.625rem var(--mono);
   color: var(--dim);
 }
+.wt .c[data-col="pr"] {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
 .wt .pill {
   --tone: var(--fg);
   display: inline-block;
-  max-width: 100%;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
