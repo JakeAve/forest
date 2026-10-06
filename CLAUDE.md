@@ -41,3 +41,7 @@ deno task setup                # git hooks run check + test on commit/push
 - Ports: server `38471`, vite `38472`. `/mcp` only accepts `Host` of localhost
   or `forest-server.localhost`; keep that allowlist when touching the route.
 - Nothing under `/api/t/` or `/mcp` writes; agent tools stay read-only.
+- API first: a fact about a worktree or repo (a PR, a ticket, a port) is a field
+  on the row, resolved in `store.publish()` from its deps, so the SSE snapshot,
+  the boot cache and the agent tools carry one value. The UI and `tools.ts` read
+  rows; they never derive what the server could have.
