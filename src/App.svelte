@@ -849,7 +849,7 @@ const COLUMNS = [
     label: "Pull request",
     align: "left",
     stretch: false,
-    width: "10.5rem",
+    width: "8.5rem",
   },
   {
     key: "changes",
@@ -870,7 +870,7 @@ const COLUMNS = [
     label: "Ports",
     align: "left",
     stretch: false,
-    width: "4.75rem",
+    width: "4rem",
   },
   {
     key: "agent",
@@ -3908,6 +3908,12 @@ select.theme {
 }
 .wt .pill {
   --tone: var(--fg);
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
   padding: 0 0.375rem;
   border-radius: 999px;
   background: color-mix(in srgb, var(--tone) 15%, transparent);
