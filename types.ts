@@ -62,6 +62,7 @@ export type Repo = {
   worktrees: Worktree[];
   prError?: string | null; // why gh failed here; set by the store at publish
   prListed?: boolean;
+  cached?: boolean; // restored from the cache, not yet re-read this boot
 };
 
 export type Pr = {
