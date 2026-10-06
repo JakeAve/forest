@@ -1,4 +1,4 @@
-import type { PrCard } from "./parse.ts";
+import type { PrCard, Ticket } from "./parse.ts";
 
 export type Procs = { port: number; pid: number; command: string }[];
 
@@ -98,4 +98,5 @@ export type Tree = { files: string[]; dirs: string[]; ignored: string[] };
 export type WtRow = Worktree & {
   webUrl: string | null;
   defaultBranch: string | null;
+  ticket: Ticket | null;
 };

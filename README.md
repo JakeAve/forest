@@ -205,6 +205,7 @@ are written.
 | `collapseMargin`    | `3`         | context lines kept around a hunk                                 |
 | `collapseMinSize`   | `5`         | shortest run of unchanged lines that collapses                   |
 | `launchers`         | `{}`        | per-repo worktree-creation commands                              |
+| `tickets`           | `{}`        | per-repo ticket URL templates                                    |
 | `keys`              | `{}`        | keyboard shortcut overrides                                      |
 
 `host` defaults to loopback for a reason: setting it to `0.0.0.0` serves your
@@ -238,6 +239,25 @@ substituted; `*` is the fallback for repos without their own entry.
 ```json
 { "launchers": { "*": "./scripts/new-worktree.sh {slug}" } }
 ```
+
+### Tickets
+
+A worktree card links the first ticket key found in its branch name, PR title or
+last commit subject: Jira, Linear and Shipyard-style keys (`ROM-123`, any case)
+and GitHub issue numbers (`#123`). Give each repo the URL template its tracker
+uses; `{key}` is the key without any `#`, `*` is the fallback.
+
+```json
+{
+  "tickets": {
+    "twilight": "https://shipyard.podium.com/tasks/{key}",
+    "*": "https://linear.app/acme/issue/{key}"
+  }
+}
+```
+
+Without a template a `#123` still links to the repo's own GitHub issues, and a
+bare key shows nothing rather than guess a tracker.
 
 ### Keyboard shortcuts
 

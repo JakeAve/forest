@@ -182,6 +182,35 @@ export function fillCommand(
   return tpl.replace(/\{(\w+)\}/g, (m, k) => vars[k] ?? m);
 }
 
+// Jira, Linear and Shipyard keys (ROM-123, lower-cased in branch names too) and
+// GitHub issue numbers (#123). A `#` after a word or a `/` is not an issue.
+const TICKET_RE = /\b([A-Z][A-Z0-9]+-\d+)\b|(?<![\w/])#(\d+)\b/i;
+
+export type Ticket = { key: string; url: string };
+
+/** First ticket key in `texts`: `#n` links to the repo's own issues, a tracker
+ *  key through `tpl` ({key}), or stays unlinked rather than guess a tracker.
+ *  ponytail: `utf-8` or `v2-3` in a branch would read as a key; narrow TICKET_RE
+ *  if that bites. */
+export function ticketFor(
+  tpl: string | undefined,
+  webUrl: string | null | undefined,
+  ...texts: (string | null | undefined)[]
+): Ticket | null {
+  for (const t of texts) {
+    const m = t?.match(TICKET_RE);
+    if (!m) continue;
+    if (m[2]) {
+      return webUrl
+        ? { key: `#${m[2]}`, url: `${webUrl}/issues/${m[2]}` }
+        : null;
+    }
+    const key = m[1].toUpperCase();
+    return tpl ? { key, url: fillCommand(tpl, { key }) } : null;
+  }
+  return null;
+}
+
 export function settingsOverrides(
   defaults: Record<string, unknown>,
   settings: Record<string, unknown>,
@@ -230,6 +259,10 @@ export function remoteWebUrl(url: string): string | null {
   const m = u.match(/^(?:https?:\/\/|ssh:\/\/)?(?:[^@/]+@)?([^/:]+)[/:](.+)$/);
   return m && m[2].includes("/") ? `https://${m[1]}/${m[2]}` : null;
 }
+
+/** The real host from `ssh -G <alias>` output. */
+export const sshHostName = (out: string): string | null =>
+  out.match(/^hostname (\S+)$/m)?.[1] ?? null;
 
 export function trimSeps<T>(items: (T | "-")[]): (T | "-")[] {
   const out = items.filter((it, i, a) =>

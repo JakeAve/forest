@@ -16,6 +16,7 @@ import {
   removeSummary,
   sessionTag,
   snoozeKey,
+  ticketFor,
   TREE_CAP,
   treeRows,
   trimSeps,
@@ -167,6 +168,7 @@ let theme = $state("default");
 let fileEl = $state();
 let dlg = $state();
 let newRepo = $state("");
+let newTicketRepo = $state("");
 let creating = $state(null);
 let slug = $state("");
 let busy = $state({});
@@ -328,6 +330,15 @@ const branchUrl = (w) =>
       w.remote.split("/").map(encodeURIComponent).join("/")
     }`
     : null;
+
+const ticketOf = (w) =>
+  ticketFor(
+    settings?.tickets?.[w.repo] ?? settings?.tickets?.["*"],
+    repoOf(w)?.webUrl,
+    w.branch,
+    w.pr?.title,
+    w.subject,
+  );
 
 const dirName = (w) => {
   const d = w.path.split("/").pop();
@@ -1325,6 +1336,15 @@ function wtItems(w, solo = false) {
       label: `View pull request #${w.pr.number}`,
       fn: () => open(w.pr.url, "_blank", "noreferrer"),
     },
+    !many && ticketOf(w) && {
+      label: `Open ticket ${ticketOf(w).key}`,
+      fn: () => open(ticketOf(w).url, "_blank", "noreferrer"),
+    },
+    !many && ticketOf(w) && {
+      label: "Copy ticket link",
+      kbd: w === selWt && kbdOf("copy-ticket"),
+      fn: (e) => copy(e, ticketOf(w).url, "ctx"),
+    },
     !many && repoOf(w)?.webUrl && (!w.remote || w.ahead > 0) && {
       label: w.remote ? `Push (↑${w.ahead})` : "Push branch to remote",
       fn: (e) => push(w, e),
@@ -1694,6 +1714,13 @@ function addLauncher() {
   newRepo = "";
 }
 
+function addTicket() {
+  const name = newTicketRepo.trim();
+  if (!name || settings.tickets[name] !== undefined) return;
+  settings.tickets[name] = "";
+  newTicketRepo = "";
+}
+
 let setT;
 function saveSettings() {
   clearTimeout(setT);
@@ -1875,6 +1902,14 @@ const COMMANDS = [
       liveWt() && !selWt.isPrimary && !busy["ar:" + selWt.path] &&
       (selWt.autoRebase || selWt.pr?.state !== "MERGED"),
     run: (e) => toggleAutoRebase(selWt, e),
+  },
+  {
+    id: "copy-ticket",
+    label: "Copy ticket link",
+    section: "Worktrees",
+    keys: "alt+cmd+t",
+    when: () => liveWt() && ticketOf(liveWt()),
+    run: (e) => copy(e, ticketOf(liveWt()).url, "kbd"),
   },
   {
     id: "agent-sessions",
@@ -2387,7 +2422,9 @@ async function confirmDiscard() {
           `in ${dirName(w)}/`, repoOf(w)?.cached && "last known state; refreshing"].filter(Boolean).join(" · ")}>{#if
           showRepo}<span class="rp">{w.repo}</span>{/if}{w.branch}{#if
           renamed(w)}<span class="rb">{renamed(w)}</span>{/if}{#if
-          dirName(w)}<span class="dir">{dirName(w)}</span>{/if}</span>
+          dirName(w)}<span class="dir">{dirName(w)}</span>{/if}{#if
+          ticketOf(w)}{@const t = ticketOf(w)}<a class="port tk" href={t.url} target="_blank" rel="noreferrer"
+            title="open ticket {t.key}" onclick={(e) => e.stopPropagation()}>{t.key}</a>{/if}</span>
         <span class="ags">
           {#if w.agents?.length}
             {@const a = full(w.agents[0])}
@@ -2992,6 +3029,26 @@ async function confirmDiscard() {
     any repo without its own entry; empty removes it.
   </div>
   <div class="hint mono">{"{slug} {repo} {path} {root}"}</div>
+
+  <div class="sec">Tickets</div>
+  {#each Object.entries(settings?.tickets ?? {}) as [repo] (repo)}
+    <div class="row">
+      <label for="t-{repo}">{repo}</label>
+      <input id="t-{repo}" class="wide mono" type="text" placeholder="https://tracker/browse/{'{key}'}"
+             bind:value={settings.tickets[repo]} onchange={saveSettings}>
+    </div>
+  {/each}
+  <div class="row">
+    <input class="lname" list="repo-names" placeholder="Repo name, or *"
+           bind:value={newTicketRepo} onkeydown={(e) => e.key === "Enter" && addTicket()}>
+    <button class="btn" disabled={!newTicketRepo.trim()} onclick={addTicket}>Add</button>
+  </div>
+  <div class="hint">
+    URL for the ticket key found in a branch name, PR title or last commit
+    (<span class="mono">ROM-123</span>). A <span class="mono">#123</span> always
+    links to the repo's own issues.
+  </div>
+  <div class="hint mono">{"{key}"}</div>
 
   <div class="sec" bind:this={notifySec}>Notifications</div>
   {#each Object.entries(GROUPS) as [g, name] (g)}
@@ -3689,6 +3746,16 @@ select.theme {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.wt .br .tk {
+  margin-left: 0.375rem;
+  color: var(--dim);
+  background: transparent;
+  border-color: var(--line);
+}
+.wt .br .tk:hover {
+  color: var(--fg);
+  border-color: var(--dim);
 }
 .wt.cached .br {
   color: var(--dim);

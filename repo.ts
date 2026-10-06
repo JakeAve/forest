@@ -5,6 +5,7 @@ import {
   parseWorktreeList,
   pool,
   remoteWebUrl,
+  sshHostName,
   statusCounts,
 } from "./parse.ts";
 import type { Shell } from "./exec.ts";
@@ -33,6 +34,24 @@ export function createRepo(
 ): RepoApi {
   const { tryGit } = sh;
   const defaultRefByRepo = new Map<string, string>();
+  const sshHosts = new Map<string, Promise<string | null>>();
+
+  // ponytail: a dotless host is taken for an ssh alias; a dotted alias stays as written
+  async function webUrlOf(origin: string): Promise<string | null> {
+    const url = remoteWebUrl(origin);
+    if (!url) return null;
+    const u = new URL(url);
+    if (u.hostname.includes(".")) return url;
+    let real = sshHosts.get(u.hostname);
+    if (!real) {
+      real = sh.exec("", ["ssh", "-G", u.hostname]).then(sshHostName).catch(
+        () => null,
+      );
+      sshHosts.set(u.hostname, real);
+    }
+    u.hostname = (await real) ?? u.hostname;
+    return u.href;
+  }
 
   const exists = (path: string) =>
     Deno.stat(join(path, ".git")).then(() => true).catch(() => false);
@@ -288,7 +307,7 @@ export function createRepo(
     return {
       name,
       path,
-      webUrl: originUrl ? remoteWebUrl(originUrl) : null,
+      webUrl: originUrl ? await webUrlOf(originUrl) : null,
       defaultBranch: defaultRef?.replace("refs/remotes/origin/", "") ?? null,
       worktrees,
     };
