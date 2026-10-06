@@ -61,6 +61,7 @@ Deno.test("cache: a second boot serves the last snapshot, PRs included", () =>
     const [got] = JSON.parse(a.store.snapshot());
     assertEquals(got.worktrees[0].pr, PR);
     assertEquals(got.prListed, true);
+    assertEquals(got.cached, true);
     assertEquals(got.worktrees[0].ports, []); // live data is never served stale
 
     await a.cache.flush();

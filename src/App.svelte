@@ -2344,6 +2344,7 @@ async function confirmDiscard() {
             <span class="car">{closed[r.name] ? "▶" : "▼"}</span>
             <span class="rn">{r.name}</span>
             <span class="ct">{r.worktrees.length} worktree{r.worktrees.length > 1 ? "s" : ""}</span>
+            {#if r.cached}<span class="ct late" title="Last known state; refreshing"><span class="spin"></span> cached</span>{/if}
             <span class="sp"></span>
             <button class="cbtn plus" title="new worktree"
                     onclick={(e) => { e.stopPropagation(); creating = creating === r.name ? null : r.name; slug = ""; }}>New</button>
@@ -2369,7 +2370,7 @@ async function confirmDiscard() {
   </div>
   {#snippet wtRow(w, showRepo)}
     {#key touched[w.path]}
-      <div class="wt" class:sel={sel === w.path} class:touch={touched[w.path]}
+      <div class="wt" class:sel={sel === w.path} class:touch={touched[w.path]} class:cached={repoOf(w)?.cached}
            role="button" tabindex="0" data-path={w.path} onclick={() => selectWt(w.path)}
            onkeydown={(e) => e.key === "Enter" ? selectWt(w.path) : menuKey(e, wtItems(w))}
            oncontextmenu={(e) => openMenu(e, wtItems(w))}>
@@ -2383,7 +2384,7 @@ async function confirmDiscard() {
                 onkeydown={(e) => e.key === "Enter" && toggleCheck(w, e)}></span>
         {/if}
         <span class="br" title={[w.branch, renamed(w) && `pushed as ${renamed(w)}`, dirName(w) &&
-          `in ${dirName(w)}/`].filter(Boolean).join(" · ")}>{#if
+          `in ${dirName(w)}/`, repoOf(w)?.cached && "last known state; refreshing"].filter(Boolean).join(" · ")}>{#if
           showRepo}<span class="rp">{w.repo}</span>{/if}{w.branch}{#if
           renamed(w)}<span class="rb">{renamed(w)}</span>{/if}{#if
           dirName(w)}<span class="dir">{dirName(w)}</span>{/if}</span>
@@ -3688,6 +3689,10 @@ select.theme {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.wt.cached .br {
+  color: var(--dim);
+  font-style: italic;
 }
 .wt.sel .br {
   color: var(--hlfg);

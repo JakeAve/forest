@@ -52,7 +52,9 @@ export function createCache(
       );
       if (c?.v !== V || !Array.isArray(c.repos)) return;
       try {
-        for (const r of c.repos) store.byPath.set(r.path, r);
+        for (const r of c.repos) {
+          store.byPath.set(r.path, { ...r, cached: true });
+        }
         prs.restore(c.repos);
         store.publish();
       } catch (e) {
