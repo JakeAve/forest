@@ -344,6 +344,10 @@ const repoOf = (w) => repos.find((r) => r.name === w.repo);
 const shownWts = $derived(allWts.filter((w) => match(repoOf(w), w)));
 const pinnedWts = $derived(shownWts.filter((w) => pinned[w.path]));
 const checkedWts = $derived(allWts.filter((w) => checked[w.path]));
+const selecting = $derived(checkedWts.length > 0);
+const hiddenChecked = $derived(
+  checkedWts.filter((w) => !match(repoOf(w), w)).length,
+);
 const selectable = $derived(shownWts.filter((w) => !w.isPrimary));
 const allShownChecked = $derived(
   selectable.length > 0 && selectable.every((w) => checked[w.path]),
@@ -726,10 +730,22 @@ function toggleAllShown() {
   }
 }
 
+let lastToggled = null;
 function toggleCheck(w, e) {
   e.stopPropagation();
+  lastToggled = w.path;
   if (checked[w.path]) delete checked[w.path];
   else checked[w.path] = true;
+}
+
+function checkRange(w) {
+  const j = navWts.findIndex((x) => x.path === w.path);
+  let i = navWts.findIndex((x) => x.path === lastToggled);
+  if (i < 0) i = j;
+  for (const x of navWts.slice(Math.min(i, j), Math.max(i, j) + 1)) {
+    if (!x.isPrimary) checked[x.path] = true;
+  }
+  lastToggled = w.path;
 }
 
 function toggleAll() {
@@ -1516,7 +1532,9 @@ function wtItems(w, solo = false) {
     !w.isPrimary && {
       label: many ? `Remove ${t.length} worktrees…` : "Remove worktree…",
       danger: true,
-      fn: () => (confirming = t.filter((x) => !x.isPrimary)),
+      fn: () => (confirming = t.filter((x) =>
+        !x.isPrimary && (x === w || match(repoOf(x), x))
+      )),
     },
   ];
 }
@@ -1928,6 +1946,11 @@ function stepWt(d) {
   goWt(navWts[Math.max(0, Math.min(navWts.length - 1, i < 0 ? 0 : i + d))]);
 }
 const liveWt = () => !loose && selWt;
+const focusedWt = () => {
+  const el = document.activeElement;
+  const path = el?.matches(".wt, .wt .cbx") && el.closest(".wt").dataset.path;
+  return path && allWts.find((w) => w.path === path && !w.isPrimary);
+};
 
 // Opens the selected row's agent popover from its badge, as a click would.
 async function openSessions(w) {
@@ -2001,6 +2024,14 @@ const COMMANDS = [
       liveWt() && !selWt.isPrimary && !busy["ar:" + selWt.path] &&
       (selWt.autoRebase || selWt.pr?.state !== "MERGED"),
     run: (e) => toggleAutoRebase(selWt, e),
+  },
+  {
+    id: "toggle-select",
+    label: "Select worktree",
+    section: "Worktrees",
+    keys: "space",
+    when: focusedWt,
+    run: (e) => toggleCheck(focusedWt(), e),
   },
   {
     id: "copy-ticket",
@@ -2345,7 +2376,7 @@ async function confirmDiscard() {
             onclick={() => toggleMax(n)}>{max === n ? "⤡" : "⤢"}</button>
   {/snippet}
   <div class="panes {preset}" class:max style:--b1={paneSize(1)} style:--b2={paneSize(2)}>
-  <div class="band wts" class:maxed={max === 1} bind:this={b1El}>
+  <div class="band wts" class:maxed={max === 1} class:selecting bind:this={b1El}>
     <div class="bhead">
       {#if selectable.length}
         <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
@@ -2388,6 +2419,9 @@ async function confirmDiscard() {
               : "s"}?</b>
           <span class="meta names">{confirming.map((w) => w.branch).join(", ")}
           </span>
+          {#if hiddenChecked}
+            <span class="meta">{hiddenChecked} hidden by the filter are kept</span>
+          {/if}
           <span class="sp"></span>
           <button
             class="btn dg"
@@ -2399,10 +2433,6 @@ async function confirmDiscard() {
           >
         {:else}
           <b>{checkedWts.length} selected</b>
-          {#if checkedWts.some((w) => !match(repoOf(w), w))}
-            <span class="meta">{checkedWts.filter((w) => !match(repoOf(w), w))
-                .length} hidden by the filter</span>
-          {/if}
           <span class="sp"></span>
           <button
             class="btn"
@@ -2424,7 +2454,8 @@ async function confirmDiscard() {
                 `${checkedWts.length} paths`,
               )}>Copy paths</button
           >
-          <button class="btn dg" onclick={() => (confirming = checkedWts)}
+          <button class="btn dg" disabled={hiddenChecked === checkedWts.length}
+                  onclick={() => (confirming = checkedWts.filter((w) => match(repoOf(w), w)))}
             >Remove</button
           >
           <button
@@ -2517,7 +2548,10 @@ async function confirmDiscard() {
     {#key touched[w.path]}
       <div class="wt" class:sel={sel === w.path} class:touch={touched[w.path]} class:cached={repoOf(w)?.cached}
            class:done={bucket(w) === "done"} style:grid-template-columns={colTemplate}
-           role="button" tabindex="0" data-path={w.path} onclick={() => selectWt(w.path)}
+           role="button" tabindex="0" data-path={w.path}
+           onclick={(e) => w.isPrimary || !(e.metaKey || e.shiftKey) ? selectWt(w.path)
+             : e.metaKey ? toggleCheck(w, e) : checkRange(w)}
+           onmousedown={(e) => e.shiftKey && e.preventDefault()}
            onkeydown={(e) => e.key === "Enter" ? selectWt(w.path) : menuKey(e, wtItems(w))}
            oncontextmenu={(e) => openMenu(e, wtItems(w))}>
         {#if w.isPrimary}
@@ -4213,6 +4247,15 @@ select.theme {
   cursor: pointer;
   position: relative;
   justify-self: center;
+}
+.wt .cbx {
+  visibility: hidden;
+}
+.wt:hover .cbx,
+.wt:focus-within .cbx,
+.wt .cbx.on,
+.selecting .wt .cbx {
+  visibility: visible;
 }
 .cbx.on {
   background: var(--acc);
