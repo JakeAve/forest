@@ -8,10 +8,12 @@ import { matchPath, matchWt, pathText, rank, wtText } from "./filter.js";
 import {
   ancestorDirs,
   bucket,
+  bucketSummary,
   clampMenu,
   discardPrompt,
   isIgnoredPath,
   KINDS,
+  orderWts,
   prStatus,
   rawUrl,
   removeSummary,
@@ -358,7 +360,16 @@ const recentWts = $derived(
     .sort((a, b) => b.lastActivity - a.lastActivity)
     .slice(0, settings?.recentCount ?? 10),
 );
-const allClosed = $derived(closed.__all ?? true);
+const isClosed = (k) => closed[k] ?? k === "__all";
+const isOpen = (k) => filtering || !isClosed(k);
+const allClosed = $derived(isClosed("__all"));
+const repoWts = $derived.by(() => {
+  const top = new Set([...pinnedWts, ...recentWts].map((w) => w.path));
+  return Object.fromEntries(repos.map((r) => [
+    r.name,
+    orderWts(r.worktrees.filter((w) => match(r, w) && !top.has(w.path))),
+  ]));
+});
 
 $effect(() => {
   const es = new EventSource("/api/events");
@@ -749,12 +760,11 @@ function checkRange(w) {
 }
 
 function toggleAll() {
-  closed.__all = !allClosed;
-  saveLayout();
+  toggleRepo("__all");
 }
 
 function toggleRepo(name) {
-  closed[name] = !closed[name];
+  closed[name] = !isClosed(name);
   saveLayout();
 }
 
@@ -1740,7 +1750,7 @@ function agentItems(w) {
 function repoItems(r, shown) {
   const wts = shown.filter((w) => !w.isPrimary);
   return [
-    {
+    r.path && {
       label: "New worktree…",
       fn: () => {
         creating = r.name;
@@ -1758,14 +1768,16 @@ function repoItems(r, shown) {
           `${shown.length} branch names`,
         ),
     },
-    { label: "Copy repo path", fn: (e) => copy(e, r.path, "ctx") },
+    r.path && { label: "Copy repo path", fn: (e) => copy(e, r.path, "ctx") },
     "-",
     {
       label: closed[r.name] ? "Expand" : "Collapse",
       fn: () => toggleRepo(r.name),
     },
     wts.length > 0 && {
-      label: `Select ${wts.length} worktree${wts.length === 1 ? "" : "s"}`,
+      label: r.path
+        ? `Select ${wts.length} worktree${wts.length === 1 ? "" : "s"}`
+        : `Select all in ${r.label}`,
       fn: () => {
         for (const w of wts) checked[w.path] = true;
       },
@@ -1929,14 +1941,21 @@ let palTree = $state({ of: null, files: [], dirs: [] });
 const desktop = () => settings?.desktop;
 const hasFile = () => sel && file;
 const navWts = $derived([
-  ...new Map(
-    [
-      ...pinnedWts,
-      ...recentWts,
-      ...(allClosed ? [] : shownWts.filter((w) => !closed[w.repo])),
-    ].map((w) => [w.path, w]),
-  ).values(),
+  ...(isOpen("__pinned") ? pinnedWts : []),
+  ...(isOpen("__recent") ? recentWts : []),
+  ...(isOpen("__all")
+    ? repos.flatMap((r) => isOpen(r.name) ? repoWts[r.name] : [])
+    : []),
 ]);
+const allItems = () => [
+  { label: allClosed ? "Expand all" : "Collapse all", fn: toggleAll },
+  {
+    label: "Select all shown",
+    fn: () => {
+      for (const w of selectable) checked[w.path] = true;
+    },
+  },
+];
 function goWt(w) {
   selectWt(w.path);
   scrollRow(w.path);
@@ -2481,24 +2500,13 @@ async function confirmDiscard() {
             >{col.label}</span>{/each}
       </div>
       {#if pinnedWts.length}
-        <div class="repo st"><span class="rn">Pinned</span><span class="ct">{pinnedWts.length}</span></div>
-        {#each pinnedWts as w (w.path)}
-          {@render wtRow(w, true)}
-        {/each}
+        {@render container("__pinned", "Pinned", pinnedWts.length, bucketSummary(pinnedWts),
+          () => repoItems({ name: "__pinned", label: "Pinned" }, pinnedWts), pinnedWts)}
       {/if}
       {#if recentWts.length}
-        <div class="repo st"><span class="rn">Recent</span><span class="ct">{recentWts.length}</span></div>
-        {#each recentWts as w (w.path)}
-          {@render wtRow(w, true)}
-        {/each}
+        {@render container("__recent", "Recent", recentWts.length, bucketSummary(recentWts),
+          () => repoItems({ name: "__recent", label: "Recent" }, recentWts), recentWts)}
       {/if}
-      <div class="repo" role="button" tabindex="0"
-           onclick={toggleAll}
-           onkeydown={(e) => e.key === "Enter" && toggleAll()}>
-        <span class="car">{allClosed ? "▶" : "▼"}</span>
-        <span class="rn">All worktrees</span>
-        <span class="ct">{shownWts.length}</span>
-      </div>
       {#if boot.phase !== "ready"}
         <div class="boot">
           <span class="spin"></span>
@@ -2509,41 +2517,52 @@ async function confirmDiscard() {
           {/if}
         </div>
       {/if}
-      {#if !allClosed}
-      {#each repos as r (r.name)}
-        {@const wts = r.worktrees.filter((w) => match(r, w))}
-        {#if wts.length || !filtering}
-          <div class="repo" role="button" tabindex="0" data-repo={r.name}
-               onclick={() => toggleRepo(r.name)}
-               onkeydown={(e) => e.key === "Enter" ? toggleRepo(r.name) : menuKey(e, repoItems(r, wts))}
-               oncontextmenu={(e) => openMenu(e, repoItems(r, wts))}>
-            <span class="car">{closed[r.name] ? "▶" : "▼"}</span>
-            <span class="rn">{r.name}</span>
-            <span class="ct">{r.worktrees.length} worktree{r.worktrees.length > 1 ? "s" : ""}</span>
-            {#if r.cached}<span class="ct late" title="Last known state; refreshing"><span class="spin"></span> cached</span>{/if}
-            <span class="sp"></span>
-            <button class="cbtn plus" title="new worktree"
-                    onclick={(e) => { e.stopPropagation(); creating = creating === r.name ? null : r.name; slug = ""; }}>New</button>
-          </div>
-          {#if creating === r.name}
-            <div class="newwt">
-              <!-- svelte-ignore a11y_autofocus -->
-              <input class="filter" autofocus placeholder="Branch or slug" bind:value={slug}
-                     onkeydown={(e) => { if (e.key === "Enter") createWt(r); if (e.key === "Escape") creating = null; }}>
-              <button class="btn" disabled={busy["new:" + r.name]} onclick={() => createWt(r)}>
-                {busy["new:" + r.name] ? "Creating…" : "Create"}</button>
-            </div>
-          {/if}
-          {#if !closed[r.name]}
-            {#each wts as w (w.path)}
-              {@render wtRow(w, false)}
-            {/each}
-          {/if}
-        {/if}
-      {/each}
-      {/if}
+      {@render container("__all", "All worktrees", shownWts.length, bucketSummary(allWts), allItems, [], allRepos)}
     </div>
   </div>
+  {#snippet allRepos()}
+    {#each repos as r (r.name)}
+      {#if repoWts[r.name].length || !filtering}
+        {@render container(r.name, r.name, r.worktrees.length, bucketSummary(r.worktrees),
+          () => repoItems(r, r.worktrees.filter((w) => match(r, w))), repoWts[r.name], null, r)}
+      {/if}
+    {/each}
+  {/snippet}
+  {#snippet container(key, label, count, summary, items, wts, inner, r)}
+    <div class="box">
+      <div class="repo" role="button" tabindex="0" data-repo={r?.name}
+           onclick={() => toggleRepo(key)}
+           onkeydown={(e) => e.key === "Enter" ? toggleRepo(key) : menuKey(e, items())}
+           oncontextmenu={(e) => openMenu(e, items())}>
+        <span class="car">{isOpen(key) ? "▼" : "▶"}</span>
+        <span class="rn">{label}</span>
+        <span class="ct">{count}{#if summary}<span class="sum">{` · ${summary}`}</span>{/if}</span>
+        {#if r}
+          {#if r.cached}<span class="ct late" title="Last known state; refreshing"><span class="spin"></span> cached</span>{/if}
+          <span class="sp"></span>
+          <button class="cbtn plus" title="new worktree"
+                  onclick={(e) => { e.stopPropagation(); creating = creating === r.name ? null : r.name; slug = ""; }}>New</button>
+        {/if}
+      </div>
+      {#if r && creating === r.name}
+        <div class="newwt">
+          <!-- svelte-ignore a11y_autofocus -->
+          <input class="filter" autofocus placeholder="Branch or slug" bind:value={slug}
+                 onkeydown={(e) => { if (e.key === "Enter") createWt(r); if (e.key === "Escape") creating = null; }}>
+          <button class="btn" disabled={busy["new:" + r.name]} onclick={() => createWt(r)}>
+            {busy["new:" + r.name] ? "Creating…" : "Create"}</button>
+        </div>
+      {/if}
+      {#if isOpen(key)}
+        <div class="kids">
+          {#each wts as w (w.path)}
+            {@render wtRow(w, !r)}
+          {/each}
+          {@render inner?.()}
+        </div>
+      {/if}
+    </div>
+  {/snippet}
   {#snippet wtRow(w, showRepo)}
     {#key touched[w.path]}
       <div class="wt" class:sel={sel === w.path} class:touch={touched[w.path]} class:cached={repoOf(w)?.cached}
@@ -3638,6 +3657,7 @@ dialog.settings::backdrop {
   outline-offset: 1px;
 }
 .body {
+  --colsh: 1.375rem;
   flex: 1;
   overflow: auto;
   min-height: 0;
@@ -3854,15 +3874,29 @@ select.theme {
 }
 
 .repo {
+  position: sticky;
+  top: var(--colsh);
+  z-index: 1;
   display: flex;
   align-items: center;
   gap: 0.375rem;
   padding: 0.3125rem 0.625rem;
   border-radius: 0.5rem;
+  background: var(--bg2);
   cursor: pointer;
   color: var(--dim);
   font-size: 0.75rem;
   user-select: none;
+}
+.body > .box {
+  margin-top: 0.375rem;
+}
+.kids {
+  margin-left: calc(0.875rem - 1px);
+  border-left: 1px solid var(--line);
+}
+.repo .sum {
+  color: var(--dim);
 }
 .repo:hover {
   background: var(--hov);
@@ -3883,7 +3917,9 @@ select.theme {
 .cols {
   position: sticky;
   top: 0;
-  z-index: 1;
+  z-index: 2;
+  height: var(--colsh);
+  align-items: center;
   display: grid;
   gap: 0.5rem;
   padding: 0.25rem 0.625rem;
@@ -4001,13 +4037,6 @@ select.theme {
 .wt.cached .br {
   color: var(--dim);
   font-style: italic;
-}
-.repo.st {
-  cursor: default;
-  padding: 0.625rem 0.625rem 0.25rem 1.1875rem;
-}
-.repo.st:hover {
-  background: none;
 }
 .wt .br .rp {
   color: var(--dim);
@@ -4736,6 +4765,9 @@ select.theme {
     flex: 1 1 6rem;
     width: auto;
     min-width: 0;
+  }
+  .body {
+    --colsh: 0px;
   }
   .cols {
     display: none;

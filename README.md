@@ -51,9 +51,12 @@ section in ⚙. Activity means the newest of the HEAD commit and the mtime of an
 changed or untracked file, so a worktree you're editing sorts to the top before
 you commit anything.
 
-The Recent group holds the most recently active worktrees; pin one from its
-right-click menu to keep it there. Fuzzy-filter by branch or repo name (`dc`
-finds `discount-codes`), or narrow to dirty-only / running-only.
+Pinned, Recent and All worktrees are collapsible containers, and each repo nests
+under All. Recent holds the most recently active worktrees; pin one from its
+right-click menu to keep it in Pinned. A worktree shown in Pinned or Recent is
+not repeated under its repo, and a collapsed container shows its count and a
+summary of PRs that need attention (`25 · 1 failing`). Fuzzy-filter by branch or
+repo name (`dc` finds `discount-codes`), or narrow to dirty-only / running-only.
 
 Right-click a worktree to open it, copy its path or branch, view or create its
 PR, push, rebase onto `origin/HEAD`, update the branch, enable auto-merge, mark
