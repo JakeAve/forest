@@ -30,6 +30,8 @@ deno task setup                # git hooks run check + test on commit/push
 - Filters (UI, palette, agent `q`) match through `fuzzy`/`rank` in
   `src/filter.js`. `selectWt` stays substring so a `wt` selector is precise.
 - Colors and CSS vars: follow the `theming` skill in `.claude/skills/`.
+- Ticket status comes from a user-owned command (`ticketCmds`); writing one or
+  touching `tickets.ts` follows the `ticket-command` skill in `.claude/skills/`.
 - Panes are one flat grid in `App.svelte`; each layout in `AXES`/`LAYOUTS` is a
   `grid-template` on `.panes`. A new pane or layout needs areas in every
   template. Adapt pane contents to width with `@container` on `.band`, never by

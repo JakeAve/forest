@@ -186,7 +186,53 @@ export function fillCommand(
 // GitHub issue numbers (#123). A `#` after a word or a `/` is not an issue.
 const TICKET_RE = /\b([A-Z][A-Z0-9]+-\d+)\b|(?<![\w/])#(\d+)\b/i;
 
-export type Ticket = { key: string; url: string };
+export type TicketInfo = {
+  title: string;
+  status: string;
+  category: "todo" | "doing" | "done" | "canceled" | null;
+  assignee: string | null;
+};
+export type Ticket = { key: string; url: string; info?: TicketInfo | null };
+
+// Jira statusCategory, Linear state.type, GitHub and Shipyard states.
+const CATEGORY: Record<string, TicketInfo["category"]> = {
+  new: "todo",
+  todo: "todo",
+  backlog: "todo",
+  triage: "todo",
+  unstarted: "todo",
+  open: "todo",
+  indeterminate: "doing",
+  started: "doing",
+  in_progress: "doing",
+  in_review: "doing",
+  done: "done",
+  completed: "done",
+  closed: "done",
+  merged: "done",
+  canceled: "canceled",
+  cancelled: "canceled",
+};
+
+/** A ticket command's stdout, reduced to known string fields: it is
+ *  untrusted, so nothing else reaches the snapshot. */
+export function ticketInfo(out: string): TicketInfo | null {
+  let j;
+  try {
+    j = JSON.parse(out);
+  } catch {
+    return null;
+  }
+  if (!j || typeof j !== "object") return null;
+  const s = (v: unknown, n: number) =>
+    typeof v === "string" ? v.slice(0, n) : "";
+  return {
+    title: s(j.title, 300),
+    status: s(j.status, 60).replace(/_/g, " "),
+    category: CATEGORY[s(j.category ?? j.status, 30).toLowerCase()] ?? null,
+    assignee: s(j.assignee, 80) || null,
+  };
+}
 
 /** First ticket key in `texts`: `#n` links to the repo's own issues, a tracker
  *  key through `tpl` ({key}), or stays unlinked rather than guess a tracker.

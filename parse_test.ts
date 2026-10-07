@@ -1756,3 +1756,32 @@ Deno.test("isTrustedWrite allows local Host with no or local Origin", () => {
   assertEquals(isTrustedWrite("evil.example:38471", null), false);
   assertEquals(isTrustedWrite(null, null), false);
 });
+
+import { ticketInfo } from "./parse.ts";
+
+Deno.test("ticketInfo: keeps known string fields, maps status to a category", () => {
+  assertEquals(
+    ticketInfo(
+      '{"title":"Fix it","status":"in_progress","assignee":"Jake","x":1}',
+    ),
+    {
+      title: "Fix it",
+      status: "in progress",
+      category: "doing",
+      assignee: "Jake",
+    },
+  );
+  assertEquals(
+    ticketInfo('{"title":"t","status":"In QA","category":"indeterminate"}')
+      ?.category,
+    "doing",
+  );
+  assertEquals(ticketInfo('{"title":{"a":1},"status":"Weird"}'), {
+    title: "",
+    status: "Weird",
+    category: null,
+    assignee: null,
+  });
+  assertEquals(ticketInfo("not json"), null);
+  assertEquals(ticketInfo("null"), null);
+});

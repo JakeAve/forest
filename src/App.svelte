@@ -189,7 +189,7 @@ let confirming = $state(null);
 let confirmSel = $state(false);
 let menu = $state(null);
 let menuEl = $state();
-let card = $state(null); // { path, x, y }: PR card anchored under a pill
+let card = $state(null); // { path, x, y, kind }: PR or ticket card under its cell
 let cardEl = $state();
 let cardReturn;
 const cardWt = $derived(card && allWts.find((w) => w.path === card.path));
@@ -1465,8 +1465,8 @@ function menuNav(e) {
   e.stopPropagation();
 }
 
-async function showCard(w, x, y) {
-  card = { path: w.path, x, y };
+async function showCard(w, x, y, kind = "pr") {
+  card = { path: w.path, x, y, kind };
   await tick();
   if (!cardEl || !card) return;
   if (!cardEl.matches(":popover-open")) cardEl.showPopover();
@@ -1474,14 +1474,14 @@ async function showCard(w, x, y) {
 }
 // A plain click on the PR pill opens its card, as the agent badge opens its
 // menu; a modified click still follows the link to GitHub.
-async function openCard(w, e) {
+async function openCard(w, e, kind = "pr") {
   e.stopPropagation();
   if (e.metaKey || e.ctrlKey || e.shiftKey) return;
   e.preventDefault();
   if (menu) hideMenu();
   const box = e.currentTarget.getBoundingClientRect();
   cardReturn = e.detail === 0 ? e.currentTarget : null;
-  await showCard(w, Math.round(box.left), Math.round(box.bottom + 4));
+  await showCard(w, Math.round(box.left), Math.round(box.bottom + 4), kind);
   if (cardReturn) {
     cardEl?.querySelector(asking ? ".practs .btn" : "a, button")?.focus();
   }
@@ -1523,6 +1523,13 @@ $effect(() => {
 });
 
 const CHECK_GLYPH = { pass: "✓", fail: "✗", pending: "●" };
+// Ticket status categories borrow the PR card's .st tones.
+const TICKET_ST = {
+  todo: "draft",
+  doing: "doing",
+  done: "merged",
+  canceled: "closed",
+};
 const VERDICT = {
   APPROVED: ["✓ Approved", "ok"],
   CHANGES_REQUESTED: ["✗ Changes requested", "bad"],
@@ -2786,8 +2793,12 @@ async function confirmDiscard() {
               renamed(w)}<span class="rb">{renamed(w)}</span>{/if}{#if
               dirName(w)}<span class="dir">{dirName(w)}</span>{/if}</span>{:else if
             col.key === "title"}{w.pr?.title || w.branch}{:else if
-            col.key === "ticket"}{#if w.ticket}<a href={w.ticket.url} target="_blank" rel="noreferrer"
-                title="open ticket {w.ticket.key}" onclick={(e) => e.stopPropagation()}>{w.ticket.key}</a>{/if}{:else if
+            col.key === "ticket"}{#if w.ticket}{@const ti = w.ticket.info}<a href={w.ticket.url} target="_blank" rel="noreferrer"
+                class="tkl" aria-haspopup={ti ? "dialog" : undefined}
+                aria-label={ti ? `${w.ticket.key}, ${ti.status}: ${ti.title}` : undefined}
+                title={ti ? "⌘-click to open the ticket" : `open ticket ${w.ticket.key}`}
+                onclick={(e) => ti ? openCard(w, e, "ticket") : e.stopPropagation()}>{#if
+                ti?.category}<span class="tkd" data-cat={ti.category}></span>{/if}{w.ticket.key}</a>{/if}{:else if
             col.key === "pr"}{#if w.pr}{@const s = prStatus(w.pr)}<a
                 class="prl" href={w.pr.url}
                 target="_blank" rel="noreferrer"
@@ -3112,7 +3123,23 @@ async function confirmDiscard() {
   </div>
   <div class="ctx card" popover="manual" role="dialog" aria-label="Pull request"
        bind:this={cardEl}>
-    {#if cardWt?.pr}
+    {#if card?.kind === "ticket" && cardWt?.ticket?.info}
+      {@const t = cardWt.ticket}
+      {@const ti = t.info}
+      <div class="top">
+        <div class="r">
+          <a class="port" href={t.url} target="_blank" rel="noreferrer">{t.key} ↗</a>
+          {#if ti.status}<span class="st {TICKET_ST[ti.category] ?? 'review'}">{ti.status}</span>{/if}
+          {#if ti.assignee}<span class="ago">{ti.assignee}</span>{/if}
+          {@render closeX(hideCard)}
+        </div>
+        <div class="ttl">{ti.title}</div>
+      </div>
+      <section class="foot">
+        <a class="btn" href={t.url} target="_blank" rel="noreferrer">Open ticket ↗</a>
+        <button class="btn" onclick={(e) => copy(e, t.url, "tklink:" + t.url)}>Copy link</button>
+      </section>
+    {:else if cardWt?.pr}
       {@const w = cardWt}
       {@const p = w.pr}
       {@const c = p.card}
@@ -4553,6 +4580,30 @@ select.theme {
 .pr[data-tone="draft"] {
   color: var(--dim);
   border-style: dashed;
+}
+.tkl {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3em;
+}
+.tkd {
+  flex-shrink: 0;
+  width: 0.4375rem;
+  height: 0.4375rem;
+  border-radius: 50%;
+  border: 1px solid var(--dim);
+}
+.tkd[data-cat="doing"] {
+  border-color: var(--acc);
+  background: var(--acc);
+}
+.tkd[data-cat="done"] {
+  border-color: var(--merged);
+  background: var(--merged);
+}
+.tkd[data-cat="canceled"] {
+  border-color: var(--dimmer);
+  background: var(--dimmer);
 }
 .pr:hover {
   filter: brightness(1.15);

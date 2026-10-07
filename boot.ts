@@ -5,6 +5,7 @@ import { createFiles } from "./files.ts";
 import { createLog } from "./log.ts";
 import { createRepo } from "./repo.ts";
 import { createPrs } from "./prs.ts";
+import { createTickets } from "./tickets.ts";
 import { createPorts } from "./ports.ts";
 import { createSse } from "./sse.ts";
 import { createWatcher } from "./watcher.ts";
@@ -55,6 +56,11 @@ export function boot(opts: {
     stats,
     onChange: () => store.publish(),
   });
+  const tickets = createTickets({
+    sh,
+    settings,
+    onChange: () => store.publish(),
+  });
   const sessions = createSessions({
     home,
     providers: PROVIDERS,
@@ -64,14 +70,17 @@ export function boot(opts: {
   });
   const store = createStore({
     prFor: (r, w) => prs.prFor(r, w),
-    ticket: (r, w) =>
-      ticketFor(
+    ticket: (r, w) => {
+      const t = ticketFor(
         settings.tickets[r.name] ?? settings.tickets["*"],
         r.webUrl,
         ...(w.branch === r.defaultBranch
           ? []
           : [w.branch, w.pr?.title, w.subject]),
-      ),
+      );
+      const info = t && tickets.info(r.path, r.name, t.key);
+      return info ? { ...t!, info } : t;
+    },
     autoRebase: (wt) => autoRebase.status(wt),
     prError: (r) => prs.prError(r),
     procs: () => ports.current(),
