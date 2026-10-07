@@ -1,6 +1,7 @@
 <script>
 import { tick, untrack } from "svelte";
 import Source from "./Source.svelte";
+import FilterInput from "./FilterInput.svelte";
 import Palette from "./Palette.svelte";
 import Shortcuts from "./Shortcuts.svelte";
 import Hex from "./Hex.svelte";
@@ -2350,13 +2351,6 @@ async function focusFilter(n, el) {
   el?.select();
 }
 
-function findKey(e) {
-  if (e.key === "Enter") diffRef?.findStep(e.shiftKey ? -1 : 1);
-  else if (e.key !== "Escape") return;
-  else lq = "", diffRef?.setCursor(diffRef.cursor());
-  e.preventDefault();
-}
-
 function runKey(e) {
   const k = !e.defaultPrevented && !e.isComposing && combo(e);
   const c = k && COMMANDS.find((c) => c.id === keymap.byCombo.get(k));
@@ -2606,8 +2600,8 @@ async function confirmDiscard() {
           : `${totalWts} across ${repos.length} repos`}</span><span
         class="sp"
       ></span>
-      <input class="filter" placeholder="Filter branches {kbdOf('filter-branches') ?? ''}"
-             bind:this={wtFilterEl} bind:value={q} />
+      <FilterInput bind:this={wtFilterEl} bind:value={q} label="Filter branches"
+                   kbd={kbdOf("filter-branches")} />
       <button
         class="btn"
         class:on={dirtyOnly}
@@ -2863,8 +2857,8 @@ async function confirmDiscard() {
                   onclick={startNew}>＋</button>
         {/if}
       {/if}
-      <input class="filter" placeholder="Filter files {kbdOf('filter-files') ?? ''}"
-             bind:this={fileFilterEl} bind:value={fq}>
+      <FilterInput bind:this={fileFilterEl} bind:value={fq} label="Filter files"
+                   kbd={kbdOf("filter-files")} />
       {#if !loose}<div class="seg">
         <button class:on={!explore && base === "branch"} onclick={() => setBase("branch")}>Since branch point</button>
         <button class:on={!explore && base === "head"} onclick={() => setBase("head")}>Uncommitted</button>
@@ -3015,9 +3009,10 @@ async function confirmDiscard() {
                 onclick={() => { banner = null; diffRef?.reloadTheirs(); }}>Discard</button>
       {/if}
       {#if mode === "text" && !srcBinary}
-        <input class="filter" placeholder="Find {kbdOf('find') ?? ''}" bind:this={findEl} bind:value={lq}
-               onkeydown={findKey}>
-        {#if lq}<span class="meta mono">{found.n ? `${found.i}/${found.n}` : "No matches"}</span>{/if}
+        <FilterInput bind:this={findEl} bind:value={lq} label="Find" kbd={kbdOf("find")}
+                     onenter={(back) => diffRef?.findStep(back ? -1 : 1)}
+                     count="{found.i}/{found.n}"
+                     onescape={() => diffRef?.setCursor(diffRef.cursor())} />
         <label class="meta wraplbl">
           <input type="checkbox" class="cbxin" bind:checked={wrap} onchange={saveLayout}>
           <span class="cbx" class:on={wrap}></span>Wrap
@@ -4030,7 +4025,7 @@ dialog.settings::backdrop {
   color: var(--danger);
   border-color: var(--danger);
 }
-input.filter {
+:global(input.filter) {
   background: var(--input);
   border: 1px solid var(--line);
   border-radius: 999px;
@@ -4040,7 +4035,7 @@ input.filter {
   width: 10.5rem;
   outline: none;
 }
-input.filter::placeholder {
+:global(input.filter::placeholder) {
   color: var(--dimmer);
 }
 input.ren {
@@ -4076,7 +4071,7 @@ input.ren {
 .bhead .nm:hover {
   border-color: var(--line);
 }
-input.filter.open {
+:global(input.filter.open) {
   flex: 1;
   font-family: var(--mono);
 }
@@ -4091,7 +4086,7 @@ input.filter.open {
 .bhead .pth:hover {
   border-color: var(--line);
 }
-input.filter:focus {
+:global(input.filter:focus) {
   border-color: var(--acc);
 }
 select.theme {
@@ -5201,7 +5196,11 @@ select.theme {
     padding-block: 0.5rem;
     row-gap: 0.375rem;
   }
-  input.filter {
+  :global(.fbox) {
+    flex: 1 1 6rem;
+    min-width: 0;
+  }
+  :global(input.filter) {
     flex: 1 1 6rem;
     width: auto;
     min-width: 0;

@@ -73,7 +73,7 @@ export function createTools(deps: {
     },
     wts: {
       desc:
-        "Worktrees, newest activity first; q fuzzy-matches branch and repo name.",
+        "Worktrees, newest activity first; q fuzzy-matches branch and repo name, or is a regex when wrapped in /slashes/.",
       input: {
         q: z.string().optional(),
         dirty: qbool.optional(),
@@ -117,7 +117,7 @@ export function createTools(deps: {
     },
     sessions: {
       desc:
-        "Coding agent sessions (Claude Code, Codex, …) linked to worktrees, each with its transcript path, resume link and resume command. By wt (most likely creator first), by id (or a unique prefix) with the worktrees it touched, or q fuzzy-matching titles.",
+        "Coding agent sessions (Claude Code, Codex, …) linked to worktrees, each with its transcript path, resume link and resume command. By wt (most likely creator first), by id (or a unique prefix) with the worktrees it touched, or q fuzzy-matching titles (/slashes/ for a regex).",
       input: {
         wt: z.string().optional(),
         id: z.string().optional(),
@@ -172,7 +172,7 @@ export function createTools(deps: {
     },
     files: {
       desc:
-        "Changed files in a worktree, since the branch point or uncommitted; q fuzzy-matches the path.",
+        "Changed files in a worktree, since the branch point or uncommitted; q fuzzy-matches the path, or is a regex when wrapped in /slashes/.",
       input: {
         wt: z.string(),
         q: z.string().optional(),

@@ -2,8 +2,10 @@ import { assertEquals } from "@std/assert";
 import {
   findAll,
   fuzzy,
+  matcher,
   matchPath,
   matchWt,
+  parseQuery,
   pathText,
   rank,
 } from "./src/filter.js";
@@ -100,4 +102,37 @@ Deno.test("findAll: every case-insensitive hit, query taken literally", () => {
   assertEquals(findAll("", "abc"), []);
   assertEquals(findAll("Ab", "ab xAB ab"), [[0, 2], [4, 6], [7, 9]]);
   assertEquals(findAll("a.(", "a.( axx"), [[0, 3]]);
+});
+
+Deno.test("parseQuery: slashes make a regex, closing slash optional", () => {
+  assertEquals(parseQuery("foo"), { text: "foo" });
+  assertEquals(parseQuery("/").text, "");
+  assertEquals(parseQuery("/ab+/").re?.source, "ab+");
+  assertEquals(parseQuery("/ab+").re?.source, "ab+");
+  assertEquals(parseQuery("/a\\/").re?.source, "a\\/");
+  assertEquals(typeof parseQuery("/a(/").error, "string");
+});
+
+Deno.test("matcher: regex hits score 0, bad regex matches nothing", () => {
+  assertEquals(matcher("/^rom-\\d+$/")("ROM-12"), 0);
+  assertEquals(matcher("/^rom-\\d+$/")("rom-x"), null);
+  assertEquals(matcher("/a(/")("a("), null);
+});
+
+Deno.test("regex anchors apply per field, not to the joined text", () => {
+  assertEquals(matchPath("/^src\\//", "src/App.svelte"), true);
+  assertEquals(matchPath("/\\.ts$/", "src/App.svelte"), false);
+  assertEquals(matchWt({ q: "/^edward$/" }, "edward", wt()), true);
+  assertEquals(matchWt({ q: "/^jake\\//" }, "edward", wt()), true);
+});
+
+Deno.test("rank: regex keeps input order", () => {
+  const items = [{ label: "b1" }, { label: "a1" }, { label: "c" }];
+  assertEquals(rank("/\\d/", items), items.slice(0, 2));
+});
+
+Deno.test("findAll: regex per line, zero-width hits dropped", () => {
+  assertEquals(findAll("/^a/", "ab\nxa\nab"), [[0, 1], [6, 7]]);
+  assertEquals(findAll("/^/", "ab\ncd"), []);
+  assertEquals(findAll("/a(/", "a("), []);
 });
