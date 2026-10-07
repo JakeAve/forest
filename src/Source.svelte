@@ -24,6 +24,7 @@ import {
 import { languages } from "@codemirror/language-data";
 import { tags as t } from "@lezer/highlight";
 import Hex from "./Hex.svelte";
+import { findAll } from "./filter.js";
 import { decodeChunk, fmtSize, rawUrl } from "../parse.ts";
 
 let {
@@ -36,6 +37,8 @@ let {
   split = 50,
   onsplit,
   wrap = false,
+  find = "",
+  onfind,
   single = false,
   onstate,
   onconflict,
@@ -100,6 +103,33 @@ const hunkField = mkDecoField(setHunks);
 const setFlash = StateEffect.define();
 const flashField = mkDecoField(setFlash);
 const flashLine = Decoration.line({ class: "lineflash" });
+
+const findHit = Decoration.mark({ class: "findhit" });
+const findCur = Decoration.mark({ class: "findhit cur" });
+const setFind = StateEffect.define();
+const findField = StateField.define({
+  create: (s) => ({ q: find, hits: findAll(find, s.doc.toString()), cur: -1 }),
+  update(v, tr) {
+    let q = v.q;
+    for (const e of tr.effects) if (e.is(setFind)) q = e.value;
+    const same = q === v.q && !tr.docChanged;
+    if (same && !tr.selection) return v;
+    const hits = same ? v.hits : findAll(q, tr.state.doc.toString());
+    const { from, to } = tr.state.selection.main;
+    return { q, hits, cur: hits.findIndex(([a, b]) => a === from && b === to) };
+  },
+  provide: (f) =>
+    EditorView.decorations.from(f, ({ hits, cur }) =>
+      Decoration.set(
+        hits.map(([a, b], i) => (i === cur ? findCur : findHit).range(a, b)),
+      )),
+});
+const findReport = EditorView.updateListener.of((u) => {
+  const f = u.state.field(findField);
+  if (u.view === view?.b && f !== u.startState.field(findField)) {
+    onfind?.({ i: f.cur + 1, n: f.hits.length });
+  }
+});
 
 class HunkBar extends WidgetType {
   constructor(hunk) {
@@ -302,6 +332,8 @@ function build({ file, hunks }) {
     EditorView.editable.of(false),
     EditorState.readOnly.of(true),
     theme,
+    findField,
+    findReport,
   ];
   const editable = file.work !== null && !file.encoding;
   const bExt = editable
@@ -320,6 +352,8 @@ function build({ file, hunks }) {
       theme,
       hunkField,
       flashField,
+      findField,
+      findReport,
       EditorView.updateListener.of((u) => {
         if (u.docChanged && !applying) setDirty(true);
       }),
@@ -339,7 +373,7 @@ function build({ file, hunks }) {
       a: { doc: file.base ?? "", extensions: ro },
       b: { doc: file.work ?? "", extensions: bExt },
       parent: el,
-      collapseUnchanged: collapse,
+      collapseUnchanged: find ? undefined : collapse,
     });
     addSplitter();
     applySplit(split);
@@ -363,7 +397,23 @@ function build({ file, hunks }) {
     more();
   }
   if (line && line !== usedLine) scrollToLine(line);
+  const f = view.b.state.field(findField);
+  onfind?.({ i: f.cur + 1, n: f.hits.length });
   onready?.();
+}
+
+export function findStep(dir) {
+  const b = view?.b;
+  const hits = b?.state.field(findField).hits;
+  if (!hits?.length) return;
+  const at = b.state.selection.main.from;
+  const h = dir < 0
+    ? hits.findLast(([a]) => a < at) ?? hits.at(-1)
+    : hits.find(([a]) => (dir ? a > at : a >= at)) ?? hits[0];
+  b.dispatch({
+    selection: { anchor: h[0], head: h[1] },
+    effects: EditorView.scrollIntoView(h[0], { y: "center" }),
+  });
 }
 
 export const cursor = () => view?.b.state.selection.main.head ?? 0;
@@ -549,6 +599,21 @@ $effect(() => {
 $effect(() => {
   const effects = wrapC.reconfigure(wrapExt(wrap));
   if (view) { for (const v of [view.a, view.b]) v?.dispatch({ effects }); }
+});
+
+$effect(() => {
+  const effects = setFind.of(find);
+  if (!view) return;
+  for (const v of [view.a, view.b]) v?.dispatch({ effects });
+  untrack(() => findStep(0));
+});
+
+const finding = $derived(!!find);
+$effect(() => {
+  const open = finding;
+  untrack(() =>
+    view?.reconfigure?.({ collapseUnchanged: open ? undefined : collapse })
+  );
 });
 
 $effect(() => () => {

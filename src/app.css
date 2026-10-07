@@ -145,6 +145,13 @@ body {
   outline: none;
 }
 
+.cm-mergeView .findhit {
+  background: color-mix(in srgb, var(--acc) 25%, transparent);
+  border-radius: 2px;
+}
+.cm-mergeView .findhit.cur {
+  background: color-mix(in srgb, var(--acc) 55%, transparent);
+}
 .cm-mergeView .lineflash {
   animation: lineflash 1.6s ease-out;
 }

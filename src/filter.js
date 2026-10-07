@@ -49,3 +49,9 @@ export function rank(
     .slice(0, limit)
     .map(({ item }) => item);
 }
+
+export function findAll(q, text) {
+  if (!q) return [];
+  const re = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi");
+  return [...text.matchAll(re)].map((m) => [m.index, m.index + m[0].length]);
+}

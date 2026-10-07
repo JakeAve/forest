@@ -1,5 +1,12 @@
 import { assertEquals } from "@std/assert";
-import { fuzzy, matchPath, matchWt, pathText, rank } from "./src/filter.js";
+import {
+  findAll,
+  fuzzy,
+  matchPath,
+  matchWt,
+  pathText,
+  rank,
+} from "./src/filter.js";
 
 const wt = (o = {}) => ({ branch: "jake/rom-1", dirty: 0, ports: [], ...o });
 
@@ -87,4 +94,10 @@ Deno.test("matchPath: abbreviations and typed paths both match", () => {
 Deno.test("rank with pathText: basename hit beats a deep directory hit", () => {
   const paths = ["filters/deep/x.ts", "src/filter.js"];
   assertEquals(rank("filter", paths, 50, pathText)[0], "src/filter.js");
+});
+
+Deno.test("findAll: every case-insensitive hit, query taken literally", () => {
+  assertEquals(findAll("", "abc"), []);
+  assertEquals(findAll("Ab", "ab xAB ab"), [[0, 2], [4, 6], [7, 9]]);
+  assertEquals(findAll("a.(", "a.( axx"), [[0, 3]]);
 });

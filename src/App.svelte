@@ -136,6 +136,9 @@ let srcBodyEl = $state();
 let rawView = null;
 let q = $state("");
 let fq = $state("");
+let lq = $state("");
+let findEl = $state();
+let found = $state({ i: 0, n: 0 });
 let dirtyOnly = $state(false);
 let runningOnly = $state(false);
 let copied = $state("");
@@ -2274,6 +2277,14 @@ const COMMANDS = [
       setMode(modeList[(modeList.indexOf(mode) + 1) % modeList.length]),
   },
   {
+    id: "find",
+    label: "Find in file",
+    section: "View",
+    keys: "cmd+f",
+    when: () => hasFile() && mode === "text" && !srcBinary,
+    run: () => findEl?.select(),
+  },
+  {
     id: "copy-path",
     label: "Copy path (relative)",
     section: "Files",
@@ -2316,6 +2327,13 @@ const COMMANDS = [
 ];
 const keymap = $derived(resolve(COMMANDS, settings?.keys));
 const kbdOf = (id) => keymap.byId[id]?.[0] && keyLabel(keymap.byId[id][0]);
+
+function findKey(e) {
+  if (e.key === "Enter") diffRef?.findStep(e.shiftKey ? -1 : 1);
+  else if (e.key !== "Escape") return;
+  else lq = "", diffRef?.setCursor(diffRef.cursor());
+  e.preventDefault();
+}
 
 function runKey(e) {
   const k = !e.defaultPrevented && !e.isComposing && combo(e);
@@ -2963,12 +2981,6 @@ async function confirmDiscard() {
         <b>Source</b>
       {/if}
       <span class="sp"></span>
-      {#if explore && selFile}
-        <div class="seg">
-          <button class:on={!showDiff} disabled={mode !== "text"} onclick={() => (showDiff = false)}>View</button>
-          <button class:on={showDiff} disabled={mode !== "text"} onclick={() => (showDiff = true)}>Diff</button>
-        </div>
-      {/if}
       {#if diskAt && now - diskAt < 60_000}
         <span class="meta" title={new Date(diskAt).toLocaleTimeString()}>Updated {ago(diskAt)}</span>
       {/if}
@@ -2979,10 +2991,19 @@ async function confirmDiscard() {
                 onclick={() => { banner = null; diffRef?.reloadTheirs(); }}>Discard</button>
       {/if}
       {#if mode === "text" && !srcBinary}
+        <input class="filter" placeholder="Find {kbdOf('find') ?? ''}" bind:this={findEl} bind:value={lq}
+               onkeydown={findKey}>
+        {#if lq}<span class="meta mono">{found.n ? `${found.i}/${found.n}` : "No matches"}</span>{/if}
         <label class="meta wraplbl">
           <input type="checkbox" class="cbxin" bind:checked={wrap} onchange={saveLayout}>
           <span class="cbx" class:on={wrap}></span>Wrap
         </label>
+      {/if}
+      {#if explore && selFile}
+        <div class="seg">
+          <button class:on={!showDiff} disabled={mode !== "text"} onclick={() => (showDiff = false)}>View</button>
+          <button class:on={showDiff} disabled={mode !== "text"} onclick={() => (showDiff = true)}>Diff</button>
+        </div>
       {/if}
       {#if file && modeList.length > 1}
         <div class="seg" title={kbdOf("cycle-mode")}>
@@ -3019,7 +3040,7 @@ async function confirmDiscard() {
         <Source bind:this={diffRef} wt={sel} path={file} {base} tick={diffTick} line={pendingLine}
               collapse={{ margin: settings.collapseMargin, minSize: settings.collapseMinSize }}
               single={explore && !(selFile && showDiff)}
-              {split} onsplit={(s) => { split = s; saveLayout(); }} {wrap}
+              {split} onsplit={(s) => { split = s; saveLayout(); }} {wrap} find={lq} onfind={(f) => (found = f)}
               onstate={(d) => (diffDirty = d)}
               onconflict={conflictBanner}
               onupdated={() => (diskAt = Date.now())}
