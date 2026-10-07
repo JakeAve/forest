@@ -148,14 +148,16 @@ back.
 
 ## Agents
 
-The daemon exposes the same data read-only to agents, over plain
-`GET /api/t/<name>?k=v` and over MCP at `/mcp`. Nothing here writes; a `wt` is
-any unique substring of a branch or repo name (or a full path), and an ambiguous
-one comes back as an error listing the candidates (`repo`, `branch`, `path`) (a
-400 over `/api/t/`, a tool error over MCP). `wt` also accepts any path inside a
-worktree, `~/…` included. `q` is looser: it fuzzy-matches like the UI filters
-(branch and repo name for `wts`, file path for `files`), and wrapped in
-`/slashes/` it is a case-insensitive regex, with `^`/`$` anchoring each field.
+The daemon exposes the same data to agents, over plain `/api/t/<name>` and over
+MCP at `/mcp`. Read tools take `GET /api/t/<name>?k=v`; write tools take
+`POST /api/t/<name>` with a JSON body (see [Write tools](#write-tools)). A `wt`
+is any unique substring of a branch or repo name (or a full path), and an
+ambiguous one comes back as an error listing the candidates (`repo`, `branch`,
+`path`) (a 400 over `/api/t/`, a tool error over MCP). `wt` also accepts any
+path inside a worktree, `~/…` included. `q` is looser: it fuzzy-matches like the
+UI filters (branch and repo name for `wts`, file path for `files`), and wrapped
+in `/slashes/` it is a case-insensitive regex, with `^`/`$` anchoring each
+field.
 
 | tool       | params                                  | returns                    |
 | ---------- | --------------------------------------- | -------------------------- |
@@ -165,6 +167,14 @@ worktree, `~/…` included. `q` is looser: it fuzzy-matches like the UI filters
 | `sessions` | `wt`, `id`, `q`                         | agent sessions, in full    |
 | `files`    | `wt`, `q`, `base=branch\|head`          | changed files              |
 | `link`     | `wt`, `file`, `line`, `base`            | `{ url }`                  |
+
+Write tools:
+
+| tool              | kind        | params           | returns                |
+| ----------------- | ----------- | ---------------- | ---------------------- |
+| `set_auto_merge`  | write       | `wt`, `enable`   | `{ pr, autoMerge }`    |
+| `set_auto_rebase` | write       | `wt`, `enable`   | `{ wt, autoRebase }`   |
+| `remove_wts`      | destructive | `wts` (an array) | `{ removed, refused }` |
 
 Worktree rows carry a slim `agents` list (`agent`, `id`, `title`, `seenAt`,
 `deep`), the coding agent sessions that mention them, most likely creator first.
@@ -188,6 +198,54 @@ claude mcp add --transport http forest http://forest-server.localhost:38471/mcp
 
 `*.localhost` resolves to loopback with no setup. Existing installs re-run
 `claude mcp remove forest` before the add above.
+
+### Write tools
+
+Agent tools started out read-only. Writes are being added a few at a time, in
+three tiers. A tool moves up a tier only when the server can enforce that tier's
+guarantee. A rule in the tool's description doesn't count, because an agent that
+has read a PR comment or a web page can be talked out of it.
+
+| tier        | guarantee                                          | over `/api/t/` | MCP annotation    |
+| ----------- | -------------------------------------------------- | -------------- | ----------------- |
+| read        | changes nothing                                    | `GET`          | `readOnlyHint`    |
+| write       | calling it again with the opposite value undoes it | `POST`         | —                 |
+| destructive | refuses anything that would lose work              | `POST`         | `destructiveHint` |
+
+- `set_auto_merge` toggles GitHub auto-merge (squash) on a worktree's open PR.
+  GitHub still waits for checks and reviews, so it is the reversible form of a
+  merge.
+- `set_auto_rebase` toggles the same auto-rebase as the row's menu.
+- `remove_wts` runs `git worktree remove` without `--force`, so branches and
+  their commits stay. It skips, and lists under `refused`, the primary checkout,
+  a worktree with uncommitted or untracked changes, one mid-rebase or mid-merge,
+  and one with a listening process.
+
+Writes take `POST` because any page in your browser can make a `GET` (an
+`<img>`, a link). A `POST` then passes the same `Host` and `Origin` checks as
+the UI's own writes (see [Settings](#settings)). Every write call goes to
+`~/.forest/forest-log.jsonl` as a `type: "agentTool"` line, with its args and
+its result or error.
+
+The annotations let the agent decide what needs your approval. In Claude Code,
+allow the write tools once and keep the prompt on `remove_wts`:
+
+```json
+{
+  "permissions": {
+    "allow": ["mcp__forest__set_auto_merge", "mcp__forest__set_auto_rebase"]
+  }
+}
+```
+
+Not exposed yet: merging now, closing a PR, push, discard, killing a process,
+and `--force` removal. Each one either can't be undone or lets an agent reach
+past these guards. Each stays a UI-only action until it can be scoped down to
+one of the tiers above.
+
+A new write tool sets `kind` in `tools.ts` and calls the same function as its UI
+route (`actions.ts`, `autorebase.ts`), so the UI and the agent refresh the same
+way. Its test shows each refusal.
 
 ## Settings
 
@@ -337,8 +395,8 @@ Parsing is deliberately split out of `main.ts` into `parse.ts`, `src/theme.js`,
 and `src/filter.js` — that's the part with edge cases worth testing, and it's
 testable without spawning git. The rest of the server is split into per-system
 modules (`exec`, `repo`, `prs`, `ports`, `store`, `sse`, `watcher`, `files`,
-`themes`, `log`, `tools`, `routes`, `stats`, `settings`, `agents`, `sessions`,
-`types`), each with its own `<module>_test.ts`.
+`themes`, `log`, `actions`, `tools`, `routes`, `stats`, `settings`, `agents`,
+`sessions`, `types`), each with its own `<module>_test.ts`.
 
 ## Desktop app
 

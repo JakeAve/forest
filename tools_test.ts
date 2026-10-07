@@ -5,7 +5,14 @@ import { createFiles } from "./files.ts";
 import { createStore } from "./store.ts";
 import { createTools } from "./tools.ts";
 import { DEFAULTS } from "./settings.ts";
-import type { AgentSession, Pr, Repo, SessionInfo, Worktree } from "./types.ts";
+import type {
+  AgentSession,
+  Pr,
+  Procs,
+  Repo,
+  SessionInfo,
+  Worktree,
+} from "./types.ts";
 
 const HOME = "/home/jake";
 
@@ -17,10 +24,11 @@ const make = (
   table: Record<string, string> = {},
   agents = new Map<string, AgentSession[]>(),
   info = new Map<string, SessionInfo>(),
+  procs = new Map<string, Procs>(),
 ) => {
   const store = createStore({
     prFor: (_r, w) => w.pr,
-    procs: () => new Map(),
+    procs: () => procs,
     agents: () => agents,
     onSnapshot: () => {},
     stats: newStats(),
@@ -33,13 +41,29 @@ const make = (
     // deno-lint-ignore require-await
     mergeBase: async () => "HEAD",
   });
-  return createTools({
+  const removed: string[][] = [];
+  const t = createTools({
     store,
     files,
     settings,
     home: HOME,
     sessions: { all: () => info },
+    actions: {
+      autoMerge: () => Promise.resolve(),
+      removeWts: (paths) => {
+        removed.push(paths);
+        return Promise.resolve(
+          paths.filter((p) => p.endsWith("-locked")).map((path) => ({
+            path,
+            error: "locked",
+          })),
+        );
+      },
+    },
+    autoRebase: { set: () => Promise.resolve() },
+    log: () => {},
   });
+  return Object.assign(t, { removed });
 };
 
 Deno.test("wts filters by pr state and recent", async () => {
@@ -257,5 +281,59 @@ Deno.test("sessions q fuzzy-matches titles; no params is an error", async () => 
   assertEquals(
     t.toolError(await t.callTool("sessions", {}).catch((e) => e)),
     { error: "pass wt, id or q" },
+  );
+});
+
+Deno.test("remove_wts never removes a worktree that would lose work or is in use", async () => {
+  const t = make(
+    [mkRepo({
+      worktrees: [
+        worktree({ path: "/r/forest", isPrimary: true }),
+        worktree({ path: "/r/forest-done", branch: "done" }),
+        worktree({ path: "/r/forest-dirty", branch: "dirty", dirty: 2 }),
+        worktree({ path: "/r/forest-mid", branch: "mid", state: "rebase" }),
+        worktree({ path: "/r/forest-srv", branch: "srv" }),
+        worktree({ path: "/r/forest-locked", branch: "locked" }),
+      ],
+    })],
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    new Map([
+      ["/r/forest-srv", [{ port: 5173, pid: 9, command: "vite" }]],
+    ]),
+  );
+  const out = await t.callTool("remove_wts", {
+    wts: [
+      "/r/forest",
+      "done",
+      "dirty",
+      "mid",
+      "srv",
+      "/r/forest-locked",
+    ],
+  });
+  assertEquals(t.removed, [["/r/forest-done", "/r/forest-locked"]]);
+  assertEquals(out, {
+    removed: ["/r/forest-done"],
+    refused: [
+      { path: "/r/forest", error: "primary checkout" },
+      { path: "/r/forest-dirty", error: "uncommitted or untracked changes" },
+      { path: "/r/forest-mid", error: "rebase in progress" },
+      { path: "/r/forest-srv", error: "listening on 5173" },
+      { path: "/r/forest-locked", error: "locked" },
+    ],
+  });
+});
+
+Deno.test("set_auto_merge needs an open PR", async () => {
+  const t = make([mkRepo({ worktrees: [worktree({ path: "/r/forest" })] })]);
+  assertEquals(
+    t.toolError(
+      await t.callTool("set_auto_merge", { wt: "/r/forest", enable: true })
+        .catch((e) => e),
+    ),
+    { error: "no open PR" },
   );
 });

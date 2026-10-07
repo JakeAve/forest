@@ -10,6 +10,7 @@ import { createPorts } from "./ports.ts";
 import { createSse } from "./sse.ts";
 import { createWatcher } from "./watcher.ts";
 import { createAutoRebase } from "./autorebase.ts";
+import { createActions } from "./actions.ts";
 import { createStore } from "./store.ts";
 import { PROVIDERS } from "./agents.ts";
 import { createSessions, denoFs, type SessionFs } from "./sessions.ts";
@@ -128,7 +129,22 @@ export function boot(opts: {
     afterMutation: () => watcher.afterMutation(),
     log: (o) => log.line(o),
   });
-  const tools = createTools({ store, files, settings, home, sessions });
+  const actions = createActions({
+    sh,
+    store,
+    prs,
+    afterMutation: () => watcher.afterMutation(),
+  });
+  const tools = createTools({
+    store,
+    files,
+    settings,
+    home,
+    sessions,
+    actions,
+    autoRebase,
+    log: (o) => log.line(o),
+  });
   const routes = createRoutes({
     settings,
     settingsPath: join(dir, "settings.json"),
@@ -144,6 +160,7 @@ export function boot(opts: {
     files,
     watcher,
     autoRebase,
+    actions,
     notify,
     sse,
     stats,

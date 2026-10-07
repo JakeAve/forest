@@ -9,6 +9,8 @@ import {
   selectWt,
   sessionTag,
 } from "./parse.ts";
+import type { ActionsApi } from "./actions.ts";
+import type { AutoRebaseApi } from "./autorebase.ts";
 import type { FilesApi } from "./files.ts";
 import type { StoreApi } from "./store.ts";
 import type { SessionsApi } from "./sessions.ts";
@@ -17,7 +19,10 @@ import type { SessionInfo, WtRow } from "./types.ts";
 
 // ---- tools ----
 
+// No kind: reads, over GET or MCP. "write": undone by calling it again.
+// "destructive": refuses anything that would lose work. Writes take POST.
 export type Tool = {
+  kind?: "write" | "destructive";
   desc: string;
   input: Record<string, z.ZodType>;
   run: (a: Record<string, unknown>) => unknown | Promise<unknown>;
@@ -33,8 +38,20 @@ export function createTools(deps: {
   settings: Settings;
   home: string;
   sessions: Pick<SessionsApi, "all">;
+  actions: Pick<ActionsApi, "autoMerge" | "removeWts">;
+  autoRebase: Pick<AutoRebaseApi, "set">;
+  log: (o: Record<string, unknown>) => void;
 }) {
-  const { store, files, settings, sessions, home: HOME } = deps;
+  const {
+    store,
+    files,
+    settings,
+    sessions,
+    actions,
+    autoRebase,
+    log,
+    home: HOME,
+  } = deps;
   const { byPath: repoByPath, known: knownWorktrees } = store;
 
   function wtRows(): WtRow[] {
@@ -206,10 +223,75 @@ export function createTools(deps: {
         return { url: `http://${host}:${settings.port}/?${p}` };
       },
     },
+    set_auto_merge: {
+      kind: "write",
+      desc:
+        "Turn GitHub auto-merge (squash) on or off for a worktree's open PR. GitHub still waits for checks and reviews before merging.",
+      input: { wt: z.string(), enable: qbool },
+      run: async (a) => {
+        const w = resolveWt(String(a.wt));
+        if (w.pr?.state !== "OPEN") throw new ToolError("no open PR");
+        await actions.autoMerge(w.path, w.pr.number, a.enable as boolean);
+        return { pr: w.pr.number, autoMerge: a.enable };
+      },
+    },
+    set_auto_rebase: {
+      kind: "write",
+      desc:
+        "Turn auto-rebase on or off for a worktree: it follows origin/HEAD on a timer (update-branch on GitHub when it has an open PR), and stops after a conflict until base moves.",
+      input: { wt: z.string(), enable: qbool },
+      run: async (a) => {
+        const w = resolveWt(String(a.wt));
+        await autoRebase.set(w.path, a.enable as boolean);
+        return { wt: w.path, autoRebase: a.enable };
+      },
+    },
+    remove_wts: {
+      kind: "destructive",
+      desc:
+        "Remove worktrees with git worktree remove, never --force; branches and commits stay. Refuses the primary checkout, uncommitted or untracked changes, a rebase or merge in progress, and a worktree with a listening process.",
+      input: { wts: z.array(z.string()).min(1) },
+      run: async (a) => {
+        const rows = (a.wts as string[]).map(resolveWt);
+        const refused = rows.flatMap((w) => {
+          const why = w.isPrimary
+            ? "primary checkout"
+            : w.dirty
+            ? "uncommitted or untracked changes"
+            : w.state
+            ? `${w.state} in progress`
+            : w.ports.length
+            ? `listening on ${w.ports.join(", ")}`
+            : "";
+          return why ? [{ path: w.path, error: why }] : [];
+        });
+        const ok = rows.filter((w) => !refused.some((r) => r.path === w.path));
+        const failed = ok.length
+          ? await actions.removeWts(ok.map((w) => w.path))
+          : [];
+        return {
+          removed: ok.map((w) => w.path).filter((p) =>
+            !failed.some((f) => f.path === p)
+          ),
+          refused: [...refused, ...failed],
+        };
+      },
+    },
   };
 
-  const callTool = async (name: string, raw: Record<string, unknown>) =>
-    await tools[name].run(z.object(tools[name].input).parse(raw));
+  const callTool = async (name: string, raw: Record<string, unknown>) => {
+    const t = tools[name];
+    const args = z.object(t.input).parse(raw);
+    if (!t.kind) return await t.run(args);
+    try {
+      const out = await t.run(args);
+      log({ type: "agentTool", tool: name, args, out });
+      return out;
+    } catch (e) {
+      log({ type: "agentTool", tool: name, args, error: String(e) });
+      throw e;
+    }
+  };
 
   const toolError = (e: unknown) => ({
     error: e instanceof Error ? e.message : String(e),
@@ -223,7 +305,15 @@ export function createTools(deps: {
     for (const [name, tool] of Object.entries(tools)) {
       mcp.registerTool(
         name,
-        { description: tool.desc, inputSchema: tool.input },
+        {
+          description: tool.desc,
+          inputSchema: tool.input,
+          annotations: {
+            readOnlyHint: !tool.kind,
+            destructiveHint: tool.kind === "destructive",
+            idempotentHint: true,
+          },
+        },
         async (args: Record<string, unknown>) => {
           try {
             const out = await callTool(name, args);
