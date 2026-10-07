@@ -2,9 +2,9 @@
 
 Git worktree dashboard: Deno server, `boot.ts` (wires the module graph, starts
 nothing) and `main.ts` (starts it) plus `exec`, `repo`, `prs`, `ports`, `store`,
-`cache`, `sse`, `watcher`, `files`, `themes`, `log`, `tools`, `notify`,
-`routes`, `stats`, `settings`, `agents`, `sessions`, `types`, and a Svelte
-frontend in `src/`. See README.md for setup and the agent API.
+`cache`, `sse`, `watcher`, `files`, `themes`, `log`, `actions`, `tools`,
+`notify`, `routes`, `stats`, `settings`, `agents`, `sessions`, `types`, and a
+Svelte frontend in `src/`. See README.md for setup and the agent API.
 
 ## Commands
 
@@ -42,7 +42,13 @@ deno task setup                # git hooks run check + test on commit/push
   `sessions.ts` and the UI never name a specific agent.
 - Ports: server `38471`, vite `38472`. `/mcp` only accepts `Host` of localhost
   or `forest-server.localhost`; keep that allowlist when touching the route.
-- Nothing under `/api/t/` or `/mcp` writes; agent tools stay read-only.
+- Agent tools come in tiers (`kind` in `tools.ts`): read (no `kind`, GET),
+  `write` (undone by calling it again with the opposite value), and
+  `destructive` (refuses in code anything that would lose work). Writes take
+  POST, never GET. A tool's description is not a guard. Merge-now, close, push,
+  discard, kill and `--force` stay UI-only. A write tool calls the same function
+  as its UI route (`actions.ts`) and has a test for each refusal. README "Write
+  tools" is the contract.
 - API first: a fact about a worktree or repo (a PR, a ticket, a port) is a field
   on the row, resolved in `store.publish()` from its deps, so the SSE snapshot,
   the boot cache and the agent tools carry one value. The UI and `tools.ts` read

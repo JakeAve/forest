@@ -31,6 +31,7 @@ import type { PrsApi } from "./prs.ts";
 import { enc, type SseApi } from "./sse.ts";
 import type { WatcherApi } from "./watcher.ts";
 import type { AutoRebaseApi } from "./autorebase.ts";
+import type { ActionsApi } from "./actions.ts";
 import type { StoreApi } from "./store.ts";
 import type { SessionsApi } from "./sessions.ts";
 import type { NotifyApi } from "./notify.ts";
@@ -63,6 +64,7 @@ export function createRoutes(deps: {
   files: FilesApi;
   watcher: WatcherApi;
   autoRebase: AutoRebaseApi;
+  actions: ActionsApi;
   notify: NotifyApi;
   sse: SseApi;
   stats: Stats;
@@ -83,6 +85,7 @@ export function createRoutes(deps: {
     files,
     watcher,
     autoRebase,
+    actions,
     notify,
     sse,
     stats,
@@ -148,9 +151,20 @@ export function createRoutes(deps: {
         if (!Object.hasOwn(tools, name)) {
           return new Response("not found", { status: 404 });
         }
+        // a GET can be fired by any page (an <img>, a link); writes take POST
+        const write = !!tools[name].kind;
+        if (write !== (req.method === "POST")) {
+          return new Response(write ? "use POST" : "use GET", {
+            status: 405,
+            headers: { allow: write ? "POST" : "GET" },
+          });
+        }
         try {
           return json(
-            await callTool(name, Object.fromEntries(url.searchParams)),
+            await callTool(
+              name,
+              write ? await req.json() : Object.fromEntries(url.searchParams),
+            ),
           );
         } catch (e) {
           return new Response(JSON.stringify(toolError(e)), {
@@ -380,24 +394,12 @@ export function createRoutes(deps: {
             break;
           }
           case "/api/auto-merge": {
-            const repo = knownWorktrees.get(wt)!;
             const n = Number(b.number);
             if (!Number.isInteger(n) || n <= 0) {
               throw new Error("bad pr number");
             }
-            await exec(
-              wt,
-              b.enable
-                ? ["gh", "pr", "merge", String(n), "--auto", "--squash"]
-                : ["gh", "pr", "merge", String(n), "--disable-auto"],
-            );
-            await prs.refreshOnePr(repo, n).catch(() => {});
-            prs.refreshPrSoon(repo, n);
-            // the merge landed on the remote, not locally — fetch so the
-            // ahead/behind-vs-base afterMutation() recomputes below isn't
-            // reading last sweep's now-stale refs.
-            await git(wt, "fetch", "origin").catch(() => {});
-            break;
+            await actions.autoMerge(wt, n, !!b.enable);
+            return json({ ok: true });
           }
           case "/api/push":
             await git(
@@ -449,19 +451,10 @@ export function createRoutes(deps: {
             break;
           }
           case "/api/wt-remove": {
-            const force = b.force ? ["--force"] : [];
-            const failed: { path: string; error: string }[] = [];
-            for (const p of (b.wts ?? [b.wt]).map(guardWt)) {
-              await git(
-                knownWorktrees.get(p)!,
-                "worktree",
-                "remove",
-                ...force,
-                p,
-              )
-                .catch((e) => failed.push({ path: p, error: e.message }));
-            }
-            watcher.afterMutation();
+            const failed = await actions.removeWts(
+              (b.wts ?? [b.wt]).map(guardWt),
+              !!b.force,
+            );
             return json({ ok: !failed.length, failed });
           }
           case "/api/kill-pid": {

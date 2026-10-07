@@ -6,6 +6,7 @@ import { createSse } from "./sse.ts";
 import { createStore } from "./store.ts";
 import { createTools } from "./tools.ts";
 import { createAutoRebase } from "./autorebase.ts";
+import { createActions } from "./actions.ts";
 import { createRoutes } from "./routes.ts";
 import { createNotify, memoryInbox } from "./notify.ts";
 import { DEFAULTS } from "./settings.ts";
@@ -42,7 +43,7 @@ const make = (opts?: {
   const stats = newStats();
   const sse = createSse();
   const store = createStore({
-    prFor: () => null,
+    prFor: (_r, w) => w.pr,
     procs: () => new Map(),
     onSnapshot: () => {},
     stats,
@@ -91,12 +92,30 @@ const make = (opts?: {
   } as unknown as PrsApi;
 
   const settings = { ...DEFAULTS };
+  const autoRebase = createAutoRebase({
+    sh,
+    store,
+    prs,
+    path: "/tmp/forest-test/autorebase.json",
+    afterMutation: () => {},
+    log: () => {},
+  });
+  const actions = createActions({
+    sh,
+    store,
+    prs,
+    afterMutation: () => watcher.afterMutation(),
+  });
+  const logged: Record<string, unknown>[] = [];
   const tools = createTools({
     store,
     files,
     settings,
     home: HOME,
     sessions: { all: () => new Map() },
+    actions,
+    autoRebase,
+    log: (o) => logged.push(o),
   });
   const routes = createRoutes({
     settings,
@@ -112,14 +131,8 @@ const make = (opts?: {
     ports: { current: () => new Map() },
     files,
     watcher,
-    autoRebase: createAutoRebase({
-      sh,
-      store,
-      prs,
-      path: "/tmp/forest-test/autorebase.json",
-      afterMutation: () => {},
-      log: () => {},
-    }),
+    autoRebase,
+    actions,
     notify,
     sse,
     stats,
@@ -135,7 +148,17 @@ const make = (opts?: {
     } as unknown as SessionsApi,
     desktop: false,
   });
-  return { routes, notify, sh, store, files, mutations, prCalls, settings };
+  return {
+    routes,
+    notify,
+    sh,
+    store,
+    files,
+    mutations,
+    prCalls,
+    settings,
+    logged,
+  };
 };
 
 async function withTmp(fn: (dir: string) => Promise<void>) {
@@ -463,4 +486,58 @@ Deno.test("PUT /api/settings from a rebound Host is 403", async () => {
   );
   assertEquals(res.status, 403);
   await res.body?.cancel();
+});
+
+Deno.test("/api/t/ write tools take POST only, read tools GET only", async () => {
+  const { routes, sh } = make();
+  const viaGet = await routes(
+    get("/api/t/remove_wts?wts=/r/forest"),
+    LOCAL,
+  );
+  assertEquals(viaGet.status, 405);
+  assertEquals(viaGet.headers.get("allow"), "POST");
+  await viaGet.body?.cancel();
+  const readViaPost = await routes(post("/api/t/wts", {}), LOCAL);
+  assertEquals(readViaPost.status, 405);
+  await readViaPost.body?.cancel();
+  assertEquals(sh.calls, []);
+});
+
+Deno.test("POST /api/t/remove_wts from another site is 403", async () => {
+  const { routes, sh } = make();
+  const req = post("/api/t/remove_wts", { wts: ["/r/forest"] });
+  req.headers.set("origin", "https://evil.example");
+  const res = await routes(req, LOCAL);
+  assertEquals(res.status, 403);
+  await res.body?.cancel();
+  assertEquals(sh.calls, []);
+});
+
+Deno.test("POST /api/t/set_auto_merge enables squash auto-merge on the open PR and logs it", async () => {
+  const { routes, sh, logged, mutations } = make({
+    table: {
+      "gh pr merge 7 --auto --squash": "",
+      "git fetch origin": "",
+    },
+    worktrees: [
+      worktree({
+        path: "/r/forest-feat",
+        branch: "feat",
+        pr: { number: 7, url: "u", state: "OPEN" } as Worktree["pr"],
+      }),
+    ],
+  });
+  const res = await routes(
+    post("/api/t/set_auto_merge", { wt: "feat", enable: true }),
+    LOCAL,
+  );
+  assertEquals(await res.json(), { pr: 7, autoMerge: true });
+  assertEquals(sh.calls[0], "/r/forest-feat $ gh pr merge 7 --auto --squash");
+  assertEquals(mutations.length, 1);
+  assertEquals(logged, [{
+    type: "agentTool",
+    tool: "set_auto_merge",
+    args: { wt: "feat", enable: true },
+    out: { pr: 7, autoMerge: true },
+  }]);
 });
