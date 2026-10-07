@@ -218,6 +218,8 @@ are written.
 | `collapseMinSize`   | `5`         | shortest run of unchanged lines that collapses                      |
 | `launchers`         | `{}`        | per-repo worktree-creation commands                                 |
 | `tickets`           | `{}`        | per-repo ticket URL templates                                       |
+| `ticketCmds`        | `{}`        | per-repo ticket status commands                                     |
+| `ticketPollMs`      | `300000`    | how often a ticket's status is re-fetched                           |
 | `keys`              | `{}`        | keyboard shortcut overrides                                         |
 | `columns`           | `[]`        | worktree columns shown, in order; empty = default (all but `title`) |
 
@@ -276,6 +278,21 @@ A `#123` always links to the repo's own GitHub issues; a tracker key with no
 template shows nothing rather than guess. The resolved `ticket` (`{key, url}` or
 `null`) rides every worktree row: the SSE snapshot, the boot cache, and the
 agent `snapshot`, `wts`, `whoami` and `sessions` tools.
+
+For a status dot and a click-through card, give the repo a `ticketCmds` entry: a
+command that takes the key as `$1` and prints
+`{"title", "status", "category", "assignee"}` as JSON, exiting non-zero when it
+can't. It runs on the server with whatever auth your tracker's CLI or API token
+already has, so Forest never touches browser cookies or stores a token. The
+result rides the row as `ticket.info`.
+
+```json
+{ "ticketCmds": { "*": "~/.forest/jira-ticket.sh" } }
+```
+
+Recipes for GitHub, Jira, Linear and MCP-only trackers, and the full contract,
+are in [the `ticket-command` skill](.claude/skills/ticket-command/SKILL.md); ask
+your coding agent to write one for your tracker.
 
 ### Keyboard shortcuts
 
