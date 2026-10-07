@@ -1111,6 +1111,30 @@ const LOCAL_HOSTNAMES = new Set([
 ]);
 
 /** Loopback remote address AND a Host header naming this server, not a proxied/foreign one. */
+const WRITE_HOSTNAMES = new Set([
+  ...LOCAL_HOSTNAMES,
+  "forest-server.localhost",
+]);
+
+/** A write must name a local Host (no DNS rebinding) and come from no Origin
+ * or a local one on the server, vite or this listener's port (no CSRF). */
+export function isTrustedWrite(
+  hostHeader: string | null,
+  origin: string | null,
+): boolean {
+  let host: URL, from: URL;
+  try {
+    host = new URL("http://" + hostHeader);
+    if (!hostHeader || !WRITE_HOSTNAMES.has(host.hostname)) return false;
+    if (origin === null) return true;
+    from = new URL(origin);
+  } catch {
+    return false;
+  }
+  return from.protocol === "http:" && WRITE_HOSTNAMES.has(from.hostname) &&
+    ["38471", "38472", host.port].includes(from.port);
+}
+
 export function isLocalRequest(
   remoteHost: string,
   hostHeader: string | null,

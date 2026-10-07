@@ -12,6 +12,7 @@ import {
   coerceSettings,
   fillCommand,
   isLocalRequest,
+  isTrustedWrite,
   normPath,
   ownerWorktree,
   parseDiffHunks,
@@ -102,6 +103,13 @@ export function createRoutes(deps: {
   ): Promise<Response> {
     const url = new URL(req.url);
     try {
+      if (
+        req.method !== "GET" && req.method !== "HEAD" &&
+        url.pathname.startsWith("/api/") &&
+        !isTrustedWrite(req.headers.get("host"), req.headers.get("origin"))
+      ) {
+        return new Response("forbidden", { status: 403 });
+      }
       if (url.pathname === "/api/events") {
         let ctrl: ReadableStreamDefaultController;
         const stream = new ReadableStream({

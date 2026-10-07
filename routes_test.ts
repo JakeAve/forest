@@ -334,13 +334,13 @@ Deno.test("POST /api/rename onto an existing path is 400 already exists", async 
   });
 });
 
-Deno.test("POST /api/new on a loose root from a foreign Host is 400", async () => {
+Deno.test("POST /api/new on a loose root from a LAN address is 400", async () => {
   await withTmp(async (dir) => {
     const { routes, mutations } = make();
     await routes(get(`/api/open?path=${encodeURIComponent(dir)}`), LOCAL);
 
     const res = await routes(
-      post("/api/new", { wt: dir, path: "a.ts" }, "10.0.0.5:38471"),
+      post("/api/new", { wt: dir, path: "a.ts" }),
       FOREIGN,
     );
     assertEquals(res.status, 400);
@@ -377,7 +377,7 @@ Deno.test("POST /api/agent-resume opens only an indexed session's link, only for
   );
   assertEquals(unknown.status, 400);
   const foreign = await routes(
-    post("/api/agent-resume", { agent: "claude", id: "known" }, "evil.com"),
+    post("/api/agent-resume", { agent: "claude", id: "known" }),
     FOREIGN,
   );
   assertEquals(foreign.status, 400);
@@ -432,5 +432,35 @@ Deno.test("GET /mcp with a foreign Host is rejected", async () => {
   const { routes } = make();
   const res = await routes(get("/mcp", "evil.example.com"), FOREIGN);
   assert(res.status >= 400, `expected a rejection, got ${res.status}`);
+  await res.body?.cancel();
+});
+
+Deno.test("a cross-site POST is 403 and the app's own origin passes", async () => {
+  const { routes, sh } = make({ table: { "git add -- a.ts": "" } });
+  const from = (origin: string) => {
+    const req = post("/api/stage", { wt: "/r/forest", path: "a.ts" });
+    req.headers.set("origin", origin);
+    return routes(req, LOCAL);
+  };
+  const evil = await from("https://evil.example");
+  assertEquals(evil.status, 403);
+  await evil.body?.cancel();
+  assertEquals(sh.calls, []);
+  const ok = await from("http://forest-app.localhost:38471");
+  assertEquals(ok.status, 200);
+  await ok.body?.cancel();
+});
+
+Deno.test("PUT /api/settings from a rebound Host is 403", async () => {
+  const { routes } = make();
+  const res = await routes(
+    new Request("http://evil.example:38471/api/settings", {
+      method: "PUT",
+      headers: { host: "evil.example:38471" },
+      body: "{}",
+    }),
+    LOCAL,
+  );
+  assertEquals(res.status, 403);
   await res.body?.cancel();
 });
