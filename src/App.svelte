@@ -1,6 +1,7 @@
 <script>
 import { tick, untrack } from "svelte";
 import Source from "./Source.svelte";
+import FilterInput from "./FilterInput.svelte";
 import Palette from "./Palette.svelte";
 import Shortcuts from "./Shortcuts.svelte";
 import Hex from "./Hex.svelte";
@@ -136,6 +137,11 @@ let srcBodyEl = $state();
 let rawView = null;
 let q = $state("");
 let fq = $state("");
+let lq = $state("");
+let findEl = $state();
+let wtFilterEl = $state();
+let fileFilterEl = $state();
+let found = $state({ i: 0, n: 0 });
 let dirtyOnly = $state(false);
 let runningOnly = $state(false);
 let copied = $state("");
@@ -2274,6 +2280,28 @@ const COMMANDS = [
       setMode(modeList[(modeList.indexOf(mode) + 1) % modeList.length]),
   },
   {
+    id: "filter-branches",
+    label: "Focus branch filter",
+    section: "Worktrees",
+    keys: "alt+cmd+b",
+    run: () => focusFilter(1, wtFilterEl),
+  },
+  {
+    id: "filter-files",
+    label: "Focus file filter",
+    section: "Files",
+    keys: "alt+cmd+f",
+    run: () => focusFilter(2, fileFilterEl),
+  },
+  {
+    id: "find",
+    label: "Find in file",
+    section: "View",
+    keys: "cmd+f",
+    when: () => hasFile() && mode === "text" && !srcBinary,
+    run: () => findEl?.select(),
+  },
+  {
     id: "copy-path",
     label: "Copy path (relative)",
     section: "Files",
@@ -2316,6 +2344,12 @@ const COMMANDS = [
 ];
 const keymap = $derived(resolve(COMMANDS, settings?.keys));
 const kbdOf = (id) => keymap.byId[id]?.[0] && keyLabel(keymap.byId[id][0]);
+
+async function focusFilter(n, el) {
+  if (max && max !== n) max = null;
+  await tick();
+  el?.select();
+}
 
 function runKey(e) {
   const k = !e.defaultPrevented && !e.isComposing && combo(e);
@@ -2566,7 +2600,8 @@ async function confirmDiscard() {
           : `${totalWts} across ${repos.length} repos`}</span><span
         class="sp"
       ></span>
-      <input class="filter" placeholder="Filter branches" bind:value={q} />
+      <FilterInput bind:this={wtFilterEl} bind:value={q} label="Filter branches"
+                   kbd={kbdOf("filter-branches")} />
       <button
         class="btn"
         class:on={dirtyOnly}
@@ -2822,7 +2857,8 @@ async function confirmDiscard() {
                   onclick={startNew}>＋</button>
         {/if}
       {/if}
-      <input class="filter" placeholder="Filter files" bind:value={fq}>
+      <FilterInput bind:this={fileFilterEl} bind:value={fq} label="Filter files"
+                   kbd={kbdOf("filter-files")} />
       {#if !loose}<div class="seg">
         <button class:on={!explore && base === "branch"} onclick={() => setBase("branch")}>Since branch point</button>
         <button class:on={!explore && base === "head"} onclick={() => setBase("head")}>Uncommitted</button>
@@ -2963,12 +2999,6 @@ async function confirmDiscard() {
         <b>Source</b>
       {/if}
       <span class="sp"></span>
-      {#if explore && selFile}
-        <div class="seg">
-          <button class:on={!showDiff} disabled={mode !== "text"} onclick={() => (showDiff = false)}>View</button>
-          <button class:on={showDiff} disabled={mode !== "text"} onclick={() => (showDiff = true)}>Diff</button>
-        </div>
-      {/if}
       {#if diskAt && now - diskAt < 60_000}
         <span class="meta" title={new Date(diskAt).toLocaleTimeString()}>Updated {ago(diskAt)}</span>
       {/if}
@@ -2979,10 +3009,20 @@ async function confirmDiscard() {
                 onclick={() => { banner = null; diffRef?.reloadTheirs(); }}>Discard</button>
       {/if}
       {#if mode === "text" && !srcBinary}
+        <FilterInput bind:this={findEl} bind:value={lq} label="Find" kbd={kbdOf("find")}
+                     onenter={(back) => diffRef?.findStep(back ? -1 : 1)}
+                     count="{found.i}/{found.n}"
+                     onescape={() => diffRef?.setCursor(diffRef.cursor())} />
         <label class="meta wraplbl">
           <input type="checkbox" class="cbxin" bind:checked={wrap} onchange={saveLayout}>
           <span class="cbx" class:on={wrap}></span>Wrap
         </label>
+      {/if}
+      {#if explore && selFile}
+        <div class="seg">
+          <button class:on={!showDiff} disabled={mode !== "text"} onclick={() => (showDiff = false)}>View</button>
+          <button class:on={showDiff} disabled={mode !== "text"} onclick={() => (showDiff = true)}>Diff</button>
+        </div>
       {/if}
       {#if file && modeList.length > 1}
         <div class="seg" title={kbdOf("cycle-mode")}>
@@ -3019,7 +3059,7 @@ async function confirmDiscard() {
         <Source bind:this={diffRef} wt={sel} path={file} {base} tick={diffTick} line={pendingLine}
               collapse={{ margin: settings.collapseMargin, minSize: settings.collapseMinSize }}
               single={explore && !(selFile && showDiff)}
-              {split} onsplit={(s) => { split = s; saveLayout(); }} {wrap}
+              {split} onsplit={(s) => { split = s; saveLayout(); }} {wrap} find={lq} onfind={(f) => (found = f)}
               onstate={(d) => (diffDirty = d)}
               onconflict={conflictBanner}
               onupdated={() => (diskAt = Date.now())}
@@ -3985,7 +4025,7 @@ dialog.settings::backdrop {
   color: var(--danger);
   border-color: var(--danger);
 }
-input.filter {
+:global(input.filter) {
   background: var(--input);
   border: 1px solid var(--line);
   border-radius: 999px;
@@ -3995,7 +4035,7 @@ input.filter {
   width: 10.5rem;
   outline: none;
 }
-input.filter::placeholder {
+:global(input.filter::placeholder) {
   color: var(--dimmer);
 }
 input.ren {
@@ -4031,7 +4071,7 @@ input.ren {
 .bhead .nm:hover {
   border-color: var(--line);
 }
-input.filter.open {
+:global(input.filter.open) {
   flex: 1;
   font-family: var(--mono);
 }
@@ -4046,7 +4086,7 @@ input.filter.open {
 .bhead .pth:hover {
   border-color: var(--line);
 }
-input.filter:focus {
+:global(input.filter:focus) {
   border-color: var(--acc);
 }
 select.theme {
@@ -5156,7 +5196,11 @@ select.theme {
     padding-block: 0.5rem;
     row-gap: 0.375rem;
   }
-  input.filter {
+  :global(.fbox) {
+    flex: 1 1 6rem;
+    min-width: 0;
+  }
+  :global(input.filter) {
     flex: 1 1 6rem;
     width: auto;
     min-width: 0;

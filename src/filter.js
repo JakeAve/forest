@@ -5,21 +5,46 @@ export function matchWt(
 ) {
   return (!dirtyOnly || w.dirty > 0) &&
     (!runningOnly || (w.ports?.length ?? 0) > 0) &&
-    fuzzy(q, wtText(w, repoName)) !== null;
+    matcher(q)(wtText(w, repoName)) !== null;
 }
 
-export const wtText = (w, repoName = w.repo) => `${w.branch} ${repoName ?? ""}`;
+export const wtText = (w, repoName = w.repo) =>
+  `${w.branch}\n${repoName ?? ""}`;
 
-export const pathText = (p) => `${p.slice(p.lastIndexOf("/") + 1)} ${p}`;
+export const pathText = (p) => `${p.slice(p.lastIndexOf("/") + 1)}\n${p}`;
 
-export const matchPath = (q, p) => fuzzy(q, pathText(p)) !== null;
+export const matchPath = (q, p) => matcher(q)(pathText(p)) !== null;
+
+export function parseQuery(q) {
+  const body = /^\/(.*?)(?<!\\)\/?$/s.exec(q)?.[1];
+  if (body === undefined) return { text: q };
+  if (!body) return { text: "" };
+  try {
+    return { re: new RegExp(body, "im") };
+  } catch (e) {
+    return { error: e.message };
+  }
+}
+
+let last = null;
+export function matcher(q) {
+  if (last?.q === q) return last.fn;
+  const { text, re, error } = parseQuery(q);
+  const fn = error
+    ? () => null
+    : re
+    ? (t) => (re.test(t) ? 0 : null)
+    : (t) => fuzzy(text, t);
+  last = { q, fn };
+  return fn;
+}
 
 const WORD_START = /[/\-_.# ]/;
 
 export function fuzzy(q, text) {
   if (q === "") return 0;
   const ql = q.toLowerCase();
-  const tl = text.toLowerCase();
+  const tl = text.toLowerCase().replaceAll("\n", " ");
   let score = 0;
   let from = 0;
   let matched = false;
@@ -40,12 +65,22 @@ export function rank(
   q,
   items,
   limit = 50,
-  text = (item) => `${item.label} ${item.detail ?? ""}`,
+  text = (item) => `${item.label}\n${item.detail ?? ""}`,
 ) {
+  const match = matcher(q);
   return items
-    .map((item, i) => ({ item, i, score: fuzzy(q, text(item)) }))
+    .map((item, i) => ({ item, i, score: match(text(item)) }))
     .filter(({ score }) => score !== null)
     .sort((a, b) => b.score - a.score || a.i - b.i)
     .slice(0, limit)
     .map(({ item }) => item);
+}
+
+export function findAll(q, text) {
+  const { text: t, re } = parseQuery(q);
+  const src = re?.source ?? t?.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  if (!src) return [];
+  return [...text.matchAll(new RegExp(src, "gim"))]
+    .filter((m) => m[0])
+    .map((m) => [m.index, m.index + m[0].length]);
 }
