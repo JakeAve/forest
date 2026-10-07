@@ -23,7 +23,7 @@ import {
   treeRows,
   trimSeps,
 } from "../parse.ts";
-import { parseThemeText, resolveTheme } from "./theme.js";
+import { parseThemeText, resolveTheme, setFavicon } from "./theme.js";
 import { combo, label as keyLabel, resolve } from "./keys.js";
 import { marked } from "marked";
 
@@ -2020,6 +2020,7 @@ async function applyTheme(name, save = true) {
   if (resolved.dark !== null) {
     st.setProperty("color-scheme", resolved.dark ? "dark" : "light");
   }
+  setFavicon(resolved.vars);
   try {
     localStorage.setItem("forest-theme", JSON.stringify(resolved));
   } catch {}

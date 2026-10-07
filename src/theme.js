@@ -171,6 +171,21 @@ function lum([r, g, b]) {
 
 const mix = (a, b, t) => a.map((v, i) => (i < 3 ? v + (b[i] - v) * t : v));
 
+export function setFavicon(vars) {
+  const acc = vars["--acc"] ?? "#7dd3a0";
+  const bg = vars["--bg"] ?? "#0e1116";
+  const mark2 = toHex(mix(parseColor(acc), parseColor(bg), 0.38));
+  const side = "M5.2 8.6 7.3 13.8 6.2 13.8 8.9 19 1.5 19 4.2 13.8 3.1 13.8Z";
+  const side2 =
+    "M18.9 10.6 20.9 14.8 19.8 14.8 22.5 19 15.3 19 18 14.8 16.9 14.8Z";
+  const mid =
+    "M12 3.4 14.6 8.6 13.1 8.6 16.1 13.8 14.6 13.8 17.1 19 6.9 19 9.4 13.8 7.9 13.8 10.9 8.6 9.4 8.6Z";
+  const svg =
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="${side}" fill="${mark2}"/><path d="${side2}" fill="${mark2}"/><path d="${mid}" fill="${acc}"/></svg>`;
+  document.querySelector("link[rel=icon]").href = "data:image/svg+xml," +
+    encodeURIComponent(svg);
+}
+
 export function contrast(a, b) {
   const B = parseColor(b), A = mix(B, parseColor(a), parseColor(a)[3]);
   const [hi, lo] = [lum(A), lum(B)].sort((x, y) => y - x);
