@@ -226,9 +226,12 @@ repositories unauthenticated to everything on the LAN, including file contents
 and every UI action (save, discard, push, close PR, remove worktree). `/mcp`
 checks that the `Host` header is localhost or `forest-server.localhost`, which
 stops DNS rebinding from a browser but not a LAN client that sends that header
-itself. Opening a path outside every scanned repo (⌘O, above) only answers
-requests from this machine — a loopback address and a `Host` of `localhost`,
-`127.0.0.1`, `[::1]` or `forest-app.localhost` — even when `host` is `0.0.0.0`.
+itself. Every non-GET `/api/` request gets the same `Host` check and is refused
+unless its `Origin` is absent or a local one on port 38471, 38472 or the port it
+arrived on, so another site's page can't post to it. Opening a path outside
+every scanned repo (⌘O, above) only answers requests from this machine — a
+loopback address and a `Host` of `localhost`, `127.0.0.1`, `[::1]` or
+`forest-app.localhost` — even when `host` is `0.0.0.0`.
 
 ### Notifications
 

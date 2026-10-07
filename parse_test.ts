@@ -18,6 +18,7 @@ import {
   hotBackoff,
   isIgnoredPath,
   isLocalRequest,
+  isTrustedWrite,
   limiter,
   normPath,
   orderWts,
@@ -1726,4 +1727,32 @@ Deno.test("bucketSummary", () => {
     ]),
     "1 failing · 1 conflicts · 1 changes requested · 1 in review · 1 ready",
   );
+});
+
+Deno.test("isTrustedWrite allows local Host with no or local Origin", () => {
+  assertEquals(isTrustedWrite("localhost:38471", null), true);
+  assertEquals(isTrustedWrite("forest-server.localhost:38471", null), true);
+  assertEquals(
+    isTrustedWrite("localhost:38472", "http://forest-app.localhost:38472"),
+    true,
+  );
+  assertEquals(
+    isTrustedWrite("localhost:51234", "http://localhost:51234"),
+    true,
+  );
+  assertEquals(
+    isTrustedWrite("127.0.0.1:38471", "http://localhost:38471"),
+    true,
+  );
+  assertEquals(
+    isTrustedWrite("localhost:38471", "https://evil.example"),
+    false,
+  );
+  assertEquals(
+    isTrustedWrite("localhost:38471", "http://localhost:3000"),
+    false,
+  );
+  assertEquals(isTrustedWrite("localhost:38471", "null"), false);
+  assertEquals(isTrustedWrite("evil.example:38471", null), false);
+  assertEquals(isTrustedWrite(null, null), false);
 });
