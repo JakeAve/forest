@@ -138,6 +138,8 @@ let q = $state("");
 let fq = $state("");
 let lq = $state("");
 let findEl = $state();
+let wtFilterEl = $state();
+let fileFilterEl = $state();
 let found = $state({ i: 0, n: 0 });
 let dirtyOnly = $state(false);
 let runningOnly = $state(false);
@@ -2277,6 +2279,20 @@ const COMMANDS = [
       setMode(modeList[(modeList.indexOf(mode) + 1) % modeList.length]),
   },
   {
+    id: "filter-branches",
+    label: "Focus branch filter",
+    section: "Worktrees",
+    keys: "alt+cmd+b",
+    run: () => focusFilter(1, wtFilterEl),
+  },
+  {
+    id: "filter-files",
+    label: "Focus file filter",
+    section: "Files",
+    keys: "alt+cmd+f",
+    run: () => focusFilter(2, fileFilterEl),
+  },
+  {
     id: "find",
     label: "Find in file",
     section: "View",
@@ -2327,6 +2343,12 @@ const COMMANDS = [
 ];
 const keymap = $derived(resolve(COMMANDS, settings?.keys));
 const kbdOf = (id) => keymap.byId[id]?.[0] && keyLabel(keymap.byId[id][0]);
+
+async function focusFilter(n, el) {
+  if (max && max !== n) max = null;
+  await tick();
+  el?.select();
+}
 
 function findKey(e) {
   if (e.key === "Enter") diffRef?.findStep(e.shiftKey ? -1 : 1);
@@ -2584,7 +2606,8 @@ async function confirmDiscard() {
           : `${totalWts} across ${repos.length} repos`}</span><span
         class="sp"
       ></span>
-      <input class="filter" placeholder="Filter branches" bind:value={q} />
+      <input class="filter" placeholder="Filter branches {kbdOf('filter-branches') ?? ''}"
+             bind:this={wtFilterEl} bind:value={q} />
       <button
         class="btn"
         class:on={dirtyOnly}
@@ -2840,7 +2863,8 @@ async function confirmDiscard() {
                   onclick={startNew}>＋</button>
         {/if}
       {/if}
-      <input class="filter" placeholder="Filter files" bind:value={fq}>
+      <input class="filter" placeholder="Filter files {kbdOf('filter-files') ?? ''}"
+             bind:this={fileFilterEl} bind:value={fq}>
       {#if !loose}<div class="seg">
         <button class:on={!explore && base === "branch"} onclick={() => setBase("branch")}>Since branch point</button>
         <button class:on={!explore && base === "head"} onclick={() => setBase("head")}>Uncommitted</button>
