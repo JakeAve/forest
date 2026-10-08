@@ -16,8 +16,9 @@ comes from a command the user owns, set per repo in `~/.forest/settings.json`:
 `tickets.ts` runs it as `sh -c '<cmd> "$1"' forest-ticket <key>` in the repo's
 main checkout, at most 4 at a time, again after `ticketPollMs` (5 min). Write
 `"$1"` yourself to put the key somewhere else in the command. A card action
-runs `sh -c '<cmd> "$1" "$2"' forest-ticket <key> <status>`; a command that
-writes `"$1"` itself must write `"$2"` too.
+or close-on-merge runs `sh -c '<cmd> "$1" "$2" "$3"' forest-ticket <key> <status> <pr-url>`
+(`$3` is `""` without a PR); a command that writes `"$1"` itself must write
+`"$2"` and `"$3"` too.
 
 ## Contract
 
@@ -62,7 +63,10 @@ case in `parse_test.ts` if they're common to a whole tracker.
   Keys come from branch names and PR titles other people write.
 - **Read-only without `$2`.** One GET or one query. With `$2` (an action the
   user clicked), transition to exactly that status, check `$2` against the
-  tracker's own list, then print the ticket as usual. Never comment.
+  tracker's own list, then print the ticket as usual. Never comment. `$3` is
+  for trackers that want a PR link on close; check it matches
+  `https://github.com/*/pull/<n>` and build JSON with `jq --arg`, not by
+  pasting it into a string. Add it to the ticket's PR list; don't replace the list.
 - Keep the script in `~/.forest/`, not this repo: it is the user's setup and
   usually names a private host.
 

@@ -31,6 +31,7 @@ import type { PrsApi } from "./prs.ts";
 import type { TicketsApi } from "./tickets.ts";
 import { enc, type SseApi } from "./sse.ts";
 import type { WatcherApi } from "./watcher.ts";
+import type { AutoCloseApi } from "./autoclose.ts";
 import type { AutoRebaseApi } from "./autorebase.ts";
 import type { ActionsApi } from "./actions.ts";
 import type { StoreApi } from "./store.ts";
@@ -66,6 +67,7 @@ export function createRoutes(deps: {
   files: FilesApi;
   watcher: WatcherApi;
   autoRebase: AutoRebaseApi;
+  autoClose: AutoCloseApi;
   actions: ActionsApi;
   notify: NotifyApi;
   sse: SseApi;
@@ -88,6 +90,7 @@ export function createRoutes(deps: {
     files,
     watcher,
     autoRebase,
+    autoClose,
     actions,
     notify,
     sse,
@@ -387,6 +390,9 @@ export function createRoutes(deps: {
           case "/api/auto-rebase":
             await autoRebase.set(wt, !!b.enable);
             return json({ ok: true });
+          case "/api/auto-close":
+            await autoClose.set(wt, !!b.enable);
+            return json({ ok: true });
           case "/api/update-branch": {
             const repo = knownWorktrees.get(wt)!;
             const n = Number(b.number);
@@ -432,9 +438,15 @@ export function createRoutes(deps: {
           }
           case "/api/ticket": {
             const repo = repoByPath.get(knownWorktrees.get(wt)!)!;
-            const key = repo.worktrees.find((w) => w.path === wt)?.ticket?.key;
-            if (!key) throw new Error("no ticket");
-            await tickets.act(repo.path, repo.name, key, String(b.to));
+            const w = repo.worktrees.find((w) => w.path === wt);
+            if (!w?.ticket) throw new Error("no ticket");
+            await tickets.act(
+              repo.path,
+              repo.name,
+              w.ticket.key,
+              String(b.to),
+              w.pr?.url,
+            );
             break;
           }
           case "/api/pr-state": {

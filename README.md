@@ -170,11 +170,12 @@ field.
 
 Write tools:
 
-| tool              | kind        | params           | returns                |
-| ----------------- | ----------- | ---------------- | ---------------------- |
-| `set_auto_merge`  | write       | `wt`, `enable`   | `{ pr, autoMerge }`    |
-| `set_auto_rebase` | write       | `wt`, `enable`   | `{ wt, autoRebase }`   |
-| `remove_wts`      | destructive | `wts` (an array) | `{ removed, refused }` |
+| tool              | kind        | params           | returns                     |
+| ----------------- | ----------- | ---------------- | --------------------------- |
+| `set_auto_merge`  | write       | `wt`, `enable`   | `{ pr, autoMerge }`         |
+| `set_auto_rebase` | write       | `wt`, `enable`   | `{ wt, autoRebase }`        |
+| `set_auto_close`  | write       | `wt`, `enable`   | `{ wt, ticket, autoClose }` |
+| `remove_wts`      | destructive | `wts` (an array) | `{ removed, refused }`      |
 
 Worktree rows carry a slim `agents` list (`agent`, `id`, `title`, `seenAt`,
 `deep`), the coding agent sessions that mention them, most likely creator first.
@@ -216,6 +217,9 @@ has read a PR comment or a web page can be talked out of it.
   GitHub still waits for checks and reviews, so it is the reversible form of a
   merge.
 - `set_auto_rebase` toggles the same auto-rebase as the row's menu.
+- `set_auto_close` toggles close-ticket-on-merge (below). Turning it on refuses
+  a worktree without a ticket status; with no PR yet it waits for one, and on an
+  already-merged PR it closes the ticket right away.
 - `remove_wts` runs `git worktree remove` without `--force`, so branches and
   their commits stay. It skips, and lists under `refused`, the primary checkout,
   a worktree with uncommitted or untracked changes, one mid-rebase or mid-merge,
@@ -233,7 +237,11 @@ allow the write tools once and keep the prompt on `remove_wts`:
 ```json
 {
   "permissions": {
-    "allow": ["mcp__forest__set_auto_merge", "mcp__forest__set_auto_rebase"]
+    "allow": [
+      "mcp__forest__set_auto_merge",
+      "mcp__forest__set_auto_rebase",
+      "mcp__forest__set_auto_close"
+    ]
   }
 }
 ```
@@ -346,8 +354,14 @@ result rides the row as `ticket.info`.
 
 To move a ticket from its card, also print `"actions": ["done", "cancelled"]`:
 each becomes a "Mark done" button, which runs the same command with the status
-as `$2`, then re-reads the ticket. Forest only passes back a status the command
-itself offered.
+as `$2` and the worktree's PR URL (or `""`) as `$3`, then re-reads the ticket.
+Forest only passes back a status the command itself offered.
+
+"Close ROM-123 on merge" in an open PR's card (or the row's menu) moves the
+ticket to its first action that means done (`done`, `completed`, `closed`) once
+Forest sees the PR merge, then turns itself off. A ticket already done or
+canceled is left alone. A failure shows in the card until you toggle it again.
+The set of worktrees lives in `~/.forest/autoclose.json`.
 
 ```json
 { "ticketCmds": { "*": "~/.forest/jira-ticket.sh" } }

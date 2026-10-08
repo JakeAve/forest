@@ -65,6 +65,7 @@ export function worktree(over: Partial<Worktree> = {}): Worktree {
     pr: null,
     ticket: null,
     autoRebase: null,
+    autoClose: null,
     agents: [],
     ...over,
   };

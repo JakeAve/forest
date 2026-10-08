@@ -1805,3 +1805,14 @@ Deno.test("ticketInfo: actions drop the current status and anything unsafe for $
     ["done", "cancelled"],
   );
 });
+
+import { doneAction } from "./parse.ts";
+
+Deno.test("doneAction: first action whose word means done", () => {
+  const info = ticketInfo(JSON.stringify({
+    status: "todo",
+    actions: ["In Progress", "cancelled", "Done", "closed"],
+  }))!;
+  assertEquals(doneAction(info), "Done");
+  assertEquals(doneAction({ ...info, actions: ["cancelled"] }), null);
+});

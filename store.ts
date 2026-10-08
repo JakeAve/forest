@@ -3,6 +3,7 @@ import type { Stats } from "./stats.ts";
 import type { WtKey } from "./sessions.ts";
 import type {
   AgentSession,
+  AutoClose,
   AutoRebase,
   Pr,
   Procs,
@@ -28,6 +29,7 @@ export function createStore(
     prFor,
     ticket = () => null,
     autoRebase,
+    autoClose,
     prError = () => null,
     prListed,
     procs,
@@ -38,6 +40,7 @@ export function createStore(
     prFor: (repo: string, w: Worktree) => Pr | null;
     ticket?: (repo: Repo, w: Worktree) => Ticket | null;
     autoRebase?: (wt: string) => AutoRebase | null;
+    autoClose?: (wt: string) => AutoClose | null;
     prError?: (repo: string) => string | null;
     prListed?: (repo: string) => boolean;
     procs: () => Map<string, Procs>;
@@ -79,6 +82,7 @@ export function createStore(
           w.pr = prFor(r.path, w);
           w.ticket = ticket(r, w);
           w.autoRebase = autoRebase?.(w.path) ?? null;
+          w.autoClose = autoClose?.(w.path) ?? null;
           w.ports = []; // recomputed from scratch: publish() runs on live objects
           w.procs = [];
         }

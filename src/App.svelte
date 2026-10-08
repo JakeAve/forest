@@ -1240,6 +1240,8 @@ const updateBranch = (w, e) =>
   act("update-branch", { wt: w.path, number: w.pr.number }, "ub:" + w.path, e);
 const toggleAutoRebase = (w, e) =>
   act("auto-rebase", { wt: w.path, enable: !w.autoRebase }, "ar:" + w.path, e);
+const toggleAutoClose = (w, e) =>
+  act("auto-close", { wt: w.path, enable: !w.autoClose }, "ac:" + w.path, e);
 const toggleAutoMerge = (w, e) =>
   act(
     "auto-merge",
@@ -1663,6 +1665,12 @@ function wtItems(w, solo = false) {
       label: w.autoRebase ? "Disable auto-rebase" : "Enable auto-rebase",
       kbd: w === selWt && kbdOf("auto-rebase"),
       fn: (e) => toggleAutoRebase(w, e),
+    },
+    !many && w.ticket?.info && (w.autoClose || w.pr?.state === "OPEN") && {
+      label: w.autoClose
+        ? "Don't close ticket on merge"
+        : "Close ticket on merge",
+      fn: (e) => toggleAutoClose(w, e),
     },
     ...(many ? [] : prActions(w).map((a) => ({
       label: a.confirm ? `${a.menu}…` : a.menu,
@@ -3214,6 +3222,13 @@ async function confirmDiscard() {
           </label>
           {#if w.autoRebase?.error}
             <div class="r bad">{w.autoRebase.error}</div>
+          {/if}
+          {#if w.ticket?.info}
+            <label class="r">
+              <input type="checkbox" class="cbxin" checked={!!w.autoClose} disabled={busy["ac:" + w.path]}
+                     onchange={(e) => toggleAutoClose(w, e)}>
+              <span class="cbx" class:on={!!w.autoClose}></span>Close {w.ticket.key} on merge
+            </label>
           {/if}
         </section>
       {/if}

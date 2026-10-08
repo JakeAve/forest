@@ -7,7 +7,13 @@ const RETRY_MS = 600_000;
 
 export type TicketsApi = {
   info(repo: string, name: string, key: string): TicketInfo | null;
-  act(repo: string, name: string, key: string, to: string): Promise<void>;
+  act(
+    repo: string,
+    name: string,
+    key: string,
+    to: string,
+    pr?: string,
+  ): Promise<void>;
 };
 
 // Status from the user's own ticket command (settings.ticketCmds, `$1` is the
@@ -70,9 +76,10 @@ export function createTickets(
       }
       return cache.get(key)?.info ?? null;
     },
-    // Moves the ticket with the same command, the target status as $2; only
-    // to a status the command itself last offered.
-    async act(repo, name, key, to) {
+    // Moves the ticket with the same command, the target status as $2 and
+    // the worktree's PR URL (or "") as $3; only to a status the command
+    // itself last offered.
+    async act(repo, name, key, to, pr = "") {
       const cmd = cmdFor(name);
       if (!cmd || !cache.get(key)?.info?.actions.includes(to)) {
         throw new Error(`not an action for ${key}: ${to}`);
@@ -80,10 +87,11 @@ export function createTickets(
       await sh.exec(repo, [
         "sh",
         "-c",
-        cmd.includes("$1") ? cmd : `${cmd} "$1" "$2"`,
+        cmd.includes("$1") ? cmd : `${cmd} "$1" "$2" "$3"`,
         "forest-ticket",
         key,
         to,
+        pr,
       ]);
       await fetch(repo, name, key, cmd);
     },

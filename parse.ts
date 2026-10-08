@@ -242,6 +242,12 @@ export function ticketInfo(out: string): TicketInfo | null {
   };
 }
 
+/** The action that closes a ticket: the first whose word maps to done. */
+export const doneAction = (info: TicketInfo) =>
+  info.actions.find((a) =>
+    CATEGORY[a.toLowerCase().replace(/ /g, "_")] === "done"
+  ) ?? null;
+
 /** First ticket key in `texts`: `#n` links to the repo's own issues, a tracker
  *  key through `tpl` ({key}), or stays unlinked rather than guess a tracker.
  *  ponytail: `utf-8` or `v2-3` in a branch would read as a key; narrow TICKET_RE
