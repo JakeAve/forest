@@ -13,6 +13,9 @@ vars through `resolveTheme` in `src/theme.js`; the mapping lives in its `CHAINS`
 
 - Never write a literal color, `rgba()`, or named color in `.svelte`/`.css`. Use a var, or
   `color-mix(in srgb, var(--x) N%, var(--y))` for a tint.
+- Text has four steps: `--fg`, `--mid` (derived halfway to `--dim`, for row metadata
+  such as ports, active, changes, sync), `--dim`, `--dimmer`. `--mid` follows the theme
+  on its own, so it has no chain.
 - Never use `opacity` to make text secondary. Use `--dim` / `--dimmer`; opacity breaks
   contrast on themes where the surfaces are already at the extremes.
 - Surfaces are `SURFACES` in `src/theme.js`: `--bg --bg2 --bg3 --input --hl --hov`.

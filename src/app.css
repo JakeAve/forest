@@ -6,6 +6,7 @@
   --fg: #c9d3e0;
   --dim: #6b7787;
   --dimmer: #4a5461;
+  --mid: color-mix(in srgb, var(--fg) 50%, var(--dim));
   --acc: #7dd3a0;
   --mark2: color-mix(in srgb, var(--acc) 62%, var(--bg));
   --hl: #2a3546;

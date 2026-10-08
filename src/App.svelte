@@ -2834,7 +2834,7 @@ async function confirmDiscard() {
                 title="{s.sinceLabel} for {ago(s.since)}">{#if s.glyph}<svg class="g" viewBox="0 0 16 16">{@html GLYPH[s.glyph]}</svg>{/if}{s.label.toLowerCase()}{s.since ? ` ${ago(s.since)}` : ""}</span></a>{:else if
               w.autoRebase}<span class="port ar" class:err={w.autoRebase.error}
                 title={w.autoRebase.error ?? "auto-rebase on"}><svg class="g ar" viewBox="0 0 16 16">{@html AR_ICON}</svg></span>{/if}{:else if
-            col.key === "changes"}{#if w.dirty}<span data-tone="off">●{w.dirty}</span>{/if}{:else if
+            col.key === "changes"}{#if w.dirty}<span>●{w.dirty}</span>{/if}{:else if
             col.key === "sync"}{@const ab = prAb(w)}{#if ab.ahead || ab.behind}<span data-tone={ab.behind > 0 ? "warn" : undefined}
                 title={w.pr?.state === "OPEN"
                   ? `${ab.behind} behind ${w.pr.baseRefName}, ${ab.ahead} ahead${
@@ -4431,7 +4431,7 @@ select.theme {
   gap: 1ch;
 }
 .wt .pts a {
-  color: var(--dim);
+  color: var(--mid);
   counter-increment: more -1;
 }
 .wt .pts .more {
@@ -4511,10 +4511,7 @@ select.theme {
 .wt [data-col="sync"],
 .wt [data-col="active"] {
   font: 0.6875rem var(--mono);
-  color: var(--dim);
-}
-.wt [data-col="active"] {
-  color: var(--dimmer);
+  color: var(--mid);
 }
 .wt.done .c,
 .wt.done .c * {
