@@ -234,7 +234,7 @@ export function createTools(deps: {
     },
     link: {
       desc:
-        "A forest URL that opens a worktree, optionally at a file and line.",
+        "A forest URL that opens a worktree's diff, optionally at a file and line. Give the user this instead of git diff output.",
       input: {
         wt: z.string(),
         file: z.string().optional(),
@@ -401,7 +401,10 @@ export function createTools(deps: {
   });
 
   function buildMcp() {
-    const mcp = new McpServer({ name: "forest", version: "0" });
+    const mcp = new McpServer({ name: "forest", version: "0" }, {
+      instructions:
+        "To show the user a diff or a file, call link (wt, file, line, base=branch) and give them the URL instead of pasting git diff output.",
+    });
     for (const [name, tool] of Object.entries(tools)) {
       mcp.registerTool(
         name,
