@@ -1549,6 +1549,8 @@ const AM_ICON =
   '<path d="M1.896 4.559a6.25 6.25 0 0 1 8.839 0 .75.75 0 0 1-1.06 1.061 4.75 4.75 0 1 0 0 6.717L13.03 8.98l-1.553-1.554A.25.25 0 0 1 11.654 7h4.096a.25.25 0 0 1 .25.25v4.096a.25.25 0 0 1-.427.177l-1.482-1.482-3.356 3.356a6.25 6.25 0 0 1-8.839-8.838Z" fill="currentColor" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"/>';
 const AR_ICON =
   '<path d="M1.705 8.005a.75.75 0 0 1 .834.656 5.5 5.5 0 0 0 9.592 2.97l-1.204-1.204a.25.25 0 0 1 .177-.427h3.646a.25.25 0 0 1 .25.25v3.646a.25.25 0 0 1-.427.177l-1.38-1.38A7.002 7.002 0 0 1 1.05 8.84a.75.75 0 0 1 .656-.834ZM8 2.5a5.487 5.487 0 0 0-4.131 1.869l1.204 1.204A.25.25 0 0 1 4.896 6H1.25A.25.25 0 0 1 1 5.75V2.104a.25.25 0 0 1 .427-.177l1.38 1.38A7.002 7.002 0 0 1 14.95 7.16a.75.75 0 0 1-1.49.178A5.5 5.5 0 0 0 8 2.5Z" fill="currentColor" stroke="currentColor" stroke-width="0.6" stroke-linejoin="round"/>';
+const AC_ICON =
+  '<path d="M11.28 6.78a.75.75 0 0 0-1.06-1.06L7.25 8.69 5.78 7.22a.75.75 0 0 0-1.06 1.06l2 2a.75.75 0 0 0 1.06 0l3.5-3.5ZM16 8A8 8 0 1 1 0 8a8 8 0 0 1 16 0Zm-1.5 0a6.5 6.5 0 1 0-13 0 6.5 6.5 0 0 0 13 0Z" fill="currentColor"/>';
 const GLYPH = {
   conflict:
     '<path d="M8.87 1.5a1 1 0 0 0-1.74 0L.75 12.5A1 1 0 0 0 1.62 14h12.76a1 1 0 0 0 .87-1.5ZM7 6h2v3.5H7Zm1 6.25a1.1 1.1 0 1 1 0-2.2 1.1 1.1 0 0 1 0 2.2Z" fill="currentColor" fill-rule="evenodd"/>',
@@ -2810,9 +2812,10 @@ async function confirmDiscard() {
             col.key === "title"}{w.pr?.title || w.branch}{:else if
             col.key === "ticket"}{#if w.ticket}{@const ti = w.ticket.info}<a href={w.ticket.url} target="_blank" rel="noreferrer"
                 class="tkl" aria-haspopup={ti ? "dialog" : undefined}
-                aria-label={ti ? `${w.ticket.key}, ${ti.status}: ${ti.title}` : undefined}
+                aria-label={ti ? `${w.ticket.key}, ${ti.status}${w.autoClose ? ", closes on merge" : ""}: ${ti.title}` : undefined}
                 title={ti ? "⌘-click to open the ticket" : `open ticket ${w.ticket.key}`}
                 onclick={(e) => ti ? openCard(w, e, "ticket") : e.stopPropagation()}>{#if
+                w.autoClose}<svg class="g ac" class:err={w.autoClose.error} viewBox="0 0 16 16">{@html AC_ICON}</svg>{/if}{#if
                 ti?.category}<span class="tkd" data-cat={ti.category}></span>{/if}{w.ticket.key}</a>{/if}{:else if
             col.key === "pr"}{#if w.pr}{@const s = prStatus(w.pr)}<a
                 class="prl" href={w.pr.url}
@@ -3156,6 +3159,18 @@ async function confirmDiscard() {
             <button class="btn" disabled={busy["tk:" + cardWt.path]}
                     onclick={(e) => act("ticket", { wt: cardWt.path, to }, "tk:" + cardWt.path, e)}>Mark {to.replace(/_/g, " ")}</button>
           {/each}
+        </section>
+      {/if}
+      {#if cardWt.autoClose || cardWt.pr?.state === "OPEN"}
+        <section>
+          <label class="r">
+            <input type="checkbox" class="cbxin" checked={!!cardWt.autoClose} disabled={busy["ac:" + cardWt.path]}
+                   onchange={(e) => toggleAutoClose(cardWt, e)}>
+            <span class="cbx" class:on={!!cardWt.autoClose}></span>Close {t.key} on merge
+          </label>
+          {#if cardWt.autoClose?.error}
+            <div class="r bad">{cardWt.autoClose.error}</div>
+          {/if}
         </section>
       {/if}
       <section class="foot">
@@ -4649,6 +4664,7 @@ select.theme {
   height: 10px;
 }
 .g.ar.err,
+.g.ac.err,
 .port.ar.err {
   color: var(--danger);
 }
