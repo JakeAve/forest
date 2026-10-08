@@ -348,6 +348,17 @@ Deno.test("set_auto_merge needs an open PR", async () => {
   );
 });
 
+Deno.test("set_auto_merge off on a merged PR is a no-op", async () => {
+  const pr = { number: 7, state: "MERGED" } as Pr;
+  const t = make([
+    mkRepo({ worktrees: [worktree({ path: "/r/forest", pr })] }),
+  ]);
+  assertEquals(
+    await t.callTool("set_auto_merge", { wt: "/r/forest", enable: false }),
+    { pr: 7, autoMerge: false },
+  );
+});
+
 Deno.test("set_auto_close needs a ticket status to enable, never a PR or to disable", async () => {
   const info = {
     title: "",

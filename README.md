@@ -155,9 +155,9 @@ is any unique substring of a branch or repo name (or a full path), and an
 ambiguous one comes back as an error listing the candidates (`repo`, `branch`,
 `path`) (a 400 over `/api/t/`, a tool error over MCP). `wt` also accepts any
 path inside a worktree, `~/…` included. `q` is looser: it fuzzy-matches like the
-UI filters (branch and repo name for `wts`, file path for `files`), and wrapped
-in `/slashes/` it is a case-insensitive regex, with `^`/`$` anchoring each
-field.
+UI filters (branch, repo, ticket key and `#PR` for `wts`, plus a substring of an
+agent session title or id; file path for `files`), and wrapped in `/slashes/` it
+is a case-insensitive regex, with `^`/`$` anchoring each field.
 
 | tool       | params                                  | returns                    |
 | ---------- | --------------------------------------- | -------------------------- |
@@ -232,11 +232,14 @@ has read a PR comment or a web page can be talked out of it.
 
 - `set_auto_merge` toggles GitHub auto-merge (squash) on a worktree's open PR.
   GitHub still waits for checks and reviews, so it is the reversible form of a
-  merge.
+  merge. Turning it off on a PR that already merged or closed is a no-op, not an
+  error.
 - `set_auto_rebase` toggles the same auto-rebase as the row's menu.
 - `set_auto_close` toggles close-ticket-on-merge (below). Turning it on refuses
   a worktree without a ticket status; with no PR yet it waits for one, and on an
-  already-merged PR it closes the ticket right away.
+  already-merged PR it closes the ticket right away. It holds while another
+  worktree on the same ticket key has an open PR, so a ticket split across PRs
+  closes when the last one merges.
 - `remove_wts` runs `git worktree remove` without `--force`, so branches and
   their commits stay. It skips, and lists under `refused`, the primary checkout,
   a worktree with uncommitted or untracked changes, one mid-rebase or mid-merge,
