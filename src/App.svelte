@@ -2819,7 +2819,7 @@ async function confirmDiscard() {
                 aria-label={ti ? `${w.ticket.key}, ${ti.status}${w.autoClose ? ", closes on merge" : ""}: ${ti.title}` : undefined}
                 title={ti ? "⌘-click to open the ticket" : `open ticket ${w.ticket.key}`}
                 onclick={(e) => ti ? openCard(w, e, "ticket") : e.stopPropagation()}>{#if
-                w.autoClose}<svg class="g ac" class:err={w.autoClose.error} viewBox="0 0 16 16">{@html AC_ICON}</svg>{/if}{#if
+                w.autoClose}<svg class="g ac" data-tone={w.autoClose.error ? "bad" : "done"} viewBox="0 0 16 16">{@html AC_ICON}</svg>{/if}{#if
                 ti?.category}<span class="tkd" data-tone={TICKET_ST[ti.category] ?? "off"}></span>{/if}{w.ticket.key}</a>{/if}{:else if
             col.key === "pr"}{#if w.pr}{@const s = prStatus(w.pr)}<a
                 class="prl" href={w.pr.url}
@@ -4615,7 +4615,6 @@ select.theme {
   height: 10px;
 }
 .g.ar.err,
-.g.ac.err,
 .port.ar.err {
   color: var(--danger);
 }

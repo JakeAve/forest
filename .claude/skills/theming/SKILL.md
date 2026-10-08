@@ -82,6 +82,7 @@ you do.
 | Glyph | Means |
 |---|---|
 | `✓` | passed, approved |
+| `AC_ICON` | closes the ticket on merge; tone `done`, `bad` on error |
 | `✕` | failed (text, or `GLYPH.fail` as SVG) |
 | `!` | changes requested |
 | `.spin` | running, pending (takes `--tone` from its parent) |
