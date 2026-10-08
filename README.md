@@ -155,7 +155,8 @@ is any unique substring of a branch or repo name (or a full path), and an
 ambiguous one comes back as an error listing the candidates (`repo`, `branch`,
 `path`) (a 400 over `/api/t/`, a tool error over MCP). `wt` also accepts any
 path inside a worktree, `~/…` included. `q` is looser: it fuzzy-matches like the
-UI filters (branch and repo name for `wts`, file path for `files`), and wrapped
+UI filters (branch, repo, ticket key and `#PR` for `wts`, plus a substring of an
+agent session title or id; file path for `files`), and wrapped
 in `/slashes/` it is a case-insensitive regex, with `^`/`$` anchoring each
 field.
 

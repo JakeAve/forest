@@ -8,6 +8,8 @@ import {
   parseQuery,
   pathText,
   rank,
+  rankBy,
+  wtScore,
 } from "./src/filter.js";
 
 const wt = (o = {}) => ({ branch: "jake/rom-1", dirty: 0, ports: [], ...o });
@@ -135,4 +137,34 @@ Deno.test("findAll: regex per line, zero-width hits dropped", () => {
   assertEquals(findAll("/^a/", "ab\nxa\nab"), [[0, 1], [6, 7]]);
   assertEquals(findAll("/^/", "ab\ncd"), []);
   assertEquals(findAll("/a(/", "a("), []);
+});
+
+Deno.test("matchWt: ticket key and PR number", () => {
+  const w = wt({
+    branch: "fix",
+    ticket: { key: "ROM-4321" },
+    pr: { number: 88 },
+  });
+  assertEquals(matchWt({ q: "rom-4321" }, "edward", w), true);
+  assertEquals(matchWt({ q: "#88" }, "edward", w), true);
+  assertEquals(matchWt({ q: "/^#88$/" }, "edward", w), true);
+});
+
+Deno.test("matchWt: session title and id match as substrings only", () => {
+  const w = wt({
+    agents: [{ agent: "codex", id: "019a-beef", title: "Tidy the palette" }],
+  });
+  assertEquals(matchWt({ q: "the pal" }, "edward", w), true);
+  assertEquals(matchWt({ q: "BEEF" }, "edward", w), true);
+  assertEquals(matchWt({ q: "/^tidy/" }, "edward", w), true);
+  assertEquals(matchWt({ q: "tdyplt" }, "edward", w), false);
+});
+
+Deno.test("wtScore: session-only hits rank after fuzzy hits", () => {
+  const a = wt({ agents: [{ id: "x", title: "palette work" }] });
+  const b = wt({ branch: "jake/palette" });
+  assertEquals(
+    rankBy([a, b], 50, (w: typeof a) => wtScore("palette", w)),
+    [b, a],
+  );
 });

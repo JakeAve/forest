@@ -5,7 +5,14 @@ import FilterInput from "./FilterInput.svelte";
 import Palette from "./Palette.svelte";
 import Shortcuts from "./Shortcuts.svelte";
 import Hex from "./Hex.svelte";
-import { matchPath, matchWt, pathText, rank, wtText } from "./filter.js";
+import {
+  matchPath,
+  matchWt,
+  pathText,
+  rank,
+  rankBy,
+  wtScore,
+} from "./filter.js";
 import {
   ancestorDirs,
   bucket,
@@ -2456,7 +2463,7 @@ const paletteItems = $derived.by(() => {
       ...cmd("Filter branches…"),
       query: () => q,
       onquery: (v) => (q = v),
-      sub: () => rank(q, shownWts, 50, wtText).map(wtItem),
+      sub: () => rankBy(shownWts, 50, (w) => wtScore(q, w)).map(wtItem),
     },
     ...(sel
       ? [{

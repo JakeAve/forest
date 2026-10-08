@@ -5,11 +5,27 @@ export function matchWt(
 ) {
   return (!dirtyOnly || w.dirty > 0) &&
     (!runningOnly || (w.ports?.length ?? 0) > 0) &&
-    matcher(q)(wtText(w, repoName)) !== null;
+    wtScore(q, w, repoName) !== null;
 }
 
 export const wtText = (w, repoName = w.repo) =>
-  `${w.branch}\n${repoName ?? ""}`;
+  [w.branch, repoName, w.ticket?.key, w.pr && `#${w.pr.number}`]
+    .filter(Boolean).join("\n");
+
+const agentText = (w) =>
+  (w.agents ?? []).map((a) => `${a.title}\n${a.id}`).join("\n");
+
+// Session titles and ids are long, so they match as a substring, not fuzzily.
+function inAgents(q, w) {
+  const { text, re } = parseQuery(q);
+  const t = agentText(w);
+  return re
+    ? re.test(t)
+    : !!text && t.toLowerCase().includes(text.toLowerCase());
+}
+
+export const wtScore = (q, w, repoName = w.repo) =>
+  matcher(q)(wtText(w, repoName)) ?? (inAgents(q, w) ? 0 : null);
 
 export const pathText = (p) => `${p.slice(p.lastIndexOf("/") + 1)}\n${p}`;
 
@@ -68,8 +84,12 @@ export function rank(
   text = (item) => `${item.label}\n${item.detail ?? ""}`,
 ) {
   const match = matcher(q);
+  return rankBy(items, limit, (item) => match(text(item)));
+}
+
+export function rankBy(items, limit, score) {
   return items
-    .map((item, i) => ({ item, i, score: match(text(item)) }))
+    .map((item, i) => ({ item, i, score: score(item) }))
     .filter(({ score }) => score !== null)
     .sort((a, b) => b.score - a.score || a.i - b.i)
     .slice(0, limit)

@@ -120,7 +120,7 @@ export function createTools(deps: {
     },
     wts: {
       desc:
-        "Worktrees, newest activity first; q fuzzy-matches branch and repo name, or is a regex when wrapped in /slashes/.",
+        "Worktrees, newest activity first; q fuzzy-matches branch, repo, ticket key and #PR number, or is a substring of an agent session title or id, or is a regex when wrapped in /slashes/.",
       input: {
         q: z.string().optional(),
         dirty: qbool.optional(),
