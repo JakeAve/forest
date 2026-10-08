@@ -146,6 +146,24 @@ Deno.test("PR branch: update-branch when behind base, ff once the remote moves, 
   assertEquals(unpushed.calls(), []);
 });
 
+Deno.test("update-branch failing because the PR merged meanwhile is not a failure", async () => {
+  const t = make({ pr: OPEN_PR, remote: "feat" }, {
+    "git rev-list --left-right --count origin/feat...HEAD": "0\t0\n",
+  });
+  const w = t.store.byPath.get("/r/forest")!.worktrees[0];
+  t.deps.prs.refreshOnePr = (_r, n) => {
+    t.refreshed.push(n);
+    w.pr = { number: 7, state: "MERGED" } as Pr;
+    return Promise.resolve();
+  };
+  await t.api.set(WT, true);
+  await t.api.tick();
+  assertEquals(t.refreshed, [7]);
+  assertEquals(t.api.status(WT), { on: true, error: null });
+  await t.api.tick();
+  assertEquals(t.api.status(WT), null);
+});
+
 Deno.test("a merged PR turns auto-rebase off without touching git", async () => {
   const t = make({ pr: { number: 7, state: "MERGED" } as Pr, dirty: 1 });
   await t.api.set(WT, true);

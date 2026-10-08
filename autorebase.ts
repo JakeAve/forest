@@ -17,7 +17,7 @@ export type AutoRebaseApi = {
 // is updated on GitHub (update-branch merges base into it) and fast-forwarded
 // locally once that lands; any other branch is rebased locally and never
 // pushed. A failure is remembered against the base sha it failed on, so a
-// conflict is retried only once base moves again. A merged PR switches it off.
+// conflict is retried only once base moves again. A merged PR switches it off, even one that merged mid-tick.
 export function createAutoRebase(
   { sh, store, prs, path, afterMutation, log }: {
     sh: Pick<Shell, "git" | "exec">;
@@ -123,6 +123,11 @@ export function createAutoRebase(
         moved = true;
         log({ type: "autoRebase", wt, action });
       } catch (e) {
+        // GitHub deletes a merged PR's branch before the next PR poll says so
+        if (w.pr?.state === "OPEN") {
+          await prs.refreshOnePr(repo, w.pr.number).catch(() => {});
+          if (row(wt)?.pr?.state !== "OPEN") continue;
+        }
         const error = (e as Error).message;
         failed.set(wt, { sha, error });
         changed = true;

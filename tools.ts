@@ -309,6 +309,9 @@ export function createTools(deps: {
       input: { wt: z.string(), enable: qbool },
       run: async (a) => {
         const w = resolveWt(String(a.wt));
+        if (w.pr && !a.enable && w.pr.state !== "OPEN") {
+          return { pr: w.pr.number, autoMerge: false };
+        }
         if (w.pr?.state !== "OPEN") throw new ToolError("no open PR");
         await actions.autoMerge(w.path, w.pr.number, a.enable as boolean);
         return { pr: w.pr.number, autoMerge: a.enable };

@@ -22,7 +22,20 @@ export function createActions(
         enable
           ? ["gh", "pr", "merge", String(n), "--auto", "--squash"]
           : ["gh", "pr", "merge", String(n), "--disable-auto"],
-      );
+      ).catch(async (e) => {
+        // a merged or closed PR has no auto-merge left to turn off
+        const state = await exec(wt, [
+          "gh",
+          "pr",
+          "view",
+          String(n),
+          "--json",
+          "state",
+          "-q",
+          ".state",
+        ]).catch(() => "OPEN");
+        if (enable || state.trim() === "OPEN") throw e;
+      });
       await prs.refreshOnePr(repo, n).catch(() => {});
       prs.refreshPrSoon(repo, n);
       // the merge lands on the remote, not locally: fetch so ahead/behind

@@ -551,3 +551,28 @@ Deno.test("POST /api/t/set_auto_merge enables squash auto-merge on the open PR a
     out: { pr: 7, autoMerge: true },
   }]);
 });
+
+Deno.test("POST /api/t/set_auto_merge off: a PR GitHub says merged is a no-op, an open one still errors", async () => {
+  const run = async (state: string) => {
+    const { routes } = make({
+      table: {
+        "gh pr view 7 --json state -q .state": `${state}\n`,
+        "git fetch origin": "",
+      },
+      worktrees: [
+        worktree({
+          path: "/r/forest-feat",
+          branch: "feat",
+          pr: { number: 7, url: "u", state: "OPEN" } as Worktree["pr"],
+        }),
+      ],
+    });
+    const res = await routes(
+      post("/api/t/set_auto_merge", { wt: "feat", enable: false }),
+      LOCAL,
+    );
+    return [res.status, await res.json()];
+  };
+  assertEquals(await run("MERGED"), [200, { pr: 7, autoMerge: false }]);
+  assertEquals((await run("OPEN"))[0] !== 200, true);
+});

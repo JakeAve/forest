@@ -156,9 +156,8 @@ ambiguous one comes back as an error listing the candidates (`repo`, `branch`,
 `path`) (a 400 over `/api/t/`, a tool error over MCP). `wt` also accepts any
 path inside a worktree, `~/…` included. `q` is looser: it fuzzy-matches like the
 UI filters (branch, repo, ticket key and `#PR` for `wts`, plus a substring of an
-agent session title or id; file path for `files`), and wrapped
-in `/slashes/` it is a case-insensitive regex, with `^`/`$` anchoring each
-field.
+agent session title or id; file path for `files`), and wrapped in `/slashes/` it
+is a case-insensitive regex, with `^`/`$` anchoring each field.
 
 | tool       | params                                  | returns                    |
 | ---------- | --------------------------------------- | -------------------------- |
@@ -233,7 +232,8 @@ has read a PR comment or a web page can be talked out of it.
 
 - `set_auto_merge` toggles GitHub auto-merge (squash) on a worktree's open PR.
   GitHub still waits for checks and reviews, so it is the reversible form of a
-  merge.
+  merge. Turning it off on a PR that already merged or closed is a no-op, not an
+  error.
 - `set_auto_rebase` toggles the same auto-rebase as the row's menu.
 - `set_auto_close` toggles close-ticket-on-merge (below). Turning it on refuses
   a worktree without a ticket status; with no PR yet it waits for one, and on an
