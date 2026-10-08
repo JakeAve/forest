@@ -1371,9 +1371,30 @@ let menuReturn = null;
 let opened = $state(null); // the agent session just resumed, for its toast
 let openedT;
 
+// The outside-pointerdown that closes a popover fires before the click on the
+// button that opened it, which would reopen it; remember that button so the
+// click toggles instead.
+let opener = null;
+let closedBy = null;
+function noteOutside(ev) {
+  if (!opener?.contains(ev.target)) return;
+  closedBy = opener;
+  addEventListener("pointerup", () => setTimeout(() => (closedBy = null)), {
+    once: true,
+    capture: true,
+  });
+}
+function reopens(e) {
+  const same = e.type === "click" && closedBy === e.currentTarget;
+  closedBy = null;
+  opener = e.type === "click" ? e.currentTarget : null;
+  return same;
+}
+
 async function openMenu(e, items, viaKey) {
   e.preventDefault();
   e.stopPropagation();
+  if (reopens(e)) return;
   if (card) hideCard();
   const box = e.currentTarget.getBoundingClientRect();
   menuReturn = viaKey ? e.currentTarget : null;
@@ -1424,7 +1445,11 @@ function hideMenu() {
 
 $effect(() => {
   if (!menu) return;
-  const onDown = (ev) => !menuEl?.contains(ev.target) && hideMenu();
+  const onDown = (ev) => {
+    if (menuEl?.contains(ev.target)) return;
+    noteOutside(ev);
+    hideMenu();
+  };
   const onKey = (ev) => (ev.key === "Escape" ? hideMenu() : menuNav(ev));
   addEventListener("pointerdown", onDown, true);
   addEventListener("keydown", onKey, true);
@@ -1487,6 +1512,7 @@ async function openCard(w, e, kind = "pr") {
   e.stopPropagation();
   if (e.metaKey || e.ctrlKey || e.shiftKey) return;
   e.preventDefault();
+  if (reopens(e)) return;
   if (menu) hideMenu();
   const box = e.currentTarget.getBoundingClientRect();
   cardReturn = e.detail === 0 ? e.currentTarget : null;
@@ -1519,7 +1545,11 @@ function hideCard() {
 
 $effect(() => {
   if (!card) return;
-  const outside = (ev) => !cardEl?.contains(ev.target) && hideCard();
+  const outside = (ev) => {
+    if (cardEl?.contains(ev.target)) return;
+    if (ev.type === "pointerdown") noteOutside(ev);
+    hideCard();
+  };
   const onKey = (ev) => ev.key === "Escape" && hideCard();
   addEventListener("pointerdown", outside, true);
   addEventListener("keydown", onKey, true);
