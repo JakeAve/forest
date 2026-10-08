@@ -933,7 +933,7 @@ export function prCard(d: Gql): PrCard {
 }
 
 export type PrStatus = {
-  tone: "ok" | "bad" | "warn" | "review" | "draft" | "merged" | "closed";
+  tone: "ok" | "warn" | "bad" | "ask" | "done" | "off";
   glyph: "" | "conflict" | "fail" | "changes" | "behind";
   label: string;
   weight: "loud" | "quiet";
@@ -962,7 +962,7 @@ export function prStatus(pr: {
   const open = at(pr.stateSince, "open");
   if (pr.state === "MERGED") {
     return {
-      tone: "merged",
+      tone: "done",
       glyph: "",
       label: "Merged",
       weight: "quiet",
@@ -971,7 +971,7 @@ export function prStatus(pr: {
   }
   if (pr.state === "CLOSED") {
     return {
-      tone: "closed",
+      tone: "off",
       glyph: "",
       label: "Closed",
       weight: "quiet",
@@ -980,7 +980,7 @@ export function prStatus(pr: {
   }
   if (pr.isDraft || pr.mergeState === "DRAFT") {
     return {
-      tone: "draft",
+      tone: "off",
       glyph: "",
       label: "Draft",
       weight: "quiet",
@@ -1036,7 +1036,7 @@ export function prStatus(pr: {
   }
   if (pr.reviewDecision === "REVIEW_REQUIRED") {
     return {
-      tone: "review",
+      tone: "ask",
       glyph: "",
       label: "Needs review",
       weight: "loud",
@@ -1103,7 +1103,7 @@ const SUMMARY: [(s: PrStatus) => boolean, string][] = [
   [(s) => s.glyph === "fail", "failing"],
   [(s) => s.glyph === "conflict", "conflicts"],
   [(s) => s.glyph === "changes", "changes requested"],
-  [(s) => s.tone === "review", "in review"],
+  [(s) => s.tone === "ask", "in review"],
   [(s) => s.tone === "ok", "ready"],
 ];
 

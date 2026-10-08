@@ -1212,9 +1212,9 @@ Deno.test("prStatus: the next blocker wins, in fix order", () => {
     const { tone, glyph, label, since } = prStatus({ ...base, ...o });
     return [tone, glyph, label, since];
   };
-  assertEquals(st({ state: "MERGED" }), ["merged", "", "Merged", 1]);
-  assertEquals(st({ state: "CLOSED" }), ["closed", "", "Closed", 1]);
-  assertEquals(st({ isDraft: true }), ["draft", "", "Draft", 1]);
+  assertEquals(st({ state: "MERGED" }), ["done", "", "Merged", 1]);
+  assertEquals(st({ state: "CLOSED" }), ["off", "", "Closed", 1]);
+  assertEquals(st({ isDraft: true }), ["off", "", "Draft", 1]);
   assertEquals(st({ mergeable: "CONFLICTING" }), [
     "bad",
     "conflict",
@@ -1257,7 +1257,7 @@ Deno.test("prStatus: the next blocker wins, in fix order", () => {
     "Behind base",
     1,
   ]);
-  assertEquals(st({}), ["review", "", "Needs review", 1]);
+  assertEquals(st({}), ["ask", "", "Needs review", 1]);
   assertEquals(st({ reviewDecision: "APPROVED" }), [
     "warn",
     "",

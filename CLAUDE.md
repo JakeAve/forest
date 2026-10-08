@@ -35,7 +35,9 @@ deno task setup                # git hooks run check + test on commit/push
   wiring only.
 - Filters (UI, palette, agent `q`) match through `fuzzy`/`rank` in
   `src/filter.js`. `selectWt` stays substring so a `wt` selector is precise.
-- Colors and CSS vars: follow the `theming` skill in `.claude/skills/`.
+- Colors, CSS vars, status tones, shades and glyphs: follow the `theming` skill
+  in `.claude/skills/`. It is the design language; read it before adding any
+  color, tint or status glyph.
 - Ticket status comes from a user-owned command (`ticketCmds`); writing one or
   touching `tickets.ts` follows the `ticket-command` skill in `.claude/skills/`.
 - Panes are one flat grid in `App.svelte`; each layout in `AXES`/`LAYOUTS` is a

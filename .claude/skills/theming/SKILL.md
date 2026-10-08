@@ -13,6 +13,9 @@ vars through `resolveTheme` in `src/theme.js`; the mapping lives in its `CHAINS`
 
 - Never write a literal color, `rgba()`, or named color in `.svelte`/`.css`. Use a var, or
   `color-mix(in srgb, var(--x) N%, var(--y))` for a tint.
+- Text has four steps: `--fg`, `--mid` (derived halfway to `--dim`, for row metadata
+  such as ports, active, changes, sync), `--dim`, `--dimmer`. `--mid` follows the theme
+  on its own, so it has no chain.
 - Never use `opacity` to make text secondary. Use `--dim` / `--dimmer`; opacity breaks
   contrast on themes where the surfaces are already at the extremes.
 - Surfaces are `SURFACES` in `src/theme.js`: `--bg --bg2 --bg3 --input --hl --hov`.
@@ -28,6 +31,79 @@ vars through `resolveTheme` in `src/theme.js`; the mapping lives in its `CHAINS`
   absent) becomes `shift(--bg, 0.08)`, so borders stay hairlines.
 - Agent badges use `--agent-a`/`--agent-b`, named by `tone` in `PROVIDERS` (`agents.ts`).
   A new provider takes one of these or a new `--agent-*` var, never a `--tk-*` one.
+
+## Status tones
+
+A status says two things: what it means (tone) and how loud it is (weight). `data-tone`
+sets `--tone` and the text color. A `t-*` class from `app.css` sets the weight. Both are
+defined once in `app.css`, and `theme_test.ts` fails if a component maps a tone itself.
+
+| Tone | Var | Means |
+|---|---|---|
+| `ok` | `--acc` | ready, passed, approved, in progress |
+| `warn` | `--warn` | running, pending, dirty, behind |
+| `bad` | `--danger` | failing, conflicts, changes requested, errors |
+| `ask` | `--fg` | waiting on a person (needs review) |
+| `done` | `--merged` | merged, ticket done |
+| `off` | `--dim` | draft, closed, skipped, canceled, quiet |
+
+| Weight | Class | Use |
+|---|---|---|
+| text | (none) | inline in cards and lists, and quiet row statuses |
+| pill | `t-pill` | loud status in a row |
+| edge | `t-edge` | status label in a card header |
+| solid | `t-solid` | the PR number chip |
+| band | `t-band` | banners |
+| bar | `t-bar` | the row's status gutter, 3px; `.loud` fills it, quiet is `--edge` |
+
+- `off` is never filled: every treatment draws it hollow and dashed. `ask` and `off` are
+  both neutral, and `--dim` may sit only 1.3:1 from `--fg`, so shape tells them apart,
+  not color.
+- Color is for status. Links, PR numbers and ticket keys are `--fg`, ports `--dim`,
+  so green only ever means `ok`.
+- A row whose PR is merged or closed keeps its tones at `--ink` toward `--bg`: merged
+  reads dim purple, not gray.
+- A PR reads label, automation icons, status pill: `#617 ⤳ ↻ needs review`. A ticket
+  reads label, status dot, automation icon: `ROM-3786 ● ✓`.
+- Diff counts and file status are their own family, not tones: `.pl`/`.mi` and `.st.A/D/M/U`
+  use `--addfg`/`--delfg`/`--warn`/`--untr`, matching the editor's diff colors.
+- A new tone needs a reason no existing one covers, a hue that doesn't collide with
+  `--agent-*`, and a row in both tables above.
+
+## Shades
+
+A tint of a hue uses the ladder in `app.css`, never a new percentage:
+
+| Step | Value | Use |
+|---|---|---|
+| `--wash` | 12% | pill and selection backgrounds, hover rows |
+| `--tint` | 25% | active and hover fills, find hits, flashes |
+| `--edge` | 40% | borders |
+| `--ink` | 65% | text on a band, current find hit |
+
+Scrims (`--bg` over content) and `--mark2` (paired with the favicon in `theme.js`) are not
+tints and keep their own values.
+
+## Glyphs
+
+One glyph, one meaning. Reuse one from this table before adding one, and add a row when
+you do.
+
+| Glyph | Means |
+|---|---|
+| `✓` | passed, approved |
+| `AC_ICON` | closes the ticket on merge; tone `done`, `bad` on error |
+| `✕` | failed (text, or `GLYPH.fail` as SVG) |
+| `!` | changes requested |
+| `.spin` | running, pending (takes `--tone` from its parent) |
+| `○` | skipped, canceled, no result |
+| `●` | uncommitted: dirty count, unsaved edits, modified file |
+| `↑n` `↓n` | ahead, behind |
+| `↗` | opens outside Forest |
+| `×` | close |
+| `▶` `▼` | collapsed, expanded (at `0.5625rem`; the small `▸` `▾` vanish) |
+| `›` | drill in, submenu, breadcrumb |
+| `⋯` | more actions |
 
 ## Check a theme
 

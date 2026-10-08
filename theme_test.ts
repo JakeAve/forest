@@ -191,3 +191,15 @@ Deno.test("mergeInclude: child colors win, include key dropped", () => {
     colors: { "editor.background": "#000", foreground: "#eee" },
   });
 });
+
+Deno.test("status tones get their color only in app.css", () => {
+  const css = Deno.readTextFileSync("src/app.css");
+  for (const tone of ["ok", "warn", "bad", "ask", "done", "off"]) {
+    assert(css.includes(`[data-tone="${tone}"] {\n  --tone:`), tone);
+  }
+  for (const f of Deno.readDirSync("src")) {
+    if (!f.name.endsWith(".svelte")) continue;
+    const src = Deno.readTextFileSync(`src/${f.name}`);
+    assert(!/\[data-tone="\w+"\][^{]*\{[^}]*--tone:/.test(src), f.name);
+  }
+});

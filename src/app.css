@@ -6,6 +6,7 @@
   --fg: #c9d3e0;
   --dim: #6b7787;
   --dimmer: #4a5461;
+  --mid: color-mix(in srgb, var(--fg) 50%, var(--dim));
   --acc: #7dd3a0;
   --mark2: color-mix(in srgb, var(--acc) 62%, var(--bg));
   --hl: #2a3546;
@@ -31,6 +32,10 @@
   --tk-bad: #e06c78;
   --agent-a: #f78c6c;
   --agent-b: #82aaff;
+  --wash: 12%;
+  --tint: 25%;
+  --edge: 40%;
+  --ink: 65%;
   --head: 2.75rem;
   --mono: ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace;
   --sans: -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
@@ -53,6 +58,66 @@ body {
 }
 #app {
   height: 100vh;
+}
+
+/* Status tones: data-tone picks the color, a t-* class picks the weight. */
+[data-tone] {
+  color: var(--tone);
+}
+[data-tone="ok"] {
+  --tone: var(--acc);
+}
+[data-tone="warn"] {
+  --tone: var(--warn);
+}
+[data-tone="bad"] {
+  --tone: var(--danger);
+}
+[data-tone="ask"] {
+  --tone: var(--fg);
+}
+[data-tone="done"] {
+  --tone: var(--merged);
+}
+[data-tone="off"] {
+  --tone: var(--dim);
+}
+.t-pill {
+  background: color-mix(in srgb, var(--tone) var(--wash), transparent);
+  border-radius: 999px;
+}
+.t-edge {
+  border: 1px solid color-mix(in srgb, var(--tone) var(--edge), var(--line));
+  border-radius: 999px;
+}
+.t-solid {
+  color: var(--bg);
+  background: var(--tone);
+  border: 1px solid transparent;
+}
+.t-bar {
+  width: 3px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--tone) var(--edge), transparent);
+}
+.t-bar.loud {
+  background: var(--tone);
+}
+.t-band {
+  color: color-mix(in srgb, var(--tone) var(--ink), var(--fg));
+  background: color-mix(in srgb, var(--tone) var(--wash), var(--bg));
+  border: 1px solid color-mix(in srgb, var(--tone) var(--edge), var(--bg));
+}
+/* off is the absence of a state: never filled, always dashed */
+[data-tone="off"]:is(.t-solid, .t-edge, .t-band, .t-bar) {
+  color: var(--tone);
+  background: none;
+  border: 1px dashed color-mix(in srgb, var(--tone) var(--edge), var(--line));
+}
+[data-tone="off"].t-pill {
+  background: none;
+  outline: 1px dashed color-mix(in srgb, var(--tone) var(--edge), var(--line));
+  outline-offset: -1px;
 }
 
 /* CodeMirror MergeView */
@@ -111,19 +176,22 @@ body {
   background: var(--del) !important;
 }
 .cm-merge-a .cm-changedText {
-  background: color-mix(in srgb, var(--delfg) 12%, transparent) !important;
+  background: color-mix(in srgb, var(--delfg) var(--wash), transparent)
+    !important;
 }
 .cm-merge-b .cm-changedLine {
   background: var(--add) !important;
 }
 .cm-merge-b .cm-changedText {
-  background: color-mix(in srgb, var(--addfg) 12%, transparent) !important;
+  background: color-mix(in srgb, var(--addfg) var(--wash), transparent)
+    !important;
 }
 .cm-mergeView .cm-deletedChunk {
   background: var(--del) !important;
 }
 .cm-mergeView .cm-deletedChunk del {
-  background: color-mix(in srgb, var(--delfg) 12%, transparent) !important;
+  background: color-mix(in srgb, var(--delfg) var(--wash), transparent)
+    !important;
   text-decoration: none;
 }
 .cm-mergeView .cm-collapsedLines {
@@ -146,11 +214,11 @@ body {
 }
 
 .cm-mergeView .findhit {
-  background: color-mix(in srgb, var(--acc) 25%, transparent);
+  background: color-mix(in srgb, var(--acc) var(--tint), transparent);
   border-radius: 2px;
 }
 .cm-mergeView .findhit.cur {
-  background: color-mix(in srgb, var(--acc) 55%, transparent);
+  background: color-mix(in srgb, var(--acc) var(--ink), transparent);
 }
 .cm-mergeView .lineflash {
   animation: lineflash 1.6s ease-out;
@@ -158,7 +226,7 @@ body {
 @keyframes lineflash {
   0%,
   40% {
-    background: color-mix(in srgb, var(--acc) 30%, transparent);
+    background: color-mix(in srgb, var(--acc) var(--tint), transparent);
   }
   100% {
     background: transparent;
@@ -208,7 +276,7 @@ body {
   height: 0.7rem;
   vertical-align: -0.1em;
   border: 2px solid var(--dimmer);
-  border-top-color: var(--acc);
+  border-top-color: var(--tone, var(--acc));
   border-radius: 50%;
   animation: spin 0.7s linear infinite;
 }

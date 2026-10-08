@@ -578,7 +578,7 @@ async function openPath(text) {
     errBanner(await res.text());
     return false;
   }
-  if (banner?.kind === "err") banner = null;
+  if (banner?.kind === "bad") banner = null;
   await openAt(await res.json());
   return true;
 }
@@ -1197,7 +1197,7 @@ async function copy(e, text, key, label = text) {
 
 function errBanner(text) {
   banner = {
-    kind: "err",
+    kind: "bad",
     text,
     actions: [{ label: "Dismiss", fn: () => (banner = null) }],
   };
@@ -1531,18 +1531,22 @@ $effect(() => {
   };
 });
 
-const CHECK_GLYPH = { pass: "✓", fail: "✗", pending: "●" };
-// Ticket status categories borrow the PR card's .st tones.
+const CHECK = {
+  pass: ["✓", "ok"],
+  fail: ["✕", "bad"],
+  pending: ["", "warn"],
+};
+const TAG = { P0: "bad", P1: "bad", P2: "warn" };
 const TICKET_ST = {
-  todo: "draft",
-  doing: "doing",
-  done: "merged",
-  canceled: "closed",
+  todo: "off",
+  doing: "ok",
+  done: "done",
+  canceled: "off",
 };
 const VERDICT = {
   APPROVED: ["✓ Approved", "ok"],
-  CHANGES_REQUESTED: ["✗ Changes requested", "bad"],
-  COMMENTED: ["Commented", "dim"],
+  CHANGES_REQUESTED: ["! Changes requested", "bad"],
+  COMMENTED: ["Commented", "off"],
 };
 
 const AM_ICON =
@@ -2579,7 +2583,7 @@ async function confirmDiscard() {
   </div>
 
   {#if banner}
-    <div class="banner {banner.kind}">
+    <div class="banner t-band" data-tone={banner.kind}>
       <span>{banner.text}</span><span class="sp"></span>
       {#each banner.actions as a (a.label)}
         <button class="btn" class:p={a.primary} onclick={a.fn}>{a.label}</button>
@@ -2588,7 +2592,7 @@ async function confirmDiscard() {
   {/if}
 
   {#if prOff && prOff.text !== prOffHidden}
-    <div class="banner warn" role="status" title={prOff.detail}>
+    <div class="banner t-band" data-tone="warn" role="status" title={prOff.detail}>
       <span>{prOff.text}</span><span class="sp"></span>
       <button class="btn" onclick={() => (prOffHidden = prOff.text)}>Dismiss</button>
     </div>
@@ -2794,6 +2798,7 @@ async function confirmDiscard() {
            onmousedown={(e) => e.shiftKey && e.preventDefault()}
            onkeydown={(e) => e.key === "Enter" ? selectWt(w.path) : menuKey(e, wtItems(w))}
            oncontextmenu={(e) => openMenu(e, wtItems(w))}>
+        {#if w.pr}{@const s = prStatus(w.pr)}<i class="t-bar" class:loud={s.weight === "loud"} data-tone={s.tone}></i>{/if}
         {#if w.isPrimary}
           <span></span>
         {:else}
@@ -2811,25 +2816,26 @@ async function confirmDiscard() {
               dirName(w)}<span class="dir">{dirName(w)}</span>{/if}</span>{:else if
             col.key === "title"}{w.pr?.title || w.branch}{:else if
             col.key === "ticket"}{#if w.ticket}{@const ti = w.ticket.info}<a href={w.ticket.url} target="_blank" rel="noreferrer"
-                class="tkl" aria-haspopup={ti ? "dialog" : undefined}
+                class="tkl" data-tone={ti?.category ? TICKET_ST[ti.category] ?? "off" : undefined}
+                aria-haspopup={ti ? "dialog" : undefined}
                 aria-label={ti ? `${w.ticket.key}, ${ti.status}${w.autoClose ? ", closes on merge" : ""}: ${ti.title}` : undefined}
                 title={ti ? "⌘-click to open the ticket" : `open ticket ${w.ticket.key}`}
-                onclick={(e) => ti ? openCard(w, e, "ticket") : e.stopPropagation()}>{#if
-                w.autoClose}<svg class="g ac" class:err={w.autoClose.error} viewBox="0 0 16 16">{@html AC_ICON}</svg>{/if}{#if
-                ti?.category}<span class="tkd" data-cat={ti.category}></span>{/if}{w.ticket.key}</a>{/if}{:else if
+                onclick={(e) => ti ? openCard(w, e, "ticket") : e.stopPropagation()}>{w.ticket.key}{#if
+                ti?.category}<span class="tkd" data-tone={TICKET_ST[ti.category] ?? "off"}></span>{/if}{#if
+                w.autoClose}<svg class="g ac" data-tone={w.autoClose.error ? "bad" : "done"} viewBox="0 0 16 16">{@html AC_ICON}</svg>{/if}</a>{/if}{:else if
             col.key === "pr"}{#if w.pr}{@const s = prStatus(w.pr)}<a
-                class="prl" href={w.pr.url}
+                class="prl" data-tone={s.tone} href={w.pr.url}
                 target="_blank" rel="noreferrer"
                 aria-label={[`${s.label}, PR #${w.pr.number}`, w.pr.title]
                   .filter(Boolean).join(": ")}
                 aria-haspopup="dialog" title="⌘-click to open on GitHub"
-                onclick={(e) => openCard(w, e)}>{#if w.pr.autoMerge}<svg class="g am" viewBox="0 0 16 16">{@html AM_ICON}</svg>{/if}{#if w.autoRebase}<svg class="g ar" class:err={w.autoRebase.error} viewBox="0 0 16 16">{@html AR_ICON}</svg>{/if}#{w.pr.number}<span
-                class="pst" class:pill={s.weight === "loud"} data-tone={s.tone}
+                onclick={(e) => openCard(w, e)}>#{w.pr.number}{#if w.pr.autoMerge}<svg class="g am" viewBox="0 0 16 16">{@html AM_ICON}</svg>{/if}{#if w.autoRebase}<svg class="g ar" class:err={w.autoRebase.error} viewBox="0 0 16 16">{@html AR_ICON}</svg>{/if}<span
+                class="pst" class:t-pill={s.weight === "loud"} data-tone={s.tone}
                 title="{s.sinceLabel} for {ago(s.since)}">{#if s.glyph}<svg class="g" viewBox="0 0 16 16">{@html GLYPH[s.glyph]}</svg>{/if}{s.label.toLowerCase()}{s.since ? ` ${ago(s.since)}` : ""}</span></a>{:else if
               w.autoRebase}<span class="port ar" class:err={w.autoRebase.error}
                 title={w.autoRebase.error ?? "auto-rebase on"}><svg class="g ar" viewBox="0 0 16 16">{@html AR_ICON}</svg></span>{/if}{:else if
-            col.key === "changes"}{#if w.dirty}<span class="warn">●{w.dirty}</span>{/if}{:else if
-            col.key === "sync"}{@const ab = prAb(w)}{#if ab.ahead || ab.behind}<span class:warn={ab.behind > 0}
+            col.key === "changes"}{#if w.dirty}<span>●{w.dirty}</span>{/if}{:else if
+            col.key === "sync"}{@const ab = prAb(w)}{#if ab.ahead || ab.behind}<span data-tone={ab.behind > 0 ? "warn" : undefined}
                 title={w.pr?.state === "OPEN"
                   ? `${ab.behind} behind ${w.pr.baseRefName}, ${ab.ahead} ahead${
                     ab.behind > 0 ? " — right-click to update branch" : ""
@@ -3032,7 +3038,7 @@ async function confirmDiscard() {
         <span class="meta" title={new Date(diskAt).toLocaleTimeString()}>Updated {ago(diskAt)}</span>
       {/if}
       {#if diffDirty}
-        <span class="unsaved">● Unsaved ⌘S</span>
+        <span class="unsaved" data-tone="warn">● Unsaved ⌘S</span>
         <button class="btn p" onclick={() => diffRef?.save()}>Save</button>
         <button class="btn" title="discard editor changes, reload from disk"
                 onclick={() => { banner = null; diffRef?.reloadTheirs(); }}>Discard</button>
@@ -3107,7 +3113,7 @@ async function confirmDiscard() {
   </div>
   {/if}
   {#snippet closeX(fn)}
-    <button class="circ x" title="Close (Esc)" aria-label="Close" onclick={fn}>✕</button>
+    <button class="circ x" title="Close (Esc)" aria-label="Close" onclick={fn}>×</button>
   {/snippet}
   <div class="ctx" popover="manual" bind:this={menuEl}
        ontoggle={(e) => e.newState === "closed" && closeMenu()}>
@@ -3147,7 +3153,7 @@ async function confirmDiscard() {
       <div class="top">
         <div class="r">
           <a class="port" href={t.url} target="_blank" rel="noreferrer">{t.key} ↗</a>
-          {#if ti.status}<span class="st {TICKET_ST[ti.category] ?? 'review'}">{ti.status}</span>{/if}
+          {#if ti.status}<span class="st t-edge" data-tone={TICKET_ST[ti.category] ?? "ask"}>{ti.status}</span>{/if}
           {#if ti.assignee}<span class="ago">{ti.assignee}</span>{/if}
           {@render closeX(hideCard)}
         </div>
@@ -3169,7 +3175,7 @@ async function confirmDiscard() {
             <span class="cbx" class:on={!!cardWt.autoClose}></span>Close {t.key} on merge
           </label>
           {#if cardWt.autoClose?.error}
-            <div class="r bad">{cardWt.autoClose.error}</div>
+            <div class="r" data-tone="bad">{cardWt.autoClose.error}</div>
           {/if}
         </section>
       {/if}
@@ -3184,8 +3190,8 @@ async function confirmDiscard() {
       {@const s = prStatus(p)}
       <div class="top">
         <div class="r">
-          <a class="port pr" data-tone={s.tone} href={p.url} target="_blank" rel="noreferrer">#{p.number} ↗</a>
-          <span class="st {s.tone}">{s.label}</span>
+          <a class="pr t-solid" data-tone={s.tone} href={p.url} target="_blank" rel="noreferrer">#{p.number} ↗</a>
+          <span class="st t-edge" data-tone={s.tone}>{s.label}</span>
           {#if c}<span class="dim t">by {c.author} · {ago(c.createdAt)}</span><span class="ago">updated {ago(c.updatedAt)}</span>{/if}
           {@render closeX(hideCard)}
         </div>
@@ -3193,7 +3199,7 @@ async function confirmDiscard() {
         {#if c}
           <div class="r sm">
             <span class="dim t">{p.baseRefName} ← {c.headRefName}</span>
-            <span class="ago"><span class="ok">+{c.additions}</span> <span class="bad">−{c.deletions}</span> · {c.changedFiles} files</span>
+            <span class="ago"><span class="pl">+{c.additions}</span> <span class="mi">−{c.deletions}</span> · {c.changedFiles} files</span>
           </div>
         {/if}
       </div>
@@ -3221,11 +3227,11 @@ async function confirmDiscard() {
         <section>
           <div class="hd"><span>Merge</span></div>
           {#if p.mergeable === "CONFLICTING"}
-            <div class="r bad">Conflicts with {p.baseRefName}</div>
+            <div class="r" data-tone="bad">Conflicts with {p.baseRefName}</div>
           {:else}
             <div class="r dim">No conflicts</div>
           {/if}
-          <div class="r" class:warn={behind > 0} class:dim={!behind}>
+          <div class="r" data-tone={behind ? "warn" : "off"}>
             <span>{behind ? `↓${behind} behind` : "Up to date with"} {p.baseRefName}</span>
             {#if behind > 0}
               <button class="btn" disabled={busy["ub:" + w.path]}
@@ -3243,7 +3249,7 @@ async function confirmDiscard() {
             <span class="cbx" class:on={!!w.autoRebase}></span>Auto-rebase
           </label>
           {#if w.autoRebase?.error}
-            <div class="r bad">{w.autoRebase.error}</div>
+            <div class="r" data-tone="bad">{w.autoRebase.error}</div>
           {/if}
           {#if w.ticket?.info}
             <label class="r">
@@ -3261,7 +3267,7 @@ async function confirmDiscard() {
             {#each c.reviews as rv (rv.login)}
               <a class="r lk" href={rv.url} target="_blank" rel="noreferrer">
                 <span class="t">{rv.login}</span>
-                <span class={VERDICT[rv.state]?.[1]}>{VERDICT[rv.state]?.[0]}</span>
+                <span data-tone={VERDICT[rv.state]?.[1]}>{VERDICT[rv.state]?.[0]}</span>
                 <span class="ago">{ago(rv.at)}</span><span class="go">↗</span>
               </a>
             {/each}
@@ -3280,13 +3286,13 @@ async function confirmDiscard() {
           {@const done = c.threads.filter((t) => t.resolved)}
           <section>
             <div class="hd"><span>Code threads</span>
-              <span><span class:warn={open.length}>{open.length} unresolved</span> of {c.threads.length}</span></div>
+              <span><span data-tone={open.length ? "warn" : undefined}>{open.length} unresolved</span> of {c.threads.length}</span></div>
             {#each open as t (t.url)}
               <a class="th" href={t.url} target="_blank" rel="noreferrer">
                 <span class="r0">
                   <span>{t.login}</span>
                   <span class="mono dim t">{t.path}{t.line ? `:${t.line}` : ""}</span>
-                  {#if t.tag}<span class="tag {t.tag}">{t.tag}</span>{/if}
+                  {#if t.tag}<span class="tag" data-tone={TAG[t.tag] ?? "off"}>{t.tag}</span>{/if}
                   <span class="ago">{ago(t.at)}</span><span class="go">↗</span>
                 </span>
                 <span class="txt">{t.body}</span>
@@ -3326,9 +3332,9 @@ async function confirmDiscard() {
           {@const opt = c.checks.filter((k) => !k.required)}
           {#snippet checkRow(k)}
             <a class="r lk chk {k.bucket}" href={k.url} target="_blank" rel="noreferrer">
-              <span class="g">{CHECK_GLYPH[k.bucket] ?? "○"}</span>
+              <span class="g" data-tone={CHECK[k.bucket]?.[1] ?? "off"}>{#if k.bucket === "pending"}<span class="spin"></span>{:else}{CHECK[k.bucket]?.[0] ?? "○"}{/if}</span>
               <span class="t">{k.name}</span>
-              <span class="dur">{runFor(k)}</span>
+              <span class="dur" data-tone={k.bucket === "pending" ? "warn" : undefined}>{runFor(k)}</span>
               <span class="fin">{k.bucket === "pending" ? "–" : ago(k.completedAt)}</span>
               <span class="go">↗</span>
             </a>
@@ -3342,7 +3348,7 @@ async function confirmDiscard() {
             {#if req.length && opt.length}
               {@const bad = opt.filter((k) => k.bucket === "fail").length}
               <details ontoggle={placeCard}>
-                <summary class="hd"><span>{opt.length} optional checks{#if bad} · <span class="bad">{bad} failing</span>{/if}</span></summary>
+                <summary class="hd"><span>{opt.length} optional checks{#if bad} · <span data-tone="bad">{bad} failing</span>{/if}</span></summary>
                 {#each opt as k, i (k.url + i)}
                   {@render checkRow(k)}
                 {/each}
@@ -3601,7 +3607,7 @@ async function confirmDiscard() {
 .circ.x {
   width: 1.25rem;
   height: 1.25rem;
-  font-size: 0.5625rem;
+  font-size: 0.875rem;
   margin-left: auto;
 }
 .card .ago + .x {
@@ -3909,10 +3915,10 @@ dialog.settings::backdrop {
   margin: 0 0.375rem 0.25rem;
   padding-left: 0.75rem;
   border-radius: 0.625rem;
-  background: color-mix(in srgb, var(--acc) 12%, var(--bg2));
+  background: color-mix(in srgb, var(--acc) var(--wash), var(--bg2));
 }
 .bhead.selbar.confirm {
-  background: color-mix(in srgb, var(--danger) 14%, var(--bg2));
+  background: color-mix(in srgb, var(--danger) var(--wash), var(--bg2));
 }
 .bhead .names {
   font-family: var(--mono);
@@ -4086,12 +4092,12 @@ dialog.settings::backdrop {
 }
 .btn.on {
   color: var(--acc);
-  background: color-mix(in srgb, var(--acc) 12%, var(--bg3));
-  border-color: color-mix(in srgb, var(--acc) 45%, var(--line));
+  background: color-mix(in srgb, var(--acc) var(--wash), var(--bg3));
+  border-color: color-mix(in srgb, var(--acc) var(--edge), var(--line));
 }
 .btn.dg {
   color: var(--danger);
-  border-color: color-mix(in srgb, var(--danger) 45%, var(--line));
+  border-color: color-mix(in srgb, var(--danger) var(--edge), var(--line));
 }
 .btn.dg:hover {
   color: var(--danger);
@@ -4306,7 +4312,7 @@ select.theme {
   z-index: 19;
   border: 1px solid var(--acc);
   border-radius: 0.25rem;
-  background: color-mix(in srgb, var(--acc) 10%, transparent);
+  background: color-mix(in srgb, var(--acc) var(--wash), transparent);
   pointer-events: none;
 }
 .colghost span {
@@ -4323,7 +4329,7 @@ select.theme {
 }
 .cols > .moving,
 .wt .moving {
-  background: color-mix(in srgb, var(--acc) 8%, transparent);
+  background: color-mix(in srgb, var(--acc) var(--wash), transparent);
   color: var(--dimmer);
 }
 :global(html.colsizing),
@@ -4341,6 +4347,7 @@ select.theme {
   text-align: right;
 }
 .wt {
+  position: relative;
   scroll-margin-top: calc(var(--colsh) + var(--depth) * var(--repoh));
   display: grid;
   align-items: center;
@@ -4354,8 +4361,13 @@ select.theme {
   background: var(--hov);
 }
 .wt.sel {
-  background: color-mix(in srgb, var(--acc) 14%, var(--bg));
-  box-shadow: inset 3px 0 0 var(--acc);
+  background: color-mix(in srgb, var(--fg) var(--wash), var(--bg));
+}
+.wt > .t-bar {
+  position: absolute;
+  left: 0.125rem;
+  top: 0.375rem;
+  bottom: 0.375rem;
 }
 .wt .br {
   font-family: var(--mono);
@@ -4363,7 +4375,7 @@ select.theme {
 }
 .wt .c a {
   font: 0.6875rem var(--mono);
-  color: var(--acc);
+  color: var(--fg);
   text-decoration: none;
 }
 .wt .c a:hover {
@@ -4376,7 +4388,6 @@ select.theme {
 }
 .wt .pst {
   font: 0.625rem var(--mono);
-  color: var(--dim);
 }
 .wt .c[data-col="pr"],
 .wt .prl {
@@ -4388,8 +4399,7 @@ select.theme {
 .wt .c .prl:hover {
   text-decoration: none;
 }
-.wt .pill {
-  --tone: var(--fg);
+.wt .t-pill {
   display: inline-block;
   min-width: 0;
   overflow: hidden;
@@ -4397,25 +4407,6 @@ select.theme {
   white-space: nowrap;
   vertical-align: bottom;
   padding: 0 0.375rem;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--tone) 15%, transparent);
-  color: var(--tone);
-}
-.pill[data-tone="ok"] {
-  --tone: var(--acc);
-}
-.pill[data-tone="warn"] {
-  --tone: var(--warn);
-}
-.pill[data-tone="bad"] {
-  --tone: var(--danger);
-}
-.pill[data-tone="merged"] {
-  --tone: var(--merged);
-}
-.pill[data-tone="draft"],
-.pill[data-tone="closed"] {
-  --tone: var(--dim);
 }
 .wt .more {
   margin-left: 0.25rem;
@@ -4440,6 +4431,7 @@ select.theme {
   gap: 1ch;
 }
 .wt .pts a {
+  color: var(--mid);
   counter-increment: more -1;
 }
 .wt .pts .more {
@@ -4519,21 +4511,24 @@ select.theme {
 .wt [data-col="sync"],
 .wt [data-col="active"] {
   font: 0.6875rem var(--mono);
-  color: var(--dim);
-}
-.wt [data-col="active"] {
-  color: var(--dimmer);
-}
-.wt .warn {
-  color: var(--warn);
+  color: var(--mid);
 }
 .wt.done .c,
 .wt.done .c * {
   color: var(--dim);
 }
+.wt.done .c [data-tone] {
+  color: color-mix(in srgb, var(--tone) var(--ink), var(--bg));
+}
+.wt.done .tkd {
+  border-color: color-mix(in srgb, var(--tone) var(--ink), var(--bg));
+}
+.wt.done .tkd:not([data-tone="off"]) {
+  background: color-mix(in srgb, var(--tone) var(--ink), var(--bg));
+}
 .wt.done .ag {
-  background: color-mix(in srgb, var(--dim) 12%, transparent);
-  border-color: color-mix(in srgb, var(--dim) 35%, transparent);
+  background: color-mix(in srgb, var(--dim) var(--wash), transparent);
+  border-color: color-mix(in srgb, var(--dim) var(--edge), transparent);
 }
 .wt.cached .br {
   color: var(--dim);
@@ -4572,8 +4567,8 @@ select.theme {
   border-radius: 999px;
   font: 0.6875rem var(--mono);
   color: var(--ag);
-  background: color-mix(in srgb, var(--ag) 12%, transparent);
-  border: 1px solid color-mix(in srgb, var(--ag) 35%, transparent);
+  background: color-mix(in srgb, var(--ag) var(--wash), transparent);
+  border: 1px solid color-mix(in srgb, var(--ag) var(--edge), transparent);
   cursor: pointer;
 }
 .ag:hover {
@@ -4586,8 +4581,8 @@ select.theme {
 .port {
   font: 0.625rem var(--mono);
   color: var(--acc);
-  background: color-mix(in srgb, var(--acc) 10%, transparent);
-  border: 1px solid color-mix(in srgb, var(--acc) 35%, transparent);
+  background: color-mix(in srgb, var(--acc) var(--wash), transparent);
+  border: 1px solid color-mix(in srgb, var(--acc) var(--edge), transparent);
   border-radius: 999px;
   padding: 0 0.375rem;
   text-decoration: none;
@@ -4600,31 +4595,10 @@ select.theme {
   display: inline-flex;
   align-items: center;
   gap: 0.25em;
-  border-color: transparent;
-  color: var(--bg);
-  background: var(--acc);
-}
-.pr[data-tone="bad"] {
-  background: var(--danger);
-}
-.pr[data-tone="warn"] {
-  background: var(--warn);
-}
-.pr[data-tone="merged"] {
-  background: var(--merged);
-}
-.pr[data-tone="closed"] {
-  background: var(--dim);
-}
-.pr[data-tone="review"],
-.pr[data-tone="draft"] {
-  background: transparent;
-  color: var(--fg);
-  border-color: var(--dim);
-}
-.pr[data-tone="draft"] {
-  color: var(--dim);
-  border-style: dashed;
+  font: 0.625rem var(--mono);
+  border-radius: 999px;
+  padding: 0 0.375rem;
+  text-decoration: none;
 }
 .tkl {
   display: inline-flex;
@@ -4636,19 +4610,11 @@ select.theme {
   width: 0.4375rem;
   height: 0.4375rem;
   border-radius: 50%;
-  border: 1px solid var(--dim);
+  border: 1px solid var(--tone);
+  background: var(--tone);
 }
-.tkd[data-cat="doing"] {
-  border-color: var(--acc);
-  background: var(--acc);
-}
-.tkd[data-cat="done"] {
-  border-color: var(--merged);
-  background: var(--merged);
-}
-.tkd[data-cat="canceled"] {
-  border-color: var(--dimmer);
-  background: var(--dimmer);
+.tkd[data-tone="off"] {
+  background: none;
 }
 .pr:hover {
   filter: brightness(1.15);
@@ -4664,13 +4630,12 @@ select.theme {
   height: 10px;
 }
 .g.ar.err,
-.g.ac.err,
 .port.ar.err {
   color: var(--danger);
 }
 @keyframes flash {
   0% {
-    background: color-mix(in srgb, var(--acc) 22%, var(--bg));
+    background: color-mix(in srgb, var(--acc) var(--tint), var(--bg));
   }
   100% {
     background: transparent;
@@ -4743,11 +4708,13 @@ select.theme {
   font-size: 0.6875rem;
   white-space: nowrap;
 }
-.n .pl {
+.pl {
   color: var(--addfg);
 }
-.n .mi {
+.mi {
   color: var(--delfg);
+}
+.n .mi {
   margin-left: 0.375rem;
 }
 
@@ -4869,28 +4836,16 @@ select.theme {
   margin-bottom: 0.5rem;
   font-size: 0.75rem;
   flex: none;
-  border: 1px solid var(--line);
   border-radius: 0.875rem;
 }
 .banner .sp {
   flex: 1;
-}
-.banner.err {
-  background: color-mix(in srgb, var(--danger) 14%, var(--bg));
-  color: color-mix(in srgb, var(--danger) 65%, var(--fg));
-  border-color: color-mix(in srgb, var(--danger) 35%, var(--bg));
-}
-.banner.warn {
-  background: color-mix(in srgb, var(--warn) 14%, var(--bg));
-  color: color-mix(in srgb, var(--warn) 65%, var(--fg));
-  border-color: color-mix(in srgb, var(--warn) 35%, var(--bg));
 }
 .btn.p {
   color: var(--acc);
   border-color: var(--acc);
 }
 .unsaved {
-  color: var(--warn);
   font: 0.6875rem var(--mono);
 }
 .repo .plus {
@@ -4986,8 +4941,8 @@ select.theme {
 }
 .mtag.lead {
   color: var(--acc);
-  border-color: color-mix(in srgb, var(--acc) 35%, transparent);
-  background: color-mix(in srgb, var(--acc) 10%, transparent);
+  border-color: color-mix(in srgb, var(--acc) var(--edge), transparent);
+  background: color-mix(in srgb, var(--acc) var(--wash), transparent);
 }
 .ctx button small {
   display: block;
@@ -5004,7 +4959,7 @@ select.theme {
   color: var(--danger);
 }
 .ctx button.dg:hover {
-  background: color-mix(in srgb, var(--danger) 22%, var(--bg2));
+  background: color-mix(in srgb, var(--danger) var(--tint), var(--bg2));
   color: var(--danger);
 }
 .card {
@@ -5039,27 +4994,13 @@ select.theme {
   font: 0.6875rem var(--mono);
 }
 .card .st {
-  border: 1px solid currentColor;
-  border-radius: 999px;
   padding: 0 0.4375rem;
   font-size: 0.6875rem;
-  color: var(--acc);
 }
 .card .st,
-.card .top .port {
+.card .top .pr {
   flex-shrink: 0;
   white-space: nowrap;
-}
-.card .st.draft,
-.card .st.closed {
-  color: var(--dim);
-}
-.card .st.merged {
-  color: var(--merged);
-}
-.card .st.review {
-  color: var(--fg);
-  border-color: var(--dim);
 }
 .card section {
   border-top: 1px solid var(--line);
@@ -5090,8 +5031,9 @@ select.theme {
   display: none;
 }
 .card summary::before {
-  content: "▸";
+  content: "▶";
   display: inline-block;
+  font-size: 0.5625rem;
   margin-right: 0.3125rem;
 }
 .card details[open] > summary::before {
@@ -5152,14 +5094,6 @@ select.theme {
 }
 .card .tag {
   font: 0.6875rem var(--mono);
-  color: var(--dim);
-}
-.card .tag.P0,
-.card .tag.P1 {
-  color: var(--danger);
-}
-.card .tag.P2 {
-  color: var(--warn);
 }
 .card .t {
   min-width: 0;
@@ -5197,26 +5131,8 @@ select.theme {
   font-family: var(--sans);
   color: var(--dim);
 }
-.card .chk.pending .dur {
-  color: var(--warn);
-}
-.card .ok {
-  color: var(--acc);
-}
-.card .warn {
-  color: var(--warn);
-}
-.card .bad {
-  color: var(--danger);
-}
-.card .dim,
-.card .review,
-.card .draft,
-.card .closed {
+.card .dim {
   color: var(--dim);
-}
-.card .merged {
-  color: var(--merged);
 }
 .card .mono {
   font: 0.6875rem var(--mono);
@@ -5232,19 +5148,6 @@ select.theme {
   flex: none;
   text-align: center;
   font: 0.75rem var(--mono);
-}
-.card .chk.pass .g {
-  color: var(--acc);
-}
-.card .chk.fail .g {
-  color: var(--danger);
-}
-.card .chk.pending .g {
-  color: var(--warn);
-}
-.card .chk.skipping .g,
-.card .chk.cancel .g {
-  color: var(--dim);
 }
 .card .foot {
   display: flex;
@@ -5265,12 +5168,12 @@ select.theme {
 }
 .card .btn.ok {
   color: var(--addfg);
-  border-color: color-mix(in srgb, var(--acc) 55%, var(--line));
+  border-color: color-mix(in srgb, var(--acc) var(--ink), var(--line));
   background: var(--add);
 }
 .card .btn.warn {
   color: var(--warn);
-  border-color: color-mix(in srgb, var(--warn) 45%, var(--line));
+  border-color: color-mix(in srgb, var(--warn) var(--edge), var(--line));
 }
 .card .foot .btn {
   text-decoration: none;
