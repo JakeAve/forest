@@ -13,7 +13,7 @@ export type AutoCloseApi = {
 
 // Opted-in worktrees move their ticket to its done status once their PR
 // merges, through the same ticket command as the card's buttons, then switch
-// off. Runs on every snapshot, so it acts as soon as Forest sees the merge. A
+// off. While another worktree's PR on the same ticket is still open, they hold. Runs on every snapshot, so it acts as soon as Forest sees the merge. A
 // failure stays on the row until it is switched off and on again.
 export function createAutoClose(
   { store, tickets, path, log }: {
@@ -44,6 +44,15 @@ export function createAutoClose(
     }
     const info = w.ticket.info;
     if (!info) return false; // not read yet
+    const key = w.ticket.key;
+    // "#12" keys are per-repo issue numbers; tracker keys span repos
+    const sibling = [...store.byPath.values()].some((r) =>
+      (r === repo || !key.startsWith("#")) &&
+      r.worktrees.some((o) =>
+        o !== w && o.ticket?.key === key && o.pr?.state === "OPEN"
+      )
+    );
+    if (sibling) return false;
     if (info.category !== "done" && info.category !== "canceled") {
       const to = doneAction(info);
       if (!to) throw new Error(`no done status offered for ${w.ticket.key}`);

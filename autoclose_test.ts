@@ -41,7 +41,7 @@ function make(over: Partial<Worktree>, fail = false) {
     path,
     log: () => {},
   });
-  return { api, w, acted, path };
+  return { api, w, acted, path, store };
 }
 
 Deno.test("open PR: waits; merged: closes the ticket once and turns off", async () => {
@@ -54,6 +54,23 @@ Deno.test("open PR: waits; merged: closes the ticket once and turns off", async 
   assertEquals(t.acted, ["ROM-1 done pr7"]);
   assertEquals(t.api.status(WT), null);
   assertEquals(JSON.parse(Deno.readTextFileSync(t.path)), []);
+});
+
+Deno.test("holds while another worktree on the same ticket has an open PR", async () => {
+  const t = make({ pr: merged });
+  const other = worktree({
+    path: "/r/forest-two",
+    pr: { number: 8, state: "OPEN" } as Pr,
+    ticket: { key: "ROM-1", url: "u" },
+  });
+  t.store.byPath.get("/r/forest")!.worktrees.push(other);
+  await t.api.set(WT, true);
+  await t.api.tick();
+  assertEquals(t.acted, []);
+  assertEquals(t.api.status(WT), { on: true, error: null });
+  other.pr = { number: 8, state: "MERGED" } as Pr;
+  await t.api.tick();
+  assertEquals(t.acted, ["ROM-1 done pr7"]);
 });
 
 Deno.test("already done: turns off without acting", async () => {

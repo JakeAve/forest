@@ -237,7 +237,9 @@ has read a PR comment or a web page can be talked out of it.
 - `set_auto_rebase` toggles the same auto-rebase as the row's menu.
 - `set_auto_close` toggles close-ticket-on-merge (below). Turning it on refuses
   a worktree without a ticket status; with no PR yet it waits for one, and on an
-  already-merged PR it closes the ticket right away.
+  already-merged PR it closes the ticket right away. It holds while another
+  worktree on the same ticket key has an open PR, so a ticket split across PRs
+  closes when the last one merges.
 - `remove_wts` runs `git worktree remove` without `--force`, so branches and
   their commits stay. It skips, and lists under `refused`, the primary checkout,
   a worktree with uncommitted or untracked changes, one mid-rebase or mid-merge,
