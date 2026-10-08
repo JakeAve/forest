@@ -1,4 +1,5 @@
-import { assertEquals } from "@std/assert";
+import { assertEquals, assertRejects } from "@std/assert";
+import { FakeTime } from "@std/testing/time";
 import { fakeExec, repo as mkRepo, worktree } from "./fixtures.ts";
 import { newStats } from "./stats.ts";
 import { createFiles } from "./files.ts";
@@ -30,6 +31,7 @@ const make = (
     prFor: (_r, w) => w.pr,
     ticket: (_r, w) => w.ticket,
     procs: () => procs,
+    prListed: () => true,
     agents: () => agents,
     onSnapshot: () => {},
     stats: newStats(),
@@ -377,4 +379,101 @@ Deno.test("set_auto_close needs a ticket status to enable, never a PR or to disa
   await t.callTool("set_auto_close", { wt: "/r/forest", enable: true });
   await t.callTool("set_auto_close", { wt: "/r/forest-a", enable: false });
   assertEquals(t.closes, [["/r/forest", true], ["/r/forest-a", false]]);
+});
+
+const openPr = (over: Partial<Pr> = {}): Pr => ({
+  number: 9,
+  url: "u9",
+  state: "OPEN",
+  stateSince: 0,
+  title: "Feat",
+  isDraft: false,
+  baseRefName: "main",
+  reviewDecision: "",
+  mergeable: "MERGEABLE",
+  mergeState: "CLEAN",
+  autoMerge: true,
+  ci: { state: "pending", failing: [] },
+  ciSince: null,
+  reviewSince: null,
+  approvals: 0,
+  card: null,
+  detailAt: 1,
+  ...over,
+});
+
+const waitSetup = (pr: Pr) => {
+  const w = worktree({ path: "/r/forest-feat", branch: "feat", pr });
+  return { w, t: make([mkRepo({ worktrees: [w] })]) };
+};
+
+Deno.test("wait returns an already-active kind at once, without its scope", async () => {
+  const { t } = waitSetup(
+    openPr({ ci: { state: "fail", failing: ["lint"] } }),
+  );
+  assertEquals(await t.callTool("wait", { wt: "feat", for: "act" }), [{
+    kind: "ci-failed",
+    key: "ci-failed:/r/forest-feat:lint",
+    repo: "/r/forest",
+    wt: "/r/forest-feat",
+    pr: 9,
+    title: "Required check failed: forest #9",
+    body: "lint",
+    url: "u9",
+  }]);
+});
+
+Deno.test("wait resolves on the publish that makes a kind active", async () => {
+  const { w, t } = waitSetup(openPr());
+  const p = t.callTool("wait", { wt: "feat", for: "pr-merged,act" });
+  t.wake();
+  w.pr = { ...w.pr!, state: "MERGED" };
+  t.wake();
+  assertEquals(
+    ((await p) as { kind: string }[]).map((d) => d.kind),
+    ["pr-merged"],
+  );
+});
+
+Deno.test("wait skips a seen key until it clears, then counts it again", async () => {
+  using time = new FakeTime();
+  const fail = { state: "fail" as const, failing: ["lint"] };
+  const { w, t } = waitSetup(openPr({ ci: fail }));
+  const key = "ci-failed:/r/forest-feat:lint";
+  let out: unknown = null;
+  t.callTool("wait", { wt: "feat", for: "ci-failed", seen: key }).then((
+    o,
+  ) => out = o);
+  t.wake();
+  await time.tickAsync(0);
+  assertEquals(out, null);
+  w.pr = { ...w.pr!, ci: { state: "pending", failing: [] } };
+  t.wake();
+  w.pr = { ...w.pr!, ci: fail };
+  t.wake();
+  await time.tickAsync(0);
+  assertEquals((out as { key: string }[]).map((d) => d.key), [key]);
+});
+
+Deno.test("wait returns [] on timeout; timeout=0 is a single check", async () => {
+  using time = new FakeTime();
+  const { t } = waitSetup(openPr());
+  assertEquals(
+    await t.callTool("wait", { wt: "feat", for: "act", timeout: "0" }),
+    [],
+  );
+  const p = t.callTool("wait", { wt: "feat", for: "act", timeout: "5" });
+  await time.tickAsync(5000);
+  assertEquals(await p, []);
+});
+
+Deno.test("wait refuses unknown and always-on kinds", async () => {
+  const { t } = waitSetup(openPr());
+  for (const k of ["nope", "wt-added", "automerge-changed"]) {
+    await assertRejects(
+      () => t.callTool("wait", { wt: "feat", for: k }),
+      Error,
+      `can't wait for ${k}`,
+    );
+  }
 });

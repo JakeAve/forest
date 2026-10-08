@@ -92,6 +92,7 @@ export function boot(opts: {
     onSnapshot: (j) => {
       sse.broadcast(j);
       notify.observe(j);
+      tools.wake();
       cache.save(j);
       void autoClose.tick();
     },

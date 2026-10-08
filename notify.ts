@@ -90,6 +90,15 @@ export function fileInbox(path: string): InboxStore {
 }
 
 const DELIVER = new Set(["app", "os", "both"]);
+
+export const factsNow = (repos: Repo[], settings: Settings, now: number) =>
+  facts(repos, {
+    now,
+    ciStuckMin: settings.notifyCiStuckMin,
+    halfDoneMin: settings.notifyHalfDoneMin,
+    staleDirtyDays: settings.notifyStaleDirtyDays,
+    unpushedHours: settings.notifyUnpushedHours,
+  });
 const EMPTY: Facts = { active: new Map(), known: new Set() };
 
 export function createNotify(
@@ -154,13 +163,7 @@ export function createNotify(
   }
 
   function run() {
-    const next = facts(last, {
-      now: now(),
-      ciStuckMin: settings.notifyCiStuckMin,
-      halfDoneMin: settings.notifyHalfDoneMin,
-      staleDirtyDays: settings.notifyStaleDirtyDays,
-      unpushedHours: settings.notifyUnpushedHours,
-    });
+    const next = factsNow(last, settings, now());
     const muted = new Set(
       Array.isArray(settings.notifyMuted) ? settings.notifyMuted : [],
     );

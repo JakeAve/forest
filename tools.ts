@@ -2,6 +2,9 @@ import { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { matchWt, rank } from "./src/filter.js";
 import {
+  type Draft,
+  type Kind,
+  KINDS,
   normPath,
   ownerWorktree,
   qbool,
@@ -13,6 +16,7 @@ import type { ActionsApi } from "./actions.ts";
 import type { AutoCloseApi } from "./autoclose.ts";
 import type { AutoRebaseApi } from "./autorebase.ts";
 import type { FilesApi } from "./files.ts";
+import { factsNow } from "./notify.ts";
 import type { StoreApi } from "./store.ts";
 import type { SessionsApi } from "./sessions.ts";
 import type { Settings } from "./settings.ts";
@@ -28,6 +32,18 @@ export type Tool = {
   input: Record<string, z.ZodType>;
   run: (a: Record<string, unknown>) => unknown | Promise<unknown>;
 };
+
+// Always active while a worktree exists, or fire on falling: no use to wait on.
+const EDGE_ONLY = new Set<string>([
+  "wt-added",
+  "wt-removed",
+  "branch-switched",
+  "server-died",
+  "automerge-changed",
+]);
+const WAITABLE = (Object.keys(KINDS) as Kind[]).filter((k) =>
+  !EDGE_ONLY.has(k)
+);
 
 export class ToolError extends Error {
   candidates?: unknown[];
@@ -82,6 +98,17 @@ export function createTools(deps: {
       path,
     }));
     throw e;
+  }
+
+  // ponytail: an abandoned wait holds its timer until timeout; pass req.signal through if they pile up
+  const waiters = new Set<(active: Draft[]) => void>();
+  const active = () => [
+    ...factsNow([...repoByPath.values()], settings, Date.now()).active.values(),
+  ];
+  function wake() {
+    if (!waiters.size) return;
+    const a = active();
+    for (const w of waiters) w(a);
   }
 
   const tools: Record<string, Tool> = {
@@ -226,6 +253,55 @@ export function createTools(deps: {
         return { url: `http://${host}:${settings.port}/?${p}` };
       },
     },
+    wait: {
+      desc:
+        "Block until a worktree has any of the given event kinds active, or timeout seconds pass (default 600, max 3600). for is comma-separated kinds or groups (act, move, life, clean). Returns the matching events, [] on timeout. An event already active returns at once; pass its key back in seen (comma-separated) to wait for the next one, and a seen key counts again once it clears.",
+      input: {
+        wt: z.string(),
+        for: z.string(),
+        seen: z.string().optional(),
+        timeout: qnum.pipe(z.number().max(3600)).optional(),
+      },
+      run: (a) => {
+        const w = resolveWt(String(a.wt));
+        const want = new Set<string>();
+        for (const n of String(a.for).split(",")) {
+          const ks = WAITABLE.filter((k) => k === n || KINDS[k].group === n);
+          if (!ks.length) {
+            throw new ToolError(
+              `can't wait for ${n}; use ${WAITABLE.join(", ")}`,
+            );
+          }
+          for (const k of ks) want.add(k);
+        }
+        const seen = new Set(a.seen ? String(a.seen).split(",") : []);
+        const match = (all: Draft[]) => {
+          const live = all.filter((d) => d.wt === w.path && want.has(d.kind));
+          for (const k of seen) {
+            if (!live.some((d) => d.key === k)) seen.delete(k);
+          }
+          return live.filter((d) => !seen.has(d.key)).map((
+            { scope: _, ...d },
+          ) => d);
+        };
+        const hits = match(active());
+        const ms = ((a.timeout as number | undefined) ?? 600) * 1000;
+        if (hits.length || !ms) return hits;
+        return new Promise((resolve) => {
+          const done = (out: unknown[]) => {
+            clearTimeout(timer);
+            waiters.delete(check);
+            resolve(out);
+          };
+          const check = (all: Draft[]) => {
+            const h = match(all);
+            if (h.length) done(h);
+          };
+          const timer = setTimeout(() => done([]), ms);
+          waiters.add(check);
+        });
+      },
+    },
     set_auto_merge: {
       kind: "write",
       desc:
@@ -356,5 +432,5 @@ export function createTools(deps: {
     return mcp;
   }
 
-  return { tools, callTool, toolError, buildMcp };
+  return { tools, callTool, toolError, buildMcp, wake };
 }
