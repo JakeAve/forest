@@ -90,7 +90,7 @@ you do.
 | `↑n` `↓n` | ahead, behind |
 | `↗` | opens outside Forest |
 | `×` | close |
-| `▸` `▾` | collapsed, expanded |
+| `▶` `▼` | collapsed, expanded (at `0.5625rem`; the small `▸` `▾` vanish) |
 | `›` | drill in, submenu, breadcrumb |
 | `⋯` | more actions |
 

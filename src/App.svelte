@@ -2759,7 +2759,7 @@ async function confirmDiscard() {
            onclick={() => toggleRepo(key)}
            onkeydown={(e) => e.key === "Enter" ? toggleRepo(key) : menuKey(e, items())}
            oncontextmenu={(e) => openMenu(e, items())}>
-        <span class="car">{isOpen(key) ? "▾" : "▸"}</span>
+        <span class="car">{isOpen(key) ? "▼" : "▶"}</span>
         <span class="rn">{label}</span>
         <span class="ct">{count}{#if summary}<span class="sum">{` · ${summary}`}</span>{/if}</span>
         {#if r}
@@ -2958,7 +2958,7 @@ async function confirmDiscard() {
              onclick={() => r.dir ? toggleDir(r.path) : pick(r)}
              onkeydown={(e) => e.key === "Enter" ? (r.dir ? toggleDir(r.path) : pick(r)) : menuKey(e, fileItems(r))}
              oncontextmenu={(e) => openMenu(e, fileItems(r))}>
-          <span class="car">{r.dir ? (openDirs[r.path] ? "▾" : "▸") : ""}</span>
+          <span class="car">{r.dir ? (openDirs[r.path] ? "▼" : "▶") : ""}</span>
           <span class="p" title={r.path}><span class="dir">{dir}</span>{@render rowName(r.path, name)}{r.dir && renaming !== r.path ? "/" : ""}</span>
           {#if f}
             <span class="st {f.status}">{f.status === "U" ? "?" : f.status}</span>
@@ -4217,7 +4217,7 @@ select.theme {
 .repo .car {
   width: 0.5625rem;
   color: var(--dimmer);
-  font-size: 0.75rem;
+  font-size: 0.5625rem;
 }
 .repo .rn {
   color: var(--fg);
@@ -4654,7 +4654,7 @@ select.theme {
 }
 .f.tr .car {
   color: var(--dimmer);
-  font-size: 0.75rem;
+  font-size: 0.5625rem;
 }
 .f .st {
   font-weight: 700;
@@ -5017,8 +5017,9 @@ select.theme {
   display: none;
 }
 .card summary::before {
-  content: "▸";
+  content: "▶";
   display: inline-block;
+  font-size: 0.5625rem;
   margin-right: 0.3125rem;
 }
 .card details[open] > summary::before {
