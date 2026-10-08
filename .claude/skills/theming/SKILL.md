@@ -46,15 +46,22 @@ defined once in `app.css`, and `theme_test.ts` fails if a component maps a tone 
 
 | Weight | Class | Use |
 |---|---|---|
-| text | (none) | inline in cards and lists |
+| text | (none) | inline in cards and lists, and quiet row statuses |
 | pill | `t-pill` | loud status in a row |
 | edge | `t-edge` | status label in a card header |
 | solid | `t-solid` | the PR number chip |
 | band | `t-band` | banners |
+| bar | `t-bar` | the row's status gutter, 3px; `.loud` fills it, quiet is `--edge` |
 
 - `off` is never filled: every treatment draws it hollow and dashed. `ask` and `off` are
   both neutral, and `--dim` may sit only 1.3:1 from `--fg`, so shape tells them apart,
   not color.
+- Color is for status. Links, PR numbers and ticket keys are `--fg`, ports `--dim`,
+  so green only ever means `ok`.
+- A row whose PR is merged or closed keeps its tones at `--ink` toward `--bg`: merged
+  reads dim purple, not gray.
+- A status icon goes after its label (`#617 needs review`, `ROM-3786 ●`); automation
+  icons (auto-merge, auto-rebase, auto-close) go before it.
 - Diff counts and file status are their own family, not tones: `.pl`/`.mi` and `.st.A/D/M/U`
   use `--addfg`/`--delfg`/`--warn`/`--untr`, matching the editor's diff colors.
 - A new tone needs a reason no existing one covers, a hue that doesn't collide with

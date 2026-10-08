@@ -2798,6 +2798,7 @@ async function confirmDiscard() {
            onmousedown={(e) => e.shiftKey && e.preventDefault()}
            onkeydown={(e) => e.key === "Enter" ? selectWt(w.path) : menuKey(e, wtItems(w))}
            oncontextmenu={(e) => openMenu(e, wtItems(w))}>
+        {#if w.pr}{@const s = prStatus(w.pr)}<i class="t-bar" class:loud={s.weight === "loud"} data-tone={s.tone}></i>{/if}
         {#if w.isPrimary}
           <span></span>
         {:else}
@@ -2815,24 +2816,25 @@ async function confirmDiscard() {
               dirName(w)}<span class="dir">{dirName(w)}</span>{/if}</span>{:else if
             col.key === "title"}{w.pr?.title || w.branch}{:else if
             col.key === "ticket"}{#if w.ticket}{@const ti = w.ticket.info}<a href={w.ticket.url} target="_blank" rel="noreferrer"
-                class="tkl" aria-haspopup={ti ? "dialog" : undefined}
+                class="tkl" data-tone={ti?.category ? TICKET_ST[ti.category] ?? "off" : undefined}
+                aria-haspopup={ti ? "dialog" : undefined}
                 aria-label={ti ? `${w.ticket.key}, ${ti.status}${w.autoClose ? ", closes on merge" : ""}: ${ti.title}` : undefined}
                 title={ti ? "⌘-click to open the ticket" : `open ticket ${w.ticket.key}`}
                 onclick={(e) => ti ? openCard(w, e, "ticket") : e.stopPropagation()}>{#if
-                w.autoClose}<svg class="g ac" data-tone={w.autoClose.error ? "bad" : "done"} viewBox="0 0 16 16">{@html AC_ICON}</svg>{/if}{#if
-                ti?.category}<span class="tkd" data-tone={TICKET_ST[ti.category] ?? "off"}></span>{/if}{w.ticket.key}</a>{/if}{:else if
+                w.autoClose}<svg class="g ac" data-tone={w.autoClose.error ? "bad" : "done"} viewBox="0 0 16 16">{@html AC_ICON}</svg>{/if}{w.ticket.key}{#if
+                ti?.category}<span class="tkd" data-tone={TICKET_ST[ti.category] ?? "off"}></span>{/if}</a>{/if}{:else if
             col.key === "pr"}{#if w.pr}{@const s = prStatus(w.pr)}<a
-                class="prl" href={w.pr.url}
+                class="prl" data-tone={s.tone} href={w.pr.url}
                 target="_blank" rel="noreferrer"
                 aria-label={[`${s.label}, PR #${w.pr.number}`, w.pr.title]
                   .filter(Boolean).join(": ")}
                 aria-haspopup="dialog" title="⌘-click to open on GitHub"
                 onclick={(e) => openCard(w, e)}>{#if w.pr.autoMerge}<svg class="g am" viewBox="0 0 16 16">{@html AM_ICON}</svg>{/if}{#if w.autoRebase}<svg class="g ar" class:err={w.autoRebase.error} viewBox="0 0 16 16">{@html AR_ICON}</svg>{/if}#{w.pr.number}<span
-                class="pst" class:t-pill={s.weight === "loud"} data-tone={s.weight === "loud" ? s.tone : "off"}
+                class="pst" class:t-pill={s.weight === "loud"} data-tone={s.tone}
                 title="{s.sinceLabel} for {ago(s.since)}">{#if s.glyph}<svg class="g" viewBox="0 0 16 16">{@html GLYPH[s.glyph]}</svg>{/if}{s.label.toLowerCase()}{s.since ? ` ${ago(s.since)}` : ""}</span></a>{:else if
               w.autoRebase}<span class="port ar" class:err={w.autoRebase.error}
                 title={w.autoRebase.error ?? "auto-rebase on"}><svg class="g ar" viewBox="0 0 16 16">{@html AR_ICON}</svg></span>{/if}{:else if
-            col.key === "changes"}{#if w.dirty}<span data-tone="warn">●{w.dirty}</span>{/if}{:else if
+            col.key === "changes"}{#if w.dirty}<span data-tone="off">●{w.dirty}</span>{/if}{:else if
             col.key === "sync"}{@const ab = prAb(w)}{#if ab.ahead || ab.behind}<span data-tone={ab.behind > 0 ? "warn" : undefined}
                 title={w.pr?.state === "OPEN"
                   ? `${ab.behind} behind ${w.pr.baseRefName}, ${ab.ahead} ahead${
@@ -4345,6 +4347,7 @@ select.theme {
   text-align: right;
 }
 .wt {
+  position: relative;
   scroll-margin-top: calc(var(--colsh) + var(--depth) * var(--repoh));
   display: grid;
   align-items: center;
@@ -4358,8 +4361,13 @@ select.theme {
   background: var(--hov);
 }
 .wt.sel {
-  background: color-mix(in srgb, var(--acc) var(--wash), var(--bg));
-  box-shadow: inset 3px 0 0 var(--acc);
+  background: color-mix(in srgb, var(--fg) var(--wash), var(--bg));
+}
+.wt > .t-bar {
+  position: absolute;
+  left: 0.125rem;
+  top: 0.375rem;
+  bottom: 0.375rem;
 }
 .wt .br {
   font-family: var(--mono);
@@ -4367,7 +4375,7 @@ select.theme {
 }
 .wt .c a {
   font: 0.6875rem var(--mono);
-  color: var(--acc);
+  color: var(--fg);
   text-decoration: none;
 }
 .wt .c a:hover {
@@ -4423,6 +4431,7 @@ select.theme {
   gap: 1ch;
 }
 .wt .pts a {
+  color: var(--dim);
   counter-increment: more -1;
 }
 .wt .pts .more {
@@ -4510,6 +4519,15 @@ select.theme {
 .wt.done .c,
 .wt.done .c * {
   color: var(--dim);
+}
+.wt.done .c [data-tone] {
+  color: color-mix(in srgb, var(--tone) var(--ink), var(--bg));
+}
+.wt.done .tkd {
+  border-color: color-mix(in srgb, var(--tone) var(--ink), var(--bg));
+}
+.wt.done .tkd:not([data-tone="off"]) {
+  background: color-mix(in srgb, var(--tone) var(--ink), var(--bg));
 }
 .wt.done .ag {
   background: color-mix(in srgb, var(--dim) var(--wash), transparent);

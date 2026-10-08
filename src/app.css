@@ -94,13 +94,21 @@ body {
   background: var(--tone);
   border: 1px solid transparent;
 }
+.t-bar {
+  width: 3px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--tone) var(--edge), transparent);
+}
+.t-bar.loud {
+  background: var(--tone);
+}
 .t-band {
   color: color-mix(in srgb, var(--tone) var(--ink), var(--fg));
   background: color-mix(in srgb, var(--tone) var(--wash), var(--bg));
   border: 1px solid color-mix(in srgb, var(--tone) var(--edge), var(--bg));
 }
 /* off is the absence of a state: never filled, always dashed */
-[data-tone="off"]:is(.t-solid, .t-edge, .t-band) {
+[data-tone="off"]:is(.t-solid, .t-edge, .t-band, .t-bar) {
   color: var(--tone);
   background: none;
   border: 1px dashed color-mix(in srgb, var(--tone) var(--edge), var(--line));
