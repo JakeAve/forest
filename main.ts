@@ -21,6 +21,7 @@ const {
   cache,
   watcher,
   autoRebase,
+  autoClose,
   notify,
   sessions,
   routes,
@@ -46,6 +47,7 @@ setInterval(() => {
 setInterval(sse.ping, 20_000);
 
 await autoRebase.load();
+await autoClose.load();
 setInterval(() => {
   autoRebase.tick().catch((e) => {
     stats.errorsTotal++;

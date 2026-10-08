@@ -27,6 +27,7 @@ export type Worktree = {
   pr: Pr | null;
   ticket: Ticket | null;
   autoRebase: AutoRebase | null;
+  autoClose: AutoClose | null;
   agents: AgentSession[];
 };
 
@@ -54,6 +55,7 @@ export type SessionInfo = {
 };
 
 export type AutoRebase = { on: true; error: string | null };
+export type AutoClose = AutoRebase;
 
 export type Repo = {
   name: string;

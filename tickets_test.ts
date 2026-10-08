@@ -52,14 +52,15 @@ Deno.test("tickets: a failed refresh keeps the last status; no command, no fetch
   assertEquals(sh.calls.length, 2);
 });
 
-Deno.test("tickets: act runs the command with $2, then re-reads; refuses an unoffered status", async () => {
+Deno.test("tickets: act runs the command with $2 and $3, then re-reads; refuses an unoffered status", async () => {
   let status = "todo";
   const sh = fakeExec({
     [CMD]: () => JSON.stringify({ status, actions: ["done"] }),
-    ['sh -c tk "$1" "$2" forest-ticket ROM-1 done']: () => {
-      status = "done";
-      return "";
-    },
+    ['sh -c tk "$1" "$2" "$3" forest-ticket ROM-1 done https://gh/pull/7']:
+      () => {
+        status = "done";
+        return "";
+      },
   });
   const tickets = createTickets({
     sh,
@@ -69,6 +70,6 @@ Deno.test("tickets: act runs the command with $2, then re-reads; refuses an unof
   tickets.info("/r", "r", "ROM-1");
   await new Promise((r) => setTimeout(r));
   await assertRejects(() => tickets.act("/r", "r", "ROM-1", "cancelled"));
-  await tickets.act("/r", "r", "ROM-1", "done");
+  await tickets.act("/r", "r", "ROM-1", "done", "https://gh/pull/7");
   assertEquals(tickets.info("/r", "r", "ROM-1")?.status, "done");
 });

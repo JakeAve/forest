@@ -28,6 +28,7 @@ const make = (
 ) => {
   const store = createStore({
     prFor: (_r, w) => w.pr,
+    ticket: (_r, w) => w.ticket,
     procs: () => procs,
     agents: () => agents,
     onSnapshot: () => {},
@@ -42,6 +43,7 @@ const make = (
     mergeBase: async () => "HEAD",
   });
   const removed: string[][] = [];
+  const closes: [string, boolean][] = [];
   const t = createTools({
     store,
     files,
@@ -61,9 +63,15 @@ const make = (
       },
     },
     autoRebase: { set: () => Promise.resolve() },
+    autoClose: {
+      set: (wt, on) => {
+        closes.push([wt, on]);
+        return Promise.resolve();
+      },
+    },
     log: () => {},
   });
-  return Object.assign(t, { removed });
+  return Object.assign(t, { removed, closes });
 };
 
 Deno.test("wts filters by pr state and recent", async () => {
@@ -336,4 +344,37 @@ Deno.test("set_auto_merge needs an open PR", async () => {
     ),
     { error: "no open PR" },
   );
+});
+
+Deno.test("set_auto_close needs a ticket status to enable, never a PR or to disable", async () => {
+  const info = {
+    title: "",
+    status: "",
+    category: null,
+    assignee: null,
+    actions: [],
+  };
+  const t = make([
+    mkRepo({
+      worktrees: [
+        worktree({
+          path: "/r/forest",
+          ticket: { key: "ROM-1", url: "u", info },
+        }),
+        worktree({
+          path: "/r/forest-a",
+          branch: "a",
+          ticket: { key: "ROM-2", url: "u" },
+        }),
+      ],
+    }),
+  ]);
+  const err = async (wt: string) =>
+    t.toolError(
+      await t.callTool("set_auto_close", { wt, enable: true }).catch((e) => e),
+    );
+  assertEquals(await err("/r/forest-a"), { error: "no ticket status" });
+  await t.callTool("set_auto_close", { wt: "/r/forest", enable: true });
+  await t.callTool("set_auto_close", { wt: "/r/forest-a", enable: false });
+  assertEquals(t.closes, [["/r/forest", true], ["/r/forest-a", false]]);
 });

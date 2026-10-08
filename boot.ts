@@ -10,6 +10,7 @@ import { createPorts } from "./ports.ts";
 import { createSse } from "./sse.ts";
 import { createWatcher } from "./watcher.ts";
 import { createAutoRebase } from "./autorebase.ts";
+import { createAutoClose } from "./autoclose.ts";
 import { createActions } from "./actions.ts";
 import { createStore } from "./store.ts";
 import { PROVIDERS } from "./agents.ts";
@@ -83,6 +84,7 @@ export function boot(opts: {
       return info ? { ...t!, info } : t;
     },
     autoRebase: (wt) => autoRebase.status(wt),
+    autoClose: (wt) => autoClose.status(wt),
     prError: (r) => prs.prError(r),
     procs: () => ports.current(),
     prListed: (r) => prs.listed(r),
@@ -91,6 +93,7 @@ export function boot(opts: {
       sse.broadcast(j);
       notify.observe(j);
       cache.save(j);
+      void autoClose.tick();
     },
     stats,
   });
@@ -129,6 +132,12 @@ export function boot(opts: {
     afterMutation: () => watcher.afterMutation(),
     log: (o) => log.line(o),
   });
+  const autoClose = createAutoClose({
+    store,
+    tickets,
+    path: join(dir, "autoclose.json"),
+    log: (o) => log.line(o),
+  });
   const actions = createActions({
     sh,
     store,
@@ -143,6 +152,7 @@ export function boot(opts: {
     sessions,
     actions,
     autoRebase,
+    autoClose,
     log: (o) => log.line(o),
   });
   const routes = createRoutes({
@@ -161,6 +171,7 @@ export function boot(opts: {
     files,
     watcher,
     autoRebase,
+    autoClose,
     actions,
     notify,
     sse,
@@ -177,6 +188,7 @@ export function boot(opts: {
     cache,
     watcher,
     autoRebase,
+    autoClose,
     notify,
     sessions,
     routes,

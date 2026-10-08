@@ -5,6 +5,7 @@ import { createFiles } from "./files.ts";
 import { createSse } from "./sse.ts";
 import { createStore } from "./store.ts";
 import { createTools } from "./tools.ts";
+import { createAutoClose } from "./autoclose.ts";
 import { createAutoRebase } from "./autorebase.ts";
 import { createActions } from "./actions.ts";
 import { createRoutes } from "./routes.ts";
@@ -100,6 +101,12 @@ const make = (opts?: {
     afterMutation: () => {},
     log: () => {},
   });
+  const autoClose = createAutoClose({
+    store,
+    tickets: { act: () => Promise.resolve() },
+    path: "/tmp/forest-test/autoclose.json",
+    log: () => {},
+  });
   const actions = createActions({
     sh,
     store,
@@ -115,6 +122,7 @@ const make = (opts?: {
     sessions: { all: () => new Map() },
     actions,
     autoRebase,
+    autoClose,
     log: (o) => logged.push(o),
   });
   const routes = createRoutes({
@@ -133,6 +141,7 @@ const make = (opts?: {
     files,
     watcher,
     autoRebase,
+    autoClose,
     actions,
     notify,
     sse,

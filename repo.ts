@@ -190,6 +190,7 @@ export function createRepo(
       pr: null,
       ticket: null,
       autoRebase: null,
+      autoClose: null,
       agents: [],
     };
   }

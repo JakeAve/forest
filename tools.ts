@@ -10,6 +10,7 @@ import {
   sessionTag,
 } from "./parse.ts";
 import type { ActionsApi } from "./actions.ts";
+import type { AutoCloseApi } from "./autoclose.ts";
 import type { AutoRebaseApi } from "./autorebase.ts";
 import type { FilesApi } from "./files.ts";
 import type { StoreApi } from "./store.ts";
@@ -40,6 +41,7 @@ export function createTools(deps: {
   sessions: Pick<SessionsApi, "all">;
   actions: Pick<ActionsApi, "autoMerge" | "removeWts">;
   autoRebase: Pick<AutoRebaseApi, "set">;
+  autoClose: Pick<AutoCloseApi, "set">;
   log: (o: Record<string, unknown>) => void;
 }) {
   const {
@@ -49,6 +51,7 @@ export function createTools(deps: {
     sessions,
     actions,
     autoRebase,
+    autoClose,
     log,
     home: HOME,
   } = deps;
@@ -244,6 +247,24 @@ export function createTools(deps: {
         const w = resolveWt(String(a.wt));
         await autoRebase.set(w.path, a.enable as boolean);
         return { wt: w.path, autoRebase: a.enable };
+      },
+    },
+    set_auto_close: {
+      kind: "write",
+      desc:
+        "Turn close-ticket-on-merge on or off for a worktree: once its PR merges (or now, if it already has), its ticket moves to its done status through the ticket command, then this turns itself off. Safe to arm before the PR exists.",
+      input: { wt: z.string(), enable: qbool },
+      run: async (a) => {
+        const w = resolveWt(String(a.wt));
+        if (a.enable && !w.ticket?.info) {
+          throw new ToolError("no ticket status");
+        }
+        await autoClose.set(w.path, a.enable as boolean);
+        return {
+          wt: w.path,
+          ticket: w.ticket?.key ?? null,
+          autoClose: a.enable,
+        };
       },
     },
     remove_wts: {
