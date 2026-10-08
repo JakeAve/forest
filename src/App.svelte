@@ -1533,9 +1533,10 @@ $effect(() => {
 
 const CHECK = {
   pass: ["✓", "ok"],
-  fail: ["✗", "bad"],
-  pending: ["●", "warn"],
+  fail: ["✕", "bad"],
+  pending: ["", "warn"],
 };
+const TAG = { P0: "bad", P1: "bad", P2: "warn" };
 const TICKET_ST = {
   todo: "off",
   doing: "ok",
@@ -1544,7 +1545,7 @@ const TICKET_ST = {
 };
 const VERDICT = {
   APPROVED: ["✓ Approved", "ok"],
-  CHANGES_REQUESTED: ["✗ Changes requested", "bad"],
+  CHANGES_REQUESTED: ["! Changes requested", "bad"],
   COMMENTED: ["Commented", "off"],
 };
 
@@ -2758,7 +2759,7 @@ async function confirmDiscard() {
            onclick={() => toggleRepo(key)}
            onkeydown={(e) => e.key === "Enter" ? toggleRepo(key) : menuKey(e, items())}
            oncontextmenu={(e) => openMenu(e, items())}>
-        <span class="car">{isOpen(key) ? "▼" : "▶"}</span>
+        <span class="car">{isOpen(key) ? "▾" : "▸"}</span>
         <span class="rn">{label}</span>
         <span class="ct">{count}{#if summary}<span class="sum">{` · ${summary}`}</span>{/if}</span>
         {#if r}
@@ -2957,7 +2958,7 @@ async function confirmDiscard() {
              onclick={() => r.dir ? toggleDir(r.path) : pick(r)}
              onkeydown={(e) => e.key === "Enter" ? (r.dir ? toggleDir(r.path) : pick(r)) : menuKey(e, fileItems(r))}
              oncontextmenu={(e) => openMenu(e, fileItems(r))}>
-          <span class="car">{r.dir ? (openDirs[r.path] ? "▼" : "▶") : ""}</span>
+          <span class="car">{r.dir ? (openDirs[r.path] ? "▾" : "▸") : ""}</span>
           <span class="p" title={r.path}><span class="dir">{dir}</span>{@render rowName(r.path, name)}{r.dir && renaming !== r.path ? "/" : ""}</span>
           {#if f}
             <span class="st {f.status}">{f.status === "U" ? "?" : f.status}</span>
@@ -3035,7 +3036,7 @@ async function confirmDiscard() {
         <span class="meta" title={new Date(diskAt).toLocaleTimeString()}>Updated {ago(diskAt)}</span>
       {/if}
       {#if diffDirty}
-        <span class="unsaved">● Unsaved ⌘S</span>
+        <span class="unsaved" data-tone="warn">● Unsaved ⌘S</span>
         <button class="btn p" onclick={() => diffRef?.save()}>Save</button>
         <button class="btn" title="discard editor changes, reload from disk"
                 onclick={() => { banner = null; diffRef?.reloadTheirs(); }}>Discard</button>
@@ -3110,7 +3111,7 @@ async function confirmDiscard() {
   </div>
   {/if}
   {#snippet closeX(fn)}
-    <button class="circ x" title="Close (Esc)" aria-label="Close" onclick={fn}>✕</button>
+    <button class="circ x" title="Close (Esc)" aria-label="Close" onclick={fn}>×</button>
   {/snippet}
   <div class="ctx" popover="manual" bind:this={menuEl}
        ontoggle={(e) => e.newState === "closed" && closeMenu()}>
@@ -3196,7 +3197,7 @@ async function confirmDiscard() {
         {#if c}
           <div class="r sm">
             <span class="dim t">{p.baseRefName} ← {c.headRefName}</span>
-            <span class="ago"><span data-tone="ok">+{c.additions}</span> <span data-tone="bad">−{c.deletions}</span> · {c.changedFiles} files</span>
+            <span class="ago"><span class="pl">+{c.additions}</span> <span class="mi">−{c.deletions}</span> · {c.changedFiles} files</span>
           </div>
         {/if}
       </div>
@@ -3289,7 +3290,7 @@ async function confirmDiscard() {
                 <span class="r0">
                   <span>{t.login}</span>
                   <span class="mono dim t">{t.path}{t.line ? `:${t.line}` : ""}</span>
-                  {#if t.tag}<span class="tag {t.tag}">{t.tag}</span>{/if}
+                  {#if t.tag}<span class="tag" data-tone={TAG[t.tag] ?? "off"}>{t.tag}</span>{/if}
                   <span class="ago">{ago(t.at)}</span><span class="go">↗</span>
                 </span>
                 <span class="txt">{t.body}</span>
@@ -3329,9 +3330,9 @@ async function confirmDiscard() {
           {@const opt = c.checks.filter((k) => !k.required)}
           {#snippet checkRow(k)}
             <a class="r lk chk {k.bucket}" href={k.url} target="_blank" rel="noreferrer">
-              <span class="g" data-tone={CHECK[k.bucket]?.[1] ?? "off"}>{CHECK[k.bucket]?.[0] ?? "○"}</span>
+              <span class="g" data-tone={CHECK[k.bucket]?.[1] ?? "off"}>{#if k.bucket === "pending"}<span class="spin"></span>{:else}{CHECK[k.bucket]?.[0] ?? "○"}{/if}</span>
               <span class="t">{k.name}</span>
-              <span class="dur">{runFor(k)}</span>
+              <span class="dur" data-tone={k.bucket === "pending" ? "warn" : undefined}>{runFor(k)}</span>
               <span class="fin">{k.bucket === "pending" ? "–" : ago(k.completedAt)}</span>
               <span class="go">↗</span>
             </a>
@@ -3604,7 +3605,7 @@ async function confirmDiscard() {
 .circ.x {
   width: 1.25rem;
   height: 1.25rem;
-  font-size: 0.5625rem;
+  font-size: 0.875rem;
   margin-left: auto;
 }
 .card .ago + .x {
@@ -3912,10 +3913,10 @@ dialog.settings::backdrop {
   margin: 0 0.375rem 0.25rem;
   padding-left: 0.75rem;
   border-radius: 0.625rem;
-  background: color-mix(in srgb, var(--acc) 12%, var(--bg2));
+  background: color-mix(in srgb, var(--acc) var(--wash), var(--bg2));
 }
 .bhead.selbar.confirm {
-  background: color-mix(in srgb, var(--danger) 14%, var(--bg2));
+  background: color-mix(in srgb, var(--danger) var(--wash), var(--bg2));
 }
 .bhead .names {
   font-family: var(--mono);
@@ -4089,12 +4090,12 @@ dialog.settings::backdrop {
 }
 .btn.on {
   color: var(--acc);
-  background: color-mix(in srgb, var(--acc) 12%, var(--bg3));
-  border-color: color-mix(in srgb, var(--acc) 45%, var(--line));
+  background: color-mix(in srgb, var(--acc) var(--wash), var(--bg3));
+  border-color: color-mix(in srgb, var(--acc) var(--edge), var(--line));
 }
 .btn.dg {
   color: var(--danger);
-  border-color: color-mix(in srgb, var(--danger) 45%, var(--line));
+  border-color: color-mix(in srgb, var(--danger) var(--edge), var(--line));
 }
 .btn.dg:hover {
   color: var(--danger);
@@ -4216,7 +4217,7 @@ select.theme {
 .repo .car {
   width: 0.5625rem;
   color: var(--dimmer);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 .repo .rn {
   color: var(--fg);
@@ -4309,7 +4310,7 @@ select.theme {
   z-index: 19;
   border: 1px solid var(--acc);
   border-radius: 0.25rem;
-  background: color-mix(in srgb, var(--acc) 10%, transparent);
+  background: color-mix(in srgb, var(--acc) var(--wash), transparent);
   pointer-events: none;
 }
 .colghost span {
@@ -4326,7 +4327,7 @@ select.theme {
 }
 .cols > .moving,
 .wt .moving {
-  background: color-mix(in srgb, var(--acc) 8%, transparent);
+  background: color-mix(in srgb, var(--acc) var(--wash), transparent);
   color: var(--dimmer);
 }
 :global(html.colsizing),
@@ -4357,7 +4358,7 @@ select.theme {
   background: var(--hov);
 }
 .wt.sel {
-  background: color-mix(in srgb, var(--acc) 14%, var(--bg));
+  background: color-mix(in srgb, var(--acc) var(--wash), var(--bg));
   box-shadow: inset 3px 0 0 var(--acc);
 }
 .wt .br {
@@ -4511,8 +4512,8 @@ select.theme {
   color: var(--dim);
 }
 .wt.done .ag {
-  background: color-mix(in srgb, var(--dim) 12%, transparent);
-  border-color: color-mix(in srgb, var(--dim) 35%, transparent);
+  background: color-mix(in srgb, var(--dim) var(--wash), transparent);
+  border-color: color-mix(in srgb, var(--dim) var(--edge), transparent);
 }
 .wt.cached .br {
   color: var(--dim);
@@ -4551,8 +4552,8 @@ select.theme {
   border-radius: 999px;
   font: 0.6875rem var(--mono);
   color: var(--ag);
-  background: color-mix(in srgb, var(--ag) 12%, transparent);
-  border: 1px solid color-mix(in srgb, var(--ag) 35%, transparent);
+  background: color-mix(in srgb, var(--ag) var(--wash), transparent);
+  border: 1px solid color-mix(in srgb, var(--ag) var(--edge), transparent);
   cursor: pointer;
 }
 .ag:hover {
@@ -4565,8 +4566,8 @@ select.theme {
 .port {
   font: 0.625rem var(--mono);
   color: var(--acc);
-  background: color-mix(in srgb, var(--acc) 10%, transparent);
-  border: 1px solid color-mix(in srgb, var(--acc) 35%, transparent);
+  background: color-mix(in srgb, var(--acc) var(--wash), transparent);
+  border: 1px solid color-mix(in srgb, var(--acc) var(--edge), transparent);
   border-radius: 999px;
   padding: 0 0.375rem;
   text-decoration: none;
@@ -4620,7 +4621,7 @@ select.theme {
 }
 @keyframes flash {
   0% {
-    background: color-mix(in srgb, var(--acc) 22%, var(--bg));
+    background: color-mix(in srgb, var(--acc) var(--tint), var(--bg));
   }
   100% {
     background: transparent;
@@ -4653,7 +4654,7 @@ select.theme {
 }
 .f.tr .car {
   color: var(--dimmer);
-  font-size: 0.5625rem;
+  font-size: 0.75rem;
 }
 .f .st {
   font-weight: 700;
@@ -4693,11 +4694,13 @@ select.theme {
   font-size: 0.6875rem;
   white-space: nowrap;
 }
-.n .pl {
+.pl {
   color: var(--addfg);
 }
-.n .mi {
+.mi {
   color: var(--delfg);
+}
+.n .mi {
   margin-left: 0.375rem;
 }
 
@@ -4829,7 +4832,6 @@ select.theme {
   border-color: var(--acc);
 }
 .unsaved {
-  color: var(--warn);
   font: 0.6875rem var(--mono);
 }
 .repo .plus {
@@ -4925,8 +4927,8 @@ select.theme {
 }
 .mtag.lead {
   color: var(--acc);
-  border-color: color-mix(in srgb, var(--acc) 35%, transparent);
-  background: color-mix(in srgb, var(--acc) 10%, transparent);
+  border-color: color-mix(in srgb, var(--acc) var(--edge), transparent);
+  background: color-mix(in srgb, var(--acc) var(--wash), transparent);
 }
 .ctx button small {
   display: block;
@@ -4943,7 +4945,7 @@ select.theme {
   color: var(--danger);
 }
 .ctx button.dg:hover {
-  background: color-mix(in srgb, var(--danger) 22%, var(--bg2));
+  background: color-mix(in srgb, var(--danger) var(--tint), var(--bg2));
   color: var(--danger);
 }
 .card {
@@ -5077,14 +5079,6 @@ select.theme {
 }
 .card .tag {
   font: 0.6875rem var(--mono);
-  color: var(--dim);
-}
-.card .tag.P0,
-.card .tag.P1 {
-  color: var(--danger);
-}
-.card .tag.P2 {
-  color: var(--warn);
 }
 .card .t {
   min-width: 0;
@@ -5121,9 +5115,6 @@ select.theme {
 .card .cols .fin {
   font-family: var(--sans);
   color: var(--dim);
-}
-.card .chk.pending .dur {
-  color: var(--warn);
 }
 .card .dim {
   color: var(--dim);
@@ -5162,12 +5153,12 @@ select.theme {
 }
 .card .btn.ok {
   color: var(--addfg);
-  border-color: color-mix(in srgb, var(--acc) 55%, var(--line));
+  border-color: color-mix(in srgb, var(--acc) var(--ink), var(--line));
   background: var(--add);
 }
 .card .btn.warn {
   color: var(--warn);
-  border-color: color-mix(in srgb, var(--warn) 45%, var(--line));
+  border-color: color-mix(in srgb, var(--warn) var(--edge), var(--line));
 }
 .card .foot .btn {
   text-decoration: none;

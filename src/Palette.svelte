@@ -184,7 +184,7 @@ kbd {
   color: var(--danger);
 }
 .dg.on {
-  background: color-mix(in srgb, var(--danger) 22%, var(--bg2));
+  background: color-mix(in srgb, var(--danger) var(--tint), var(--bg2));
   color: var(--danger);
 }
 .none {

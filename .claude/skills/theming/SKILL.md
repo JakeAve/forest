@@ -55,9 +55,44 @@ defined once in `app.css`, and `theme_test.ts` fails if a component maps a tone 
 - `off` is never filled: every treatment draws it hollow and dashed. `ask` and `off` are
   both neutral, and `--dim` may sit only 1.3:1 from `--fg`, so shape tells them apart,
   not color.
-- Tints use the ladder `--wash` / `--edge` / `--ink`, not a new percentage.
+- Diff counts and file status are their own family, not tones: `.pl`/`.mi` and `.st.A/D/M/U`
+  use `--addfg`/`--delfg`/`--warn`/`--untr`, matching the editor's diff colors.
 - A new tone needs a reason no existing one covers, a hue that doesn't collide with
   `--agent-*`, and a row in both tables above.
+
+## Shades
+
+A tint of a hue uses the ladder in `app.css`, never a new percentage:
+
+| Step | Value | Use |
+|---|---|---|
+| `--wash` | 12% | pill and selection backgrounds, hover rows |
+| `--tint` | 25% | active and hover fills, find hits, flashes |
+| `--edge` | 40% | borders |
+| `--ink` | 65% | text on a band, current find hit |
+
+Scrims (`--bg` over content) and `--mark2` (paired with the favicon in `theme.js`) are not
+tints and keep their own values.
+
+## Glyphs
+
+One glyph, one meaning. Reuse one from this table before adding one, and add a row when
+you do.
+
+| Glyph | Means |
+|---|---|
+| `✓` | passed, approved |
+| `✕` | failed (text, or `GLYPH.fail` as SVG) |
+| `!` | changes requested |
+| `.spin` | running, pending (takes `--tone` from its parent) |
+| `○` | skipped, canceled, no result |
+| `●` | uncommitted: dirty count, unsaved edits, modified file |
+| `↑n` `↓n` | ahead, behind |
+| `↗` | opens outside Forest |
+| `×` | close |
+| `▸` `▾` | collapsed, expanded |
+| `›` | drill in, submenu, breadcrumb |
+| `⋯` | more actions |
 
 ## Check a theme
 

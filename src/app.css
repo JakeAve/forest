@@ -32,7 +32,8 @@
   --agent-a: #f78c6c;
   --agent-b: #82aaff;
   --wash: 12%;
-  --edge: 50%;
+  --tint: 25%;
+  --edge: 40%;
   --ink: 65%;
   --head: 2.75rem;
   --mono: ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace;
@@ -166,19 +167,22 @@ body {
   background: var(--del) !important;
 }
 .cm-merge-a .cm-changedText {
-  background: color-mix(in srgb, var(--delfg) 12%, transparent) !important;
+  background: color-mix(in srgb, var(--delfg) var(--wash), transparent)
+    !important;
 }
 .cm-merge-b .cm-changedLine {
   background: var(--add) !important;
 }
 .cm-merge-b .cm-changedText {
-  background: color-mix(in srgb, var(--addfg) 12%, transparent) !important;
+  background: color-mix(in srgb, var(--addfg) var(--wash), transparent)
+    !important;
 }
 .cm-mergeView .cm-deletedChunk {
   background: var(--del) !important;
 }
 .cm-mergeView .cm-deletedChunk del {
-  background: color-mix(in srgb, var(--delfg) 12%, transparent) !important;
+  background: color-mix(in srgb, var(--delfg) var(--wash), transparent)
+    !important;
   text-decoration: none;
 }
 .cm-mergeView .cm-collapsedLines {
@@ -201,11 +205,11 @@ body {
 }
 
 .cm-mergeView .findhit {
-  background: color-mix(in srgb, var(--acc) 25%, transparent);
+  background: color-mix(in srgb, var(--acc) var(--tint), transparent);
   border-radius: 2px;
 }
 .cm-mergeView .findhit.cur {
-  background: color-mix(in srgb, var(--acc) 55%, transparent);
+  background: color-mix(in srgb, var(--acc) var(--ink), transparent);
 }
 .cm-mergeView .lineflash {
   animation: lineflash 1.6s ease-out;
@@ -213,7 +217,7 @@ body {
 @keyframes lineflash {
   0%,
   40% {
-    background: color-mix(in srgb, var(--acc) 30%, transparent);
+    background: color-mix(in srgb, var(--acc) var(--tint), transparent);
   }
   100% {
     background: transparent;
@@ -263,7 +267,7 @@ body {
   height: 0.7rem;
   vertical-align: -0.1em;
   border: 2px solid var(--dimmer);
-  border-top-color: var(--acc);
+  border-top-color: var(--tone, var(--acc));
   border-radius: 50%;
   animation: spin 0.7s linear infinite;
 }
