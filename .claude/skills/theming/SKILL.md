@@ -60,8 +60,7 @@ defined once in `app.css`, and `theme_test.ts` fails if a component maps a tone 
   so green only ever means `ok`.
 - A row whose PR is merged or closed keeps its tones at `--ink` toward `--bg`: merged
   reads dim purple, not gray.
-- A status icon goes after its label (`#617 needs review`, `ROM-3786 ● ✓`). Auto-merge
-  and auto-rebase icons still go before the PR number.
+- Order is label, automation icons, status: `#617 ⤳ ↻ needs review`, `ROM-3786 ✓ ●`.
 - Diff counts and file status are their own family, not tones: `.pl`/`.mi` and `.st.A/D/M/U`
   use `--addfg`/`--delfg`/`--warn`/`--untr`, matching the editor's diff colors.
 - A new tone needs a reason no existing one covers, a hue that doesn't collide with
