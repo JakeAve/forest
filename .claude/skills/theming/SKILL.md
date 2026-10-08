@@ -29,6 +29,36 @@ vars through `resolveTheme` in `src/theme.js`; the mapping lives in its `CHAINS`
 - Agent badges use `--agent-a`/`--agent-b`, named by `tone` in `PROVIDERS` (`agents.ts`).
   A new provider takes one of these or a new `--agent-*` var, never a `--tk-*` one.
 
+## Status tones
+
+A status says two things: what it means (tone) and how loud it is (weight). `data-tone`
+sets `--tone` and the text color. A `t-*` class from `app.css` sets the weight. Both are
+defined once in `app.css`, and `theme_test.ts` fails if a component maps a tone itself.
+
+| Tone | Var | Means |
+|---|---|---|
+| `ok` | `--acc` | ready, passed, approved, in progress |
+| `warn` | `--warn` | running, pending, dirty, behind |
+| `bad` | `--danger` | failing, conflicts, changes requested, errors |
+| `ask` | `--fg` | waiting on a person (needs review) |
+| `done` | `--merged` | merged, ticket done |
+| `off` | `--dim` | draft, closed, skipped, canceled, quiet |
+
+| Weight | Class | Use |
+|---|---|---|
+| text | (none) | inline in cards and lists |
+| pill | `t-pill` | loud status in a row |
+| edge | `t-edge` | status label in a card header |
+| solid | `t-solid` | the PR number chip |
+| band | `t-band` | banners |
+
+- `off` is never filled: every treatment draws it hollow and dashed. `ask` and `off` are
+  both neutral, and `--dim` may sit only 1.3:1 from `--fg`, so shape tells them apart,
+  not color.
+- Tints use the ladder `--wash` / `--edge` / `--ink`, not a new percentage.
+- A new tone needs a reason no existing one covers, a hue that doesn't collide with
+  `--agent-*`, and a row in both tables above.
+
 ## Check a theme
 
 ```bash

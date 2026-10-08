@@ -578,7 +578,7 @@ async function openPath(text) {
     errBanner(await res.text());
     return false;
   }
-  if (banner?.kind === "err") banner = null;
+  if (banner?.kind === "bad") banner = null;
   await openAt(await res.json());
   return true;
 }
@@ -1197,7 +1197,7 @@ async function copy(e, text, key, label = text) {
 
 function errBanner(text) {
   banner = {
-    kind: "err",
+    kind: "bad",
     text,
     actions: [{ label: "Dismiss", fn: () => (banner = null) }],
   };
@@ -1531,18 +1531,21 @@ $effect(() => {
   };
 });
 
-const CHECK_GLYPH = { pass: "✓", fail: "✗", pending: "●" };
-// Ticket status categories borrow the PR card's .st tones.
+const CHECK = {
+  pass: ["✓", "ok"],
+  fail: ["✗", "bad"],
+  pending: ["●", "warn"],
+};
 const TICKET_ST = {
-  todo: "draft",
-  doing: "doing",
-  done: "merged",
-  canceled: "closed",
+  todo: "off",
+  doing: "ok",
+  done: "done",
+  canceled: "off",
 };
 const VERDICT = {
   APPROVED: ["✓ Approved", "ok"],
   CHANGES_REQUESTED: ["✗ Changes requested", "bad"],
-  COMMENTED: ["Commented", "dim"],
+  COMMENTED: ["Commented", "off"],
 };
 
 const AM_ICON =
@@ -2579,7 +2582,7 @@ async function confirmDiscard() {
   </div>
 
   {#if banner}
-    <div class="banner {banner.kind}">
+    <div class="banner t-band" data-tone={banner.kind}>
       <span>{banner.text}</span><span class="sp"></span>
       {#each banner.actions as a (a.label)}
         <button class="btn" class:p={a.primary} onclick={a.fn}>{a.label}</button>
@@ -2588,7 +2591,7 @@ async function confirmDiscard() {
   {/if}
 
   {#if prOff && prOff.text !== prOffHidden}
-    <div class="banner warn" role="status" title={prOff.detail}>
+    <div class="banner t-band" data-tone="warn" role="status" title={prOff.detail}>
       <span>{prOff.text}</span><span class="sp"></span>
       <button class="btn" onclick={() => (prOffHidden = prOff.text)}>Dismiss</button>
     </div>
@@ -2816,7 +2819,7 @@ async function confirmDiscard() {
                 title={ti ? "⌘-click to open the ticket" : `open ticket ${w.ticket.key}`}
                 onclick={(e) => ti ? openCard(w, e, "ticket") : e.stopPropagation()}>{#if
                 w.autoClose}<svg class="g ac" class:err={w.autoClose.error} viewBox="0 0 16 16">{@html AC_ICON}</svg>{/if}{#if
-                ti?.category}<span class="tkd" data-cat={ti.category}></span>{/if}{w.ticket.key}</a>{/if}{:else if
+                ti?.category}<span class="tkd" data-tone={TICKET_ST[ti.category] ?? "off"}></span>{/if}{w.ticket.key}</a>{/if}{:else if
             col.key === "pr"}{#if w.pr}{@const s = prStatus(w.pr)}<a
                 class="prl" href={w.pr.url}
                 target="_blank" rel="noreferrer"
@@ -2824,12 +2827,12 @@ async function confirmDiscard() {
                   .filter(Boolean).join(": ")}
                 aria-haspopup="dialog" title="⌘-click to open on GitHub"
                 onclick={(e) => openCard(w, e)}>{#if w.pr.autoMerge}<svg class="g am" viewBox="0 0 16 16">{@html AM_ICON}</svg>{/if}{#if w.autoRebase}<svg class="g ar" class:err={w.autoRebase.error} viewBox="0 0 16 16">{@html AR_ICON}</svg>{/if}#{w.pr.number}<span
-                class="pst" class:pill={s.weight === "loud"} data-tone={s.tone}
+                class="pst" class:t-pill={s.weight === "loud"} data-tone={s.weight === "loud" ? s.tone : "off"}
                 title="{s.sinceLabel} for {ago(s.since)}">{#if s.glyph}<svg class="g" viewBox="0 0 16 16">{@html GLYPH[s.glyph]}</svg>{/if}{s.label.toLowerCase()}{s.since ? ` ${ago(s.since)}` : ""}</span></a>{:else if
               w.autoRebase}<span class="port ar" class:err={w.autoRebase.error}
                 title={w.autoRebase.error ?? "auto-rebase on"}><svg class="g ar" viewBox="0 0 16 16">{@html AR_ICON}</svg></span>{/if}{:else if
-            col.key === "changes"}{#if w.dirty}<span class="warn">●{w.dirty}</span>{/if}{:else if
-            col.key === "sync"}{@const ab = prAb(w)}{#if ab.ahead || ab.behind}<span class:warn={ab.behind > 0}
+            col.key === "changes"}{#if w.dirty}<span data-tone="warn">●{w.dirty}</span>{/if}{:else if
+            col.key === "sync"}{@const ab = prAb(w)}{#if ab.ahead || ab.behind}<span data-tone={ab.behind > 0 ? "warn" : undefined}
                 title={w.pr?.state === "OPEN"
                   ? `${ab.behind} behind ${w.pr.baseRefName}, ${ab.ahead} ahead${
                     ab.behind > 0 ? " — right-click to update branch" : ""
@@ -3147,7 +3150,7 @@ async function confirmDiscard() {
       <div class="top">
         <div class="r">
           <a class="port" href={t.url} target="_blank" rel="noreferrer">{t.key} ↗</a>
-          {#if ti.status}<span class="st {TICKET_ST[ti.category] ?? 'review'}">{ti.status}</span>{/if}
+          {#if ti.status}<span class="st t-edge" data-tone={TICKET_ST[ti.category] ?? "ask"}>{ti.status}</span>{/if}
           {#if ti.assignee}<span class="ago">{ti.assignee}</span>{/if}
           {@render closeX(hideCard)}
         </div>
@@ -3169,7 +3172,7 @@ async function confirmDiscard() {
             <span class="cbx" class:on={!!cardWt.autoClose}></span>Close {t.key} on merge
           </label>
           {#if cardWt.autoClose?.error}
-            <div class="r bad">{cardWt.autoClose.error}</div>
+            <div class="r" data-tone="bad">{cardWt.autoClose.error}</div>
           {/if}
         </section>
       {/if}
@@ -3184,8 +3187,8 @@ async function confirmDiscard() {
       {@const s = prStatus(p)}
       <div class="top">
         <div class="r">
-          <a class="port pr" data-tone={s.tone} href={p.url} target="_blank" rel="noreferrer">#{p.number} ↗</a>
-          <span class="st {s.tone}">{s.label}</span>
+          <a class="pr t-solid" data-tone={s.tone} href={p.url} target="_blank" rel="noreferrer">#{p.number} ↗</a>
+          <span class="st t-edge" data-tone={s.tone}>{s.label}</span>
           {#if c}<span class="dim t">by {c.author} · {ago(c.createdAt)}</span><span class="ago">updated {ago(c.updatedAt)}</span>{/if}
           {@render closeX(hideCard)}
         </div>
@@ -3193,7 +3196,7 @@ async function confirmDiscard() {
         {#if c}
           <div class="r sm">
             <span class="dim t">{p.baseRefName} ← {c.headRefName}</span>
-            <span class="ago"><span class="ok">+{c.additions}</span> <span class="bad">−{c.deletions}</span> · {c.changedFiles} files</span>
+            <span class="ago"><span data-tone="ok">+{c.additions}</span> <span data-tone="bad">−{c.deletions}</span> · {c.changedFiles} files</span>
           </div>
         {/if}
       </div>
@@ -3221,11 +3224,11 @@ async function confirmDiscard() {
         <section>
           <div class="hd"><span>Merge</span></div>
           {#if p.mergeable === "CONFLICTING"}
-            <div class="r bad">Conflicts with {p.baseRefName}</div>
+            <div class="r" data-tone="bad">Conflicts with {p.baseRefName}</div>
           {:else}
             <div class="r dim">No conflicts</div>
           {/if}
-          <div class="r" class:warn={behind > 0} class:dim={!behind}>
+          <div class="r" data-tone={behind ? "warn" : "off"}>
             <span>{behind ? `↓${behind} behind` : "Up to date with"} {p.baseRefName}</span>
             {#if behind > 0}
               <button class="btn" disabled={busy["ub:" + w.path]}
@@ -3243,7 +3246,7 @@ async function confirmDiscard() {
             <span class="cbx" class:on={!!w.autoRebase}></span>Auto-rebase
           </label>
           {#if w.autoRebase?.error}
-            <div class="r bad">{w.autoRebase.error}</div>
+            <div class="r" data-tone="bad">{w.autoRebase.error}</div>
           {/if}
           {#if w.ticket?.info}
             <label class="r">
@@ -3261,7 +3264,7 @@ async function confirmDiscard() {
             {#each c.reviews as rv (rv.login)}
               <a class="r lk" href={rv.url} target="_blank" rel="noreferrer">
                 <span class="t">{rv.login}</span>
-                <span class={VERDICT[rv.state]?.[1]}>{VERDICT[rv.state]?.[0]}</span>
+                <span data-tone={VERDICT[rv.state]?.[1]}>{VERDICT[rv.state]?.[0]}</span>
                 <span class="ago">{ago(rv.at)}</span><span class="go">↗</span>
               </a>
             {/each}
@@ -3280,7 +3283,7 @@ async function confirmDiscard() {
           {@const done = c.threads.filter((t) => t.resolved)}
           <section>
             <div class="hd"><span>Code threads</span>
-              <span><span class:warn={open.length}>{open.length} unresolved</span> of {c.threads.length}</span></div>
+              <span><span data-tone={open.length ? "warn" : undefined}>{open.length} unresolved</span> of {c.threads.length}</span></div>
             {#each open as t (t.url)}
               <a class="th" href={t.url} target="_blank" rel="noreferrer">
                 <span class="r0">
@@ -3326,7 +3329,7 @@ async function confirmDiscard() {
           {@const opt = c.checks.filter((k) => !k.required)}
           {#snippet checkRow(k)}
             <a class="r lk chk {k.bucket}" href={k.url} target="_blank" rel="noreferrer">
-              <span class="g">{CHECK_GLYPH[k.bucket] ?? "○"}</span>
+              <span class="g" data-tone={CHECK[k.bucket]?.[1] ?? "off"}>{CHECK[k.bucket]?.[0] ?? "○"}</span>
               <span class="t">{k.name}</span>
               <span class="dur">{runFor(k)}</span>
               <span class="fin">{k.bucket === "pending" ? "–" : ago(k.completedAt)}</span>
@@ -3342,7 +3345,7 @@ async function confirmDiscard() {
             {#if req.length && opt.length}
               {@const bad = opt.filter((k) => k.bucket === "fail").length}
               <details ontoggle={placeCard}>
-                <summary class="hd"><span>{opt.length} optional checks{#if bad} · <span class="bad">{bad} failing</span>{/if}</span></summary>
+                <summary class="hd"><span>{opt.length} optional checks{#if bad} · <span data-tone="bad">{bad} failing</span>{/if}</span></summary>
                 {#each opt as k, i (k.url + i)}
                   {@render checkRow(k)}
                 {/each}
@@ -4376,7 +4379,6 @@ select.theme {
 }
 .wt .pst {
   font: 0.625rem var(--mono);
-  color: var(--dim);
 }
 .wt .c[data-col="pr"],
 .wt .prl {
@@ -4388,8 +4390,7 @@ select.theme {
 .wt .c .prl:hover {
   text-decoration: none;
 }
-.wt .pill {
-  --tone: var(--fg);
+.wt .t-pill {
   display: inline-block;
   min-width: 0;
   overflow: hidden;
@@ -4397,25 +4398,6 @@ select.theme {
   white-space: nowrap;
   vertical-align: bottom;
   padding: 0 0.375rem;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--tone) 15%, transparent);
-  color: var(--tone);
-}
-.pill[data-tone="ok"] {
-  --tone: var(--acc);
-}
-.pill[data-tone="warn"] {
-  --tone: var(--warn);
-}
-.pill[data-tone="bad"] {
-  --tone: var(--danger);
-}
-.pill[data-tone="merged"] {
-  --tone: var(--merged);
-}
-.pill[data-tone="draft"],
-.pill[data-tone="closed"] {
-  --tone: var(--dim);
 }
 .wt .more {
   margin-left: 0.25rem;
@@ -4524,9 +4506,6 @@ select.theme {
 .wt [data-col="active"] {
   color: var(--dimmer);
 }
-.wt .warn {
-  color: var(--warn);
-}
 .wt.done .c,
 .wt.done .c * {
   color: var(--dim);
@@ -4600,31 +4579,10 @@ select.theme {
   display: inline-flex;
   align-items: center;
   gap: 0.25em;
-  border-color: transparent;
-  color: var(--bg);
-  background: var(--acc);
-}
-.pr[data-tone="bad"] {
-  background: var(--danger);
-}
-.pr[data-tone="warn"] {
-  background: var(--warn);
-}
-.pr[data-tone="merged"] {
-  background: var(--merged);
-}
-.pr[data-tone="closed"] {
-  background: var(--dim);
-}
-.pr[data-tone="review"],
-.pr[data-tone="draft"] {
-  background: transparent;
-  color: var(--fg);
-  border-color: var(--dim);
-}
-.pr[data-tone="draft"] {
-  color: var(--dim);
-  border-style: dashed;
+  font: 0.625rem var(--mono);
+  border-radius: 999px;
+  padding: 0 0.375rem;
+  text-decoration: none;
 }
 .tkl {
   display: inline-flex;
@@ -4636,19 +4594,11 @@ select.theme {
   width: 0.4375rem;
   height: 0.4375rem;
   border-radius: 50%;
-  border: 1px solid var(--dim);
+  border: 1px solid var(--tone);
+  background: var(--tone);
 }
-.tkd[data-cat="doing"] {
-  border-color: var(--acc);
-  background: var(--acc);
-}
-.tkd[data-cat="done"] {
-  border-color: var(--merged);
-  background: var(--merged);
-}
-.tkd[data-cat="canceled"] {
-  border-color: var(--dimmer);
-  background: var(--dimmer);
+.tkd[data-tone="off"] {
+  background: none;
 }
 .pr:hover {
   filter: brightness(1.15);
@@ -4869,21 +4819,10 @@ select.theme {
   margin-bottom: 0.5rem;
   font-size: 0.75rem;
   flex: none;
-  border: 1px solid var(--line);
   border-radius: 0.875rem;
 }
 .banner .sp {
   flex: 1;
-}
-.banner.err {
-  background: color-mix(in srgb, var(--danger) 14%, var(--bg));
-  color: color-mix(in srgb, var(--danger) 65%, var(--fg));
-  border-color: color-mix(in srgb, var(--danger) 35%, var(--bg));
-}
-.banner.warn {
-  background: color-mix(in srgb, var(--warn) 14%, var(--bg));
-  color: color-mix(in srgb, var(--warn) 65%, var(--fg));
-  border-color: color-mix(in srgb, var(--warn) 35%, var(--bg));
 }
 .btn.p {
   color: var(--acc);
@@ -5039,27 +4978,13 @@ select.theme {
   font: 0.6875rem var(--mono);
 }
 .card .st {
-  border: 1px solid currentColor;
-  border-radius: 999px;
   padding: 0 0.4375rem;
   font-size: 0.6875rem;
-  color: var(--acc);
 }
 .card .st,
-.card .top .port {
+.card .top .pr {
   flex-shrink: 0;
   white-space: nowrap;
-}
-.card .st.draft,
-.card .st.closed {
-  color: var(--dim);
-}
-.card .st.merged {
-  color: var(--merged);
-}
-.card .st.review {
-  color: var(--fg);
-  border-color: var(--dim);
 }
 .card section {
   border-top: 1px solid var(--line);
@@ -5200,23 +5125,8 @@ select.theme {
 .card .chk.pending .dur {
   color: var(--warn);
 }
-.card .ok {
-  color: var(--acc);
-}
-.card .warn {
-  color: var(--warn);
-}
-.card .bad {
-  color: var(--danger);
-}
-.card .dim,
-.card .review,
-.card .draft,
-.card .closed {
+.card .dim {
   color: var(--dim);
-}
-.card .merged {
-  color: var(--merged);
 }
 .card .mono {
   font: 0.6875rem var(--mono);
@@ -5232,19 +5142,6 @@ select.theme {
   flex: none;
   text-align: center;
   font: 0.75rem var(--mono);
-}
-.card .chk.pass .g {
-  color: var(--acc);
-}
-.card .chk.fail .g {
-  color: var(--danger);
-}
-.card .chk.pending .g {
-  color: var(--warn);
-}
-.card .chk.skipping .g,
-.card .chk.cancel .g {
-  color: var(--dim);
 }
 .card .foot {
   display: flex;

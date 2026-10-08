@@ -31,6 +31,9 @@
   --tk-bad: #e06c78;
   --agent-a: #f78c6c;
   --agent-b: #82aaff;
+  --wash: 12%;
+  --edge: 50%;
+  --ink: 65%;
   --head: 2.75rem;
   --mono: ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace;
   --sans: -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
@@ -53,6 +56,58 @@ body {
 }
 #app {
   height: 100vh;
+}
+
+/* Status tones: data-tone picks the color, a t-* class picks the weight. */
+[data-tone] {
+  color: var(--tone);
+}
+[data-tone="ok"] {
+  --tone: var(--acc);
+}
+[data-tone="warn"] {
+  --tone: var(--warn);
+}
+[data-tone="bad"] {
+  --tone: var(--danger);
+}
+[data-tone="ask"] {
+  --tone: var(--fg);
+}
+[data-tone="done"] {
+  --tone: var(--merged);
+}
+[data-tone="off"] {
+  --tone: var(--dim);
+}
+.t-pill {
+  background: color-mix(in srgb, var(--tone) var(--wash), transparent);
+  border-radius: 999px;
+}
+.t-edge {
+  border: 1px solid color-mix(in srgb, var(--tone) var(--edge), var(--line));
+  border-radius: 999px;
+}
+.t-solid {
+  color: var(--bg);
+  background: var(--tone);
+  border: 1px solid transparent;
+}
+.t-band {
+  color: color-mix(in srgb, var(--tone) var(--ink), var(--fg));
+  background: color-mix(in srgb, var(--tone) var(--wash), var(--bg));
+  border: 1px solid color-mix(in srgb, var(--tone) var(--edge), var(--bg));
+}
+/* off is the absence of a state: never filled, always dashed */
+[data-tone="off"]:is(.t-solid, .t-edge, .t-band) {
+  color: var(--tone);
+  background: none;
+  border: 1px dashed color-mix(in srgb, var(--tone) var(--edge), var(--line));
+}
+[data-tone="off"].t-pill {
+  background: none;
+  outline: 1px dashed color-mix(in srgb, var(--tone) var(--edge), var(--line));
+  outline-offset: -1px;
 }
 
 /* CodeMirror MergeView */
