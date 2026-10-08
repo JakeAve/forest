@@ -71,6 +71,13 @@ Deno.test("already done: turns off without acting", async () => {
   assertEquals(t.api.status(WT), null);
 });
 
+Deno.test("merged with no ticket key: turns off", async () => {
+  const t = make({ pr: merged, ticket: null });
+  await t.api.set(WT, true);
+  await t.api.tick();
+  assertEquals([t.acted, t.api.status(WT)], [[], null]);
+});
+
 Deno.test("ticket not read yet: waits", async () => {
   const t = make({
     pr: merged,

@@ -38,7 +38,10 @@ export function createAutoClose(
     const repo = store.byPath.get(store.known.get(wt) ?? "");
     const w = repo?.worktrees.find((w) => w.path === wt);
     if (!repo || w?.pr?.state !== "MERGED") return false;
-    if (!w.ticket) throw new Error("no ticket");
+    if (!w.ticket) {
+      log({ type: "autoClose", wt, action: "off", why: "no ticket" });
+      return true;
+    }
     const info = w.ticket.info;
     if (!info) return false; // not read yet
     if (info.category !== "done" && info.category !== "canceled") {
