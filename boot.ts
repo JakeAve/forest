@@ -156,6 +156,7 @@ export function boot(opts: {
     sh,
     store,
     prs,
+    tickets,
     ports,
     files,
     watcher,

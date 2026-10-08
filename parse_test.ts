@@ -1769,6 +1769,7 @@ Deno.test("ticketInfo: keeps known string fields, maps status to a category", ()
       status: "in progress",
       category: "doing",
       assignee: "Jake",
+      actions: [],
     },
   );
   assertEquals(
@@ -1781,7 +1782,26 @@ Deno.test("ticketInfo: keeps known string fields, maps status to a category", ()
     status: "Weird",
     category: null,
     assignee: null,
+    actions: [],
   });
   assertEquals(ticketInfo("not json"), null);
   assertEquals(ticketInfo("null"), null);
+});
+
+Deno.test("ticketInfo: actions drop the current status and anything unsafe for $2", () => {
+  assertEquals(
+    ticketInfo(JSON.stringify({
+      status: "in_review",
+      actions: [
+        "in_review",
+        "done",
+        "cancelled",
+        "a;rm -rf",
+        3,
+        "",
+        "x".repeat(41),
+      ],
+    }))?.actions,
+    ["done", "cancelled"],
+  );
 });

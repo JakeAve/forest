@@ -7,6 +7,7 @@ const RETRY_MS = 600_000;
 
 export type TicketsApi = {
   info(repo: string, name: string, key: string): TicketInfo | null;
+  act(repo: string, name: string, key: string, to: string): Promise<void>;
 };
 
 // Status from the user's own ticket command (settings.ticketCmds, `$1` is the
@@ -38,7 +39,9 @@ export function createTickets(
     ).catch((e) => {
       if (!failed.has(name)) {
         failed.add(name);
-        console.error(`ticket command failed in ${name}:`, e.message);
+        // stderr is the user's script's: one capped line, not a traceback
+        const last = e.message.trim().split("\n").at(-1) ?? "";
+        console.error(`ticket command failed in ${name}:`, last.slice(0, 200));
       }
       return null;
     });
@@ -54,15 +57,35 @@ export function createTickets(
     if (JSON.stringify(prev?.info) !== JSON.stringify(info)) onChange();
   }
 
+  const cmdFor = (name: string) =>
+    settings.ticketCmds[name] ?? settings.ticketCmds["*"];
+
   return {
     info(repo, name, key) {
-      const cmd = settings.ticketCmds[name] ?? settings.ticketCmds["*"];
+      const cmd = cmdFor(name);
       if (!cmd) return null;
       if (now() >= (nextAt.get(key) ?? 0)) {
         nextAt.set(key, Infinity); // in flight
         void fetch(repo, name, key, cmd);
       }
       return cache.get(key)?.info ?? null;
+    },
+    // Moves the ticket with the same command, the target status as $2; only
+    // to a status the command itself last offered.
+    async act(repo, name, key, to) {
+      const cmd = cmdFor(name);
+      if (!cmd || !cache.get(key)?.info?.actions.includes(to)) {
+        throw new Error(`not an action for ${key}: ${to}`);
+      }
+      await sh.exec(repo, [
+        "sh",
+        "-c",
+        cmd.includes("$1") ? cmd : `${cmd} "$1" "$2"`,
+        "forest-ticket",
+        key,
+        to,
+      ]);
+      await fetch(repo, name, key, cmd);
     },
   };
 }
