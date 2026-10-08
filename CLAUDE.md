@@ -6,6 +6,12 @@ nothing) and `main.ts` (starts it) plus `exec`, `repo`, `prs`, `ports`, `store`,
 `notify`, `routes`, `stats`, `settings`, `agents`, `sessions`, `types`, and a
 Svelte frontend in `src/`. See README.md for setup and the agent API.
 
+Forest does the deterministic work so agents don't spend tokens and turns on it.
+If an agent would otherwise poll, retry or sequence something itself (watching
+CI, rebasing, merging when green, closing the ticket on merge), forest owns it
+as a toggle on the row (`set_auto_*`) or a blocking read (`wait`). The agent
+gets back a short answer, not raw state to sift through.
+
 ## Commands
 
 ```sh

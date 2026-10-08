@@ -167,6 +167,7 @@ field.
 | `sessions` | `wt`, `id`, `q`                         | agent sessions, in full    |
 | `files`    | `wt`, `q`, `base=branch\|head`          | changed files              |
 | `link`     | `wt`, `file`, `line`, `base`            | `{ url }`                  |
+| `wait`     | `wt`, `for`, `seen`, `timeout`          | events, `[]` on timeout    |
 
 Write tools:
 
@@ -199,6 +200,22 @@ claude mcp add --transport http forest http://forest-server.localhost:38471/mcp
 
 `*.localhost` resolves to loopback with no setup. Existing installs re-run
 `claude mcp remove forest` before the add above.
+
+`wait` blocks until the worktree has one of the [notification](#notifications)
+kinds in `for` active (comma-separated kinds, or the groups `act`, `move`,
+`life`, `clean`), then returns them. It reads the same facts as the inbox but
+ignores `notify` settings, mutes and snoozes. A kind that is already true
+returns at once, so a `wait` started after a PR merged still sees `pr-merged`.
+To wait for the next event instead, pass the keys you have handled back in
+`seen`. A seen key is skipped until it clears, so a check that fails again after
+a fix still wakes you. `timeout` is in seconds (default 600, max 3600, `0` for a
+single check). Over MCP the call holds the agent's tool slot until it returns,
+so keep `timeout` short there. For long waits an agent should run the `curl`
+form below as a background command, which costs no tokens while it waits:
+
+```sh
+curl -s --max-time 3700 'forest-server.localhost:38471/api/t/wait?wt=1234&for=pr-merged,act&timeout=3600'
+```
 
 ### Write tools
 
