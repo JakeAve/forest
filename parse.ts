@@ -191,6 +191,7 @@ export type TicketInfo = {
   status: string;
   category: "todo" | "doing" | "done" | "canceled" | null;
   assignee: string | null;
+  actions: string[];
 };
 export type Ticket = { key: string; url: string; info?: TicketInfo | null };
 
@@ -226,11 +227,18 @@ export function ticketInfo(out: string): TicketInfo | null {
   if (!j || typeof j !== "object") return null;
   const s = (v: unknown, n: number) =>
     typeof v === "string" ? v.slice(0, n) : "";
+  const status = s(j.status, 60).replace(/_/g, " ");
+  const actions = Array.isArray(j.actions) ? j.actions : [];
   return {
     title: s(j.title, 300),
-    status: s(j.status, 60).replace(/_/g, " "),
+    status,
     category: CATEGORY[s(j.category ?? j.status, 30).toLowerCase()] ?? null,
     assignee: s(j.assignee, 80) || null,
+    // passed back to the command as $2, so only plain status words
+    actions: actions.filter((a: unknown): a is string =>
+      typeof a === "string" && /^[\w -]{1,40}$/.test(a) &&
+      a.replace(/_/g, " ").toLowerCase() !== status.toLowerCase()
+    ).slice(0, 8),
   };
 }
 

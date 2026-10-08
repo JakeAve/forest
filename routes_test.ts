@@ -128,6 +128,7 @@ const make = (opts?: {
     sh,
     store,
     prs,
+    tickets: { info: () => null, act: () => Promise.resolve() },
     ports: { current: () => new Map() },
     files,
     watcher,

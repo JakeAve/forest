@@ -1,4 +1,4 @@
-import { assertEquals } from "@std/assert";
+import { assertEquals, assertRejects } from "@std/assert";
 import { fakeExec } from "./fixtures.ts";
 import { DEFAULTS } from "./settings.ts";
 import { createTickets } from "./tickets.ts";
@@ -50,4 +50,25 @@ Deno.test("tickets: a failed refresh keeps the last status; no command, no fetch
   await new Promise((r) => setTimeout(r));
   assertEquals(tickets.info("/r", "r", "ROM-1")?.status, "todo");
   assertEquals(sh.calls.length, 2);
+});
+
+Deno.test("tickets: act runs the command with $2, then re-reads; refuses an unoffered status", async () => {
+  let status = "todo";
+  const sh = fakeExec({
+    [CMD]: () => JSON.stringify({ status, actions: ["done"] }),
+    ['sh -c tk "$1" "$2" forest-ticket ROM-1 done']: () => {
+      status = "done";
+      return "";
+    },
+  });
+  const tickets = createTickets({
+    sh,
+    settings: { ...DEFAULTS, ticketCmds: { "*": "tk" } },
+    onChange: () => {},
+  });
+  tickets.info("/r", "r", "ROM-1");
+  await new Promise((r) => setTimeout(r));
+  await assertRejects(() => tickets.act("/r", "r", "ROM-1", "cancelled"));
+  await tickets.act("/r", "r", "ROM-1", "done");
+  assertEquals(tickets.info("/r", "r", "ROM-1")?.status, "done");
 });

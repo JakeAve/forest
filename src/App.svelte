@@ -126,7 +126,7 @@ let editingPath = $state(false);
 let newing = $state(false);
 let renaming = $state(null);
 let headRename = $state(false);
-let newEl;
+let newEl = $state();
 let selDir = $state(null);
 let openDirs = $state({});
 let showDiff = $state(false);
@@ -3135,6 +3135,14 @@ async function confirmDiscard() {
         </div>
         <div class="ttl">{ti.title}</div>
       </div>
+      {#if ti.actions?.length}
+        <section class="practs">
+          {#each ti.actions as to (to)}
+            <button class="btn" disabled={busy["tk:" + cardWt.path]}
+                    onclick={(e) => act("ticket", { wt: cardWt.path, to }, "tk:" + cardWt.path, e)}>Mark {to.replace(/_/g, " ")}</button>
+          {/each}
+        </section>
+      {/if}
       <section class="foot">
         <a class="btn" href={t.url} target="_blank" rel="noreferrer">Open ticket ↗</a>
         <button class="btn" onclick={(e) => copy(e, t.url, "tklink:" + t.url)}>Copy link</button>

@@ -28,6 +28,7 @@ import {
   vscodeExtDirs,
 } from "./themes.ts";
 import type { PrsApi } from "./prs.ts";
+import type { TicketsApi } from "./tickets.ts";
 import { enc, type SseApi } from "./sse.ts";
 import type { WatcherApi } from "./watcher.ts";
 import type { AutoRebaseApi } from "./autorebase.ts";
@@ -60,6 +61,7 @@ export function createRoutes(deps: {
   sh: Shell;
   store: StoreApi;
   prs: PrsApi;
+  tickets: TicketsApi;
   ports: { current(): Map<string, Procs> };
   files: FilesApi;
   watcher: WatcherApi;
@@ -81,6 +83,7 @@ export function createRoutes(deps: {
     root: ROOT,
     store,
     prs,
+    tickets,
     ports,
     files,
     watcher,
@@ -425,6 +428,13 @@ export function createRoutes(deps: {
             ]);
             prs.expire(repo);
             await prs.refreshPrs([repoByPath.get(repo)!]).catch(() => {});
+            break;
+          }
+          case "/api/ticket": {
+            const repo = repoByPath.get(knownWorktrees.get(wt)!)!;
+            const key = repo.worktrees.find((w) => w.path === wt)?.ticket?.key;
+            if (!key) throw new Error("no ticket");
+            await tickets.act(repo.path, repo.name, key, String(b.to));
             break;
           }
           case "/api/pr-state": {

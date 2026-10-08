@@ -15,7 +15,9 @@ comes from a command the user owns, set per repo in `~/.forest/settings.json`:
 
 `tickets.ts` runs it as `sh -c '<cmd> "$1"' forest-ticket <key>` in the repo's
 main checkout, at most 4 at a time, again after `ticketPollMs` (5 min). Write
-`"$1"` yourself to put the key somewhere else in the command.
+`"$1"` yourself to put the key somewhere else in the command. A card action
+runs `sh -c '<cmd> "$1" "$2"' forest-ticket <key> <status>`; a command that
+writes `"$1"` itself must write `"$2"` too.
 
 ## Contract
 
@@ -27,7 +29,9 @@ main checkout, at most 4 at a time, again after `ticketPollMs` (5 min). Write
   { "title": "Fix login", "status": "In QA", "category": "indeterminate", "assignee": "Jake" }
   ```
 
-  `status` is the tracker's own word, shown verbatim. `category` picks the dot
+  `status` is the tracker's own word, shown verbatim. `actions` lists the
+  statuses the card offers as "Mark <status>" buttons (`[\w -]`, max 8; the
+  current status is dropped). `category` picks the dot
   color through `CATEGORY` in `parse.ts`; omit it if `status` is already one of
   those words. Every field is optional; extra fields are dropped.
 - **Failure:** exit non-zero. Forest keeps the last good status, retries in
@@ -56,7 +60,9 @@ case in `parse_test.ts` if they're common to a whole tracker.
   scraping the browser's cookie store is the hole this design avoids.
 - **Validate `$1` first**: `case $1 in *[!A-Za-z0-9#-]*|'') exit 2;; esac`.
   Keys come from branch names and PR titles other people write.
-- **Read-only.** One GET or one query; never transition or comment.
+- **Read-only without `$2`.** One GET or one query. With `$2` (an action the
+  user clicked), transition to exactly that status, check `$2` against the
+  tracker's own list, then print the ticket as usual. Never comment.
 - Keep the script in `~/.forest/`, not this repo: it is the user's setup and
   usually names a private host.
 

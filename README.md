@@ -344,6 +344,11 @@ can't. It runs on the server with whatever auth your tracker's CLI or API token
 already has, so Forest never touches browser cookies or stores a token. The
 result rides the row as `ticket.info`.
 
+To move a ticket from its card, also print `"actions": ["done", "cancelled"]`:
+each becomes a "Mark done" button, which runs the same command with the status
+as `$2`, then re-reads the ticket. Forest only passes back a status the command
+itself offered.
+
 ```json
 { "ticketCmds": { "*": "~/.forest/jira-ticket.sh" } }
 ```
