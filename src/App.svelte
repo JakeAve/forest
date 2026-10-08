@@ -2554,6 +2554,11 @@ async function confirmDiscard() {
   onkeydown={runKey}
 />
 
+{#snippet closeX(fn)}
+  <button class="circ x" title="Close (Esc)" aria-label="Close"
+  onclick={fn}>×</button>
+{/snippet}
+
 <div class="app" class:desktop={settings?.desktop}>
   <div class="tbar">
     <svg class="mark" width="18" height="18" viewBox="0 0 24 24" fill="none" role="img" aria-label="forest">
@@ -3112,9 +3117,6 @@ async function confirmDiscard() {
   </div>
   </div>
   {/if}
-  {#snippet closeX(fn)}
-    <button class="circ x" title="Close (Esc)" aria-label="Close" onclick={fn}>×</button>
-  {/snippet}
   <div class="ctx" popover="manual" bind:this={menuEl}
        ontoggle={(e) => e.newState === "closed" && closeMenu()}>
     {#each menu?.items ?? [] as it, i (i)}
@@ -3407,7 +3409,7 @@ async function confirmDiscard() {
 
 <dialog class="settings" bind:this={dlg}>
   <div class="shead"><b>Settings</b><span class="sp"></span>
-    <button class="btn" onclick={() => dlg.close()}>Close</button></div>
+    {@render closeX(() => dlg.close())}</div>
 
   <div class="sec">Theme</div>
   <div class="row">
@@ -3708,6 +3710,8 @@ dialog.settings {
   color: var(--fg);
   padding: 0 0 0.875rem;
   width: min(32rem, 92vw);
+  max-height: min(40rem, 80vh);
+  overflow-y: auto;
   font: 0.875rem var(--sans);
 }
 dialog.settings .btn {
@@ -3717,6 +3721,10 @@ dialog.settings::backdrop {
   background: color-mix(in srgb, var(--bg) 65%, transparent);
 }
 .shead {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--bg2);
   display: flex;
   align-items: center;
   gap: 0.5rem;
