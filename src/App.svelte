@@ -2800,8 +2800,8 @@ async function confirmDiscard() {
         {#if r}
           {#if r.cached}<span class="ct late" title="Last known state; refreshing"><span class="spin"></span> cached</span>{/if}
           <span class="sp"></span>
-          <button class="cbtn plus" title="new worktree"
-                  onclick={(e) => { e.stopPropagation(); creating = creating === r.name ? null : r.name; slug = ""; }}>New</button>
+          <button class="circ plus" title="New worktree" aria-label="New worktree"
+                  onclick={(e) => { e.stopPropagation(); creating = creating === r.name ? null : r.name; slug = ""; }}>+</button>
         {/if}
       </div>
       {#if r && creating === r.name}
@@ -3639,7 +3639,8 @@ async function confirmDiscard() {
 .circ:hover {
   color: var(--acc);
 }
-.circ.x {
+.circ.x,
+.circ.plus {
   width: 1.25rem;
   height: 1.25rem;
   font-size: 0.875rem;
