@@ -40,6 +40,7 @@ const EDGE_ONLY = new Set<string>([
   "branch-switched",
   "server-died",
   "automerge-changed",
+  "dequeued",
 ]);
 const WAITABLE = (Object.keys(KINDS) as Kind[]).filter((k) =>
   !EDGE_ONLY.has(k)

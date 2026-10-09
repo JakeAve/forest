@@ -1442,6 +1442,17 @@ Deno.test("edges: ready-to-merge subsumes ci-passed and approved", () => {
   ]);
 });
 
+Deno.test("edges: queued fires entering the queue, dequeued only if still open", () => {
+  const q = { queue: { position: 1, state: "QUEUED" } };
+  assertEquals(kinds(prSnap(pr()), prSnap(pr(q))), ["queued"]);
+  assertEquals(kinds(prSnap(pr(q)), prSnap(pr(q))), []);
+  assertEquals(kinds(prSnap(pr(q)), prSnap(pr())), ["dequeued"]);
+  assertEquals(kinds(prSnap(pr(q)), prSnap(pr({ state: "MERGED" }))), [
+    "merged-deletable",
+    "pr-merged",
+  ]);
+});
+
 Deno.test("edges: ci-failed fires again when a new check fails", () => {
   const fail = (failing: string[]) => pr({ ci: { state: "fail", failing } });
   assertEquals(kinds(prSnap(pr()), prSnap(fail(["a"]))), ["ci-failed"]);
