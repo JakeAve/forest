@@ -10,7 +10,6 @@ import { dirname, join, relative, resolve } from "@std/path";
 import { resolveTheme } from "./src/theme.js";
 import {
   coerceSettings,
-  fillCommand,
   isLocalRequest,
   isTrustedWrite,
   normPath,
@@ -82,7 +81,6 @@ export function createRoutes(deps: {
     layoutPath: LAYOUT_PATH,
     themesDir: THEMES_DIR,
     home: HOME,
-    root: ROOT,
     store,
     prs,
     tickets,
@@ -99,7 +97,7 @@ export function createRoutes(deps: {
     desktop,
   } = deps;
   const { exec, git, tryGit, gitIn } = deps.sh;
-  const { byPath: repoByPath, known: knownWorktrees, repoPaths } = store;
+  const { byPath: repoByPath, known: knownWorktrees } = store;
   const { guardWt, guardRoot, guardPath, isLoose, looseRoots } = files;
   const { tools, callTool, toolError, buildMcp } = deps.tools;
   const mcpHandler = createMcpHandler(buildMcp);
@@ -515,38 +513,9 @@ export function createRoutes(deps: {
             );
             break;
           }
-          case "/api/wt-create": {
-            const repoPath = repoPaths.get(String(b.repo));
-            if (!repoPath) throw new Error("unknown repo");
-            const slug = String(b.slug ?? "").trim();
-            if (!/^[\w][\w/.-]*$/.test(slug) || slug.includes("..")) {
-              throw new Error("bad branch name");
-            }
-            const repo = String(b.repo);
-            const tpl = SETTINGS.launchers[repo] ?? SETTINGS.launchers["*"];
-            if (tpl) {
-              const cmd = fillCommand(
-                tpl.includes("{") ? tpl : tpl + " {slug}",
-                {
-                  slug,
-                  repo,
-                  path: repoPath,
-                  root: ROOT,
-                },
-              );
-              await exec(repoPath, ["sh", "-c", cmd]);
-            } else {
-              await git(
-                repoPath,
-                "worktree",
-                "add",
-                `${repoPath}-wt/${slug.replace(/\//g, "-")}`,
-                "-b",
-                slug,
-              );
-            }
+          case "/api/wt-create":
+            await actions.createWt(String(b.repo), String(b.slug ?? ""));
             break;
-          }
           case "/api/theme-import": {
             let name = b.name, text = String(b.json);
             if (b.path) {

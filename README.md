@@ -176,6 +176,7 @@ Write tools:
 | `set_auto_merge`  | write       | `wt`, `enable`   | `{ pr, autoMerge }`         |
 | `set_auto_rebase` | write       | `wt`, `enable`   | `{ wt, autoRebase }`        |
 | `set_auto_close`  | write       | `wt`, `enable`   | `{ wt, ticket, autoClose }` |
+| `create_wt`       | write       | `repo`, `slug`   | `{ repo, slug }`            |
 | `remove_wts`      | destructive | `wts` (an array) | `{ removed, refused }`      |
 
 Worktree rows carry a slim `agents` list (`agent`, `id`, `title`, `seenAt`,
@@ -240,6 +241,10 @@ has read a PR comment or a web page can be talked out of it.
   already-merged PR it closes the ticket right away. It holds while another
   worktree on the same ticket key has an open PR, so a ticket split across PRs
   closes when the last one merges.
+- `create_wt` makes a worktree and branch `slug` in `repo` (its name, as in
+  `snapshot`), through that repo's launcher command when one is set in Settings,
+  else `git worktree add`. A slug with `..` or a leading `-` is refused.
+  `remove_wts` undoes it.
 - `remove_wts` runs `git worktree remove` without `--force`, so branches and
   their commits stay. It skips, and lists under `refused`, the primary checkout,
   a worktree with uncommitted or untracked changes, one mid-rebase or mid-merge,
@@ -260,7 +265,8 @@ allow the write tools once and keep the prompt on `remove_wts`:
     "allow": [
       "mcp__forest__set_auto_merge",
       "mcp__forest__set_auto_rebase",
-      "mcp__forest__set_auto_close"
+      "mcp__forest__set_auto_close",
+      "mcp__forest__create_wt"
     ]
   }
 }

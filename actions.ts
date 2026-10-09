@@ -1,14 +1,18 @@
 import type { Shell } from "./exec.ts";
+import { fillCommand } from "./parse.ts";
 import type { PrsApi } from "./prs.ts";
+import type { Settings } from "./settings.ts";
 import type { StoreApi } from "./store.ts";
 
 export type ActionsApi = ReturnType<typeof createActions>;
 
 // Writes both the UI routes and the agent tools make, so both refresh alike.
 export function createActions(
-  { sh, store, prs, afterMutation }: {
+  { sh, store, prs, settings, root, afterMutation }: {
     sh: Pick<Shell, "exec" | "git">;
-    store: Pick<StoreApi, "known">;
+    store: Pick<StoreApi, "known" | "repoPaths">;
+    settings: Pick<Settings, "launchers">;
+    root: string;
     prs: Pick<PrsApi, "refreshOnePr" | "refreshPrSoon">;
     afterMutation: () => void;
   },
@@ -41,6 +45,37 @@ export function createActions(
       // the merge lands on the remote, not locally: fetch so ahead/behind
       // vs base isn't read from last sweep's stale refs
       await git(wt, "fetch", "origin").catch(() => {});
+      afterMutation();
+    },
+    async createWt(repo: string, rawSlug: string) {
+      const repoPath = store.repoPaths.get(repo);
+      if (!repoPath) throw new Error("unknown repo");
+      const slug = rawSlug.trim();
+      if (!/^[\w][\w/.-]*$/.test(slug) || slug.includes("..")) {
+        throw new Error("bad branch name");
+      }
+      const tpl = settings.launchers[repo] ?? settings.launchers["*"];
+      if (tpl) {
+        await exec(repoPath, [
+          "sh",
+          "-c",
+          fillCommand(tpl.includes("{") ? tpl : tpl + " {slug}", {
+            slug,
+            repo,
+            path: repoPath,
+            root,
+          }),
+        ]);
+      } else {
+        await git(
+          repoPath,
+          "worktree",
+          "add",
+          `${repoPath}-wt/${slug.replace(/\//g, "-")}`,
+          "-b",
+          slug,
+        );
+      }
       afterMutation();
     },
     async removeWts(paths: string[], force = false) {

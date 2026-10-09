@@ -111,6 +111,8 @@ const make = (opts?: {
     sh,
     store,
     prs,
+    settings,
+    root: "/r",
     afterMutation: () => watcher.afterMutation(),
   });
   const logged: Record<string, unknown>[] = [];
