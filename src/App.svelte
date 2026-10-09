@@ -1280,7 +1280,7 @@ function prActions(w) {
   const behind = prAb(w).behind;
   const ahead = prAb(w).ahead;
   return [
-    prStatus(p).tone === "ok" && {
+    prStatus(p).tone === "ok" && !p.queue && {
       key: "merge",
       label: "Merge squash",
       menu: `Merge pull request #${p.number} (squash)`,
@@ -1290,7 +1290,7 @@ function prActions(w) {
       } into ${p.baseRefName}?`,
       go: (e) => prState(w, "merge", e),
     },
-    behind > 0 && {
+    behind > 0 && !p.queue && {
       key: "update",
       label: `Update branch ↓${behind}`,
       menu: `Update branch (↓${behind} from ${p.baseRefName})`,
@@ -3263,9 +3263,12 @@ async function confirmDiscard() {
           {:else}
             <div class="r dim">No conflicts</div>
           {/if}
+          {#if p.queue}
+            <div class="r" data-tone="ok">In merge queue · position {p.queue.position}, {p.queue.state.toLowerCase().replace("_", " ")}</div>
+          {/if}
           <div class="r" data-tone={behind ? "warn" : "off"}>
             <span>{behind ? `↓${behind} behind` : "Up to date with"} {p.baseRefName}</span>
-            {#if behind > 0}
+            {#if behind > 0 && !p.queue}
               <button class="btn" disabled={busy["ub:" + w.path]}
                       onclick={(e) => updateBranch(w, e)}>Update branch</button>
             {/if}

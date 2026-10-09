@@ -78,6 +78,17 @@ Deno.test("no-PR branch behind base is rebased and fetched once per repo", async
   assertEquals(t.mutations(), 1);
 });
 
+Deno.test("a PR in the merge queue is left alone", async () => {
+  const t = make({
+    remote: "feat",
+    pr: { ...OPEN_PR, queue: { position: 1, state: "QUEUED" } } as Pr,
+  });
+  await t.api.set(WT, true);
+  await t.api.tick();
+  assertEquals(t.calls(), []);
+  assertEquals(t.api.status(WT)?.error ?? null, null);
+});
+
 Deno.test("skips primary, dirty, mid-op and opted-out worktrees", async () => {
   for (
     const over of [{ isPrimary: true }, { dirty: 1 }, {

@@ -404,6 +404,7 @@ const openPr = (over: Partial<Pr> = {}): Pr => ({
   mergeable: "MERGEABLE",
   mergeState: "CLEAN",
   autoMerge: true,
+  queue: null,
   ci: { state: "pending", failing: [] },
   ciSince: null,
   reviewSince: null,

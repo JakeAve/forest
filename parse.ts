@@ -798,6 +798,7 @@ export type PrCard = {
   deletions: number;
   changedFiles: number;
   mergeState: string;
+  queue: { position: number; state: string } | null;
   /** vs the base branch, straight from GitHub. null when it didn't answer. */
   ahead: number | null;
   behind: number | null;
@@ -896,6 +897,9 @@ export function prCard(d: Gql): PrCard {
     deletions: d.deletions ?? 0,
     changedFiles: d.changedFiles ?? 0,
     mergeState: d.mergeStateStatus ?? "UNKNOWN",
+    queue: d.mergeQueueEntry
+      ? { position: d.mergeQueueEntry.position, state: d.mergeQueueEntry.state }
+      : null,
     ahead: d.baseRef?.compare?.aheadBy ?? null,
     behind: d.baseRef?.compare?.behindBy ?? null,
     reviews: [...latest.values()].sort((a, b) => (b.at ?? 0) - (a.at ?? 0)),
@@ -949,6 +953,7 @@ export function prStatus(pr: {
   stateSince: number;
   isDraft: boolean;
   mergeState: string;
+  queue?: { position: number } | null;
   mergeable: string;
   reviewDecision: string;
   ci: { state: string | null };
@@ -983,6 +988,15 @@ export function prStatus(pr: {
       tone: "off",
       glyph: "",
       label: "Draft",
+      weight: "quiet",
+      ...open,
+    };
+  }
+  if (pr.queue) {
+    return {
+      tone: "ok",
+      glyph: "",
+      label: "In merge queue",
       weight: "quiet",
       ...open,
     };
@@ -1630,7 +1644,7 @@ export function facts(
         "ready-to-merge",
         ps,
         open && !pr.isDraft && approved && pr.ci.state === "pass" &&
-          pr.mergeState === "CLEAN" && !pr.autoMerge,
+          pr.mergeState === "CLEAN" && !pr.autoMerge && !pr.queue,
       );
       add("ci-passed", ps, pr.ci.state === "pass");
       add("approved", ps, approved);

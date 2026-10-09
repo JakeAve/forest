@@ -73,7 +73,7 @@ export function createAutoRebase(
   async function step(wt: string, w: Worktree, repo: string) {
     const [behindBase] = await counts(wt, "origin/HEAD...HEAD");
     if (w.pr?.state === "OPEN") {
-      if (!w.remote) return null;
+      if (!w.remote || w.pr.queue) return null;
       const [behindRemote, aheadRemote] = await counts(
         wt,
         `origin/${w.remote}...HEAD`,
