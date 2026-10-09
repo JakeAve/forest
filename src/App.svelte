@@ -3441,7 +3441,7 @@ async function confirmDiscard() {
   <div class="shead"><b>Settings</b><span class="sp"></span>
     {@render closeX(() => dlg.close())}</div>
 
-  <div class="sec">Theme</div>
+  <h3 class="sec">Theme</h3>
   <div class="row">
     <label for="theme-sel">theme</label>
     <select id="theme-sel" class="theme" value={theme} disabled={busy.theme}
@@ -3464,7 +3464,7 @@ async function confirmDiscard() {
   {/if}
   <div class="hint">Import any VS Code color theme JSON, or one VS Code already has</div>
 
-  <div class="sec">Preferences</div>
+  <h3 class="sec">Preferences</h3>
   {#each Object.entries(settings ?? {}) as [k, v] (k)}
     {#if typeof v === "number" || typeof v === "string"}
       <div class="row">
@@ -3479,7 +3479,7 @@ async function confirmDiscard() {
     {/if}
   {/each}
 
-  <div class="sec">Columns</div>
+  <h3 class="sec">Columns</h3>
   {#each [...visibleCols, ...COLUMNS.filter((c) => !visibleCols.includes(c))] as c, i (c.key)}
     {@const on = visibleCols.includes(c)}
     <div class="row">
@@ -3498,7 +3498,7 @@ async function confirmDiscard() {
     <button class="btn" onclick={() => ((settings.columns = []), saveSettings(), resetWidths())}>Reset columns</button>
   </div>
 
-  <div class="sec">Launchers</div>
+  <h3 class="sec">Launchers</h3>
   {#each Object.entries(settings?.launchers ?? {}) as [repo] (repo)}
     <div class="row">
       <label for="l-{repo}">{repo}</label>
@@ -3521,7 +3521,7 @@ async function confirmDiscard() {
   </div>
   <div class="hint mono">{"{slug} {repo} {path} {root}"}</div>
 
-  <div class="sec">Tickets</div>
+  <h3 class="sec">Tickets</h3>
   {#each Object.entries(settings?.tickets ?? {}) as [repo] (repo)}
     <div class="row">
       <label for="t-{repo}">{repo}</label>
@@ -3541,7 +3541,7 @@ async function confirmDiscard() {
   </div>
   <div class="hint mono">{"{key}"}</div>
 
-  <div class="sec" bind:this={notifySec}>Notifications</div>
+  <h3 class="sec" bind:this={notifySec}>Notifications</h3>
   {#each Object.entries(GROUPS) as [g, name] (g)}
     <div class="sub">{name}</div>
     {#each Object.entries(KINDS).filter(([, k]) => k.group === g) as [kind, k] (kind)}
@@ -3570,7 +3570,7 @@ async function confirmDiscard() {
     Notifications.
   </div>
 
-  <div class="sec">Keyboard shortcuts</div>
+  <h3 class="sec">Keyboard shortcuts</h3>
   <div class="row">
     <button class="btn" onclick={() => (dlg.close(), (shortcutsOpen = true))}>
       View and rebind…{#if kbdOf("shortcuts")}<kbd>{kbdOf("shortcuts")}</kbd>{/if}</button>
@@ -3765,8 +3765,14 @@ dialog.settings::backdrop {
   font-size: 1rem;
 }
 .sec {
+  position: sticky;
+  top: var(--head);
+  scroll-margin-top: var(--head);
+  z-index: 1;
+  margin: 0;
   padding: 0.875rem 1rem 0.25rem;
-  font-weight: 600;
+  background: var(--bg2);
+  font: 600 0.875rem var(--sans);
   color: var(--fg);
 }
 .row {
