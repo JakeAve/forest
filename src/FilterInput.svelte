@@ -18,11 +18,14 @@ function key(e) {
 
 <span class="fbox">
   <input class="filter" class:re={parsed.re} class:bad={parsed.error}
-    class:counted={count && value}
+    class:clearable={value} class:counted={count && value}
     placeholder={kbd ? `${label} ${kbd}` : label} aria-label={label}
     title={parsed.error ?? "Wrap in /slashes/ for a regex"}
     bind:this={el} bind:value onkeydown={key}>
   {#if count && value && !parsed.error}<span class="count">{count}</span>{/if}
+  {#if value}<button class="clear" tabindex="-1" title="Clear (Esc)" aria-label="Clear"
+    onclick={() => ((value = ""), el.focus())}><svg width="8" height="8" viewBox="0 0 8 8"
+    stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M1 1l6 6M7 1l-6 6"/></svg></button>{/if}
 </span>
 
 <style>
@@ -30,12 +33,34 @@ function key(e) {
   position: relative;
   display: inline-flex;
 }
+.clearable {
+  padding-right: 2rem;
+}
 .counted {
-  padding-right: 3.5rem;
+  padding-right: 4.75rem;
+}
+.clear {
+  position: absolute;
+  right: 0.625rem;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 1rem;
+  height: 1rem;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: none;
+  color: var(--dim);
+  cursor: pointer;
+}
+.clear:hover {
+  color: var(--acc);
 }
 .count {
   position: absolute;
-  right: 0.75rem;
+  right: 2rem;
   top: 50%;
   transform: translateY(-50%);
   color: var(--dim);
