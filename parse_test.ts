@@ -1201,6 +1201,7 @@ Deno.test("prStatus: the next blocker wins, in fix order", () => {
     state: "OPEN",
     stateSince: 1,
     isDraft: false,
+    queue: null as { position: number } | null,
     mergeState: "BLOCKED",
     mergeable: "MERGEABLE",
     reviewDecision: "REVIEW_REQUIRED",
@@ -1215,6 +1216,12 @@ Deno.test("prStatus: the next blocker wins, in fix order", () => {
   assertEquals(st({ state: "MERGED" }), ["done", "", "Merged", 1]);
   assertEquals(st({ state: "CLOSED" }), ["off", "", "Closed", 1]);
   assertEquals(st({ isDraft: true }), ["off", "", "Draft", 1]);
+  assertEquals(st({ queue: { position: 2 } }), [
+    "ok",
+    "",
+    "In merge queue",
+    1,
+  ]);
   assertEquals(st({ mergeable: "CONFLICTING" }), [
     "bad",
     "conflict",
@@ -1359,6 +1366,7 @@ const pr = (over: Partial<Pr> = {}): Pr => ({
   mergeable: "MERGEABLE",
   mergeState: "BLOCKED",
   autoMerge: false,
+  queue: null,
   ci: { state: "pending", failing: [] },
   ciSince: CTX.now,
   reviewSince: null,
@@ -1431,6 +1439,17 @@ Deno.test("edges: ready-to-merge subsumes ci-passed and approved", () => {
     "approved",
     "automerge-changed",
     "ci-passed",
+  ]);
+});
+
+Deno.test("edges: queued fires entering the queue, dequeued only if still open", () => {
+  const q = { queue: { position: 1, state: "QUEUED" } };
+  assertEquals(kinds(prSnap(pr()), prSnap(pr(q))), ["queued"]);
+  assertEquals(kinds(prSnap(pr(q)), prSnap(pr(q))), []);
+  assertEquals(kinds(prSnap(pr(q)), prSnap(pr())), ["dequeued"]);
+  assertEquals(kinds(prSnap(pr(q)), prSnap(pr({ state: "MERGED" }))), [
+    "merged-deletable",
+    "pr-merged",
   ]);
 });
 

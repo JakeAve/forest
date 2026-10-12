@@ -40,6 +40,7 @@ const EDGE_ONLY = new Set<string>([
   "branch-switched",
   "server-died",
   "automerge-changed",
+  "dequeued",
 ]);
 const WAITABLE = (Object.keys(KINDS) as Kind[]).filter((k) =>
   !EDGE_ONLY.has(k)
@@ -55,7 +56,7 @@ export function createTools(deps: {
   settings: Settings;
   home: string;
   sessions: Pick<SessionsApi, "all">;
-  actions: Pick<ActionsApi, "autoMerge" | "removeWts">;
+  actions: Pick<ActionsApi, "autoMerge" | "removeWts" | "createWt">;
   autoRebase: Pick<AutoRebaseApi, "set">;
   autoClose: Pick<AutoCloseApi, "set">;
   log: (o: Record<string, unknown>) => void;
@@ -344,6 +345,24 @@ export function createTools(deps: {
           ticket: w.ticket?.key ?? null,
           autoClose: a.enable,
         };
+      },
+    },
+    create_wt: {
+      kind: "write",
+      desc:
+        "Create a worktree and branch `slug` in a repo, through the repo's launcher command when one is set in settings, else git worktree add. Undo with remove_wts.",
+      input: { repo: z.string(), slug: z.string() },
+      run: async (a) => {
+        const repo = String(a.repo);
+        if (!store.repoPaths.has(repo)) {
+          throw new ToolError(
+            `unknown repo; one of ${[...store.repoPaths.keys()].join(", ")}`,
+          );
+        }
+        await actions.createWt(repo, String(a.slug)).catch((e) => {
+          throw new ToolError(e.message);
+        });
+        return { repo, slug: String(a.slug).trim() };
       },
     },
     remove_wts: {

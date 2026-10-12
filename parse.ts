@@ -798,6 +798,7 @@ export type PrCard = {
   deletions: number;
   changedFiles: number;
   mergeState: string;
+  queue: { position: number; state: string } | null;
   /** vs the base branch, straight from GitHub. null when it didn't answer. */
   ahead: number | null;
   behind: number | null;
@@ -896,6 +897,9 @@ export function prCard(d: Gql): PrCard {
     deletions: d.deletions ?? 0,
     changedFiles: d.changedFiles ?? 0,
     mergeState: d.mergeStateStatus ?? "UNKNOWN",
+    queue: d.mergeQueueEntry
+      ? { position: d.mergeQueueEntry.position, state: d.mergeQueueEntry.state }
+      : null,
     ahead: d.baseRef?.compare?.aheadBy ?? null,
     behind: d.baseRef?.compare?.behindBy ?? null,
     reviews: [...latest.values()].sort((a, b) => (b.at ?? 0) - (a.at ?? 0)),
@@ -949,6 +953,7 @@ export function prStatus(pr: {
   stateSince: number;
   isDraft: boolean;
   mergeState: string;
+  queue?: { position: number } | null;
   mergeable: string;
   reviewDecision: string;
   ci: { state: string | null };
@@ -983,6 +988,15 @@ export function prStatus(pr: {
       tone: "off",
       glyph: "",
       label: "Draft",
+      weight: "quiet",
+      ...open,
+    };
+  }
+  if (pr.queue) {
+    return {
+      tone: "ok",
+      glyph: "",
+      label: "In merge queue",
       weight: "quiet",
       ...open,
     };
@@ -1394,6 +1408,8 @@ export type Kind =
   | "pr-opened"
   | "pr-merged"
   | "pr-closed"
+  | "queued"
+  | "dequeued"
   | "automerge-changed"
   | "wt-added"
   | "wt-removed"
@@ -1452,6 +1468,12 @@ export const KINDS: Record<
   "pr-opened": { group: "life", label: "PR opened" },
   "pr-merged": { group: "life", label: "PR merged" },
   "pr-closed": { group: "life", label: "PR closed" },
+  "queued": { group: "life", label: "Added to merge queue" },
+  "dequeued": {
+    group: "life",
+    label: "Removed from merge queue",
+    hint: "Still open: failed in the queue or taken out",
+  },
   "automerge-changed": { group: "life", label: "Auto-merge changed" },
   "wt-added": { group: "life", label: "Worktree added" },
   "wt-removed": { group: "life", label: "Worktree removed" },
@@ -1482,7 +1504,7 @@ export type Draft = {
 
 export type Facts = { active: Map<string, Draft>; known: Set<string> };
 
-const FALLING = new Set<Kind>(["wt-removed", "server-died"]);
+const FALLING = new Set<Kind>(["wt-removed", "server-died", "dequeued"]);
 const MID_OP = new Set(["rebase", "merge", "cherry-pick"]);
 
 export const snoozeKey = (d: Pick<Draft, "kind" | "wt" | "repo">) =>
@@ -1624,13 +1646,17 @@ export function facts(
           add(k, ps, true, n, n ?? pr.title);
         }
       }
+      const qs = `${ps}:queue`;
+      if (open) known.add(qs);
+      add("queued", qs, pr.queue, pr.number);
+      add("dequeued", qs, pr.queue, pr.number);
       add("changes-requested", ps, pr.reviewDecision === "CHANGES_REQUESTED");
       add("conflict", ps, pr.mergeable === "CONFLICTING");
       add(
         "ready-to-merge",
         ps,
         open && !pr.isDraft && approved && pr.ci.state === "pass" &&
-          pr.mergeState === "CLEAN" && !pr.autoMerge,
+          pr.mergeState === "CLEAN" && !pr.autoMerge && !pr.queue,
       );
       add("ci-passed", ps, pr.ci.state === "pass");
       add("approved", ps, approved);

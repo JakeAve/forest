@@ -143,6 +143,8 @@ export function boot(opts: {
     sh,
     store,
     prs,
+    settings,
+    root,
     afterMutation: () => watcher.afterMutation(),
   });
   const tools = createTools({

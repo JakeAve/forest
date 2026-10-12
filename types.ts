@@ -81,6 +81,7 @@ export type Pr = {
   mergeable: "MERGEABLE" | "CONFLICTING" | "UNKNOWN";
   mergeState: string; // GitHub mergeStateStatus
   autoMerge: boolean;
+  queue: { position: number; state: string } | null; // GitHub merge queue entry
   ci: { state: "pass" | "fail" | "pending" | null; failing: string[] };
   // GitHub's own check-run/review timestamps for the current ci.state /
   // reviewDecision; falls back to when Forest first observed it if GitHub

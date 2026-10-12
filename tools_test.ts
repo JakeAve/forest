@@ -1,4 +1,4 @@
-import { assertEquals, assertRejects } from "@std/assert";
+import { assert, assertEquals, assertRejects } from "@std/assert";
 import { FakeTime } from "@std/testing/time";
 import { fakeExec, repo as mkRepo, worktree } from "./fixtures.ts";
 import { newStats } from "./stats.ts";
@@ -45,6 +45,7 @@ const make = (
     mergeBase: async () => "HEAD",
   });
   const removed: string[][] = [];
+  const created: [string, string][] = [];
   const closes: [string, boolean][] = [];
   const t = createTools({
     store,
@@ -54,6 +55,13 @@ const make = (
     sessions: { all: () => info },
     actions: {
       autoMerge: () => Promise.resolve(),
+      createWt: (repo, slug) => {
+        if (slug.includes("..")) {
+          return Promise.reject(new Error("bad branch name"));
+        }
+        created.push([repo, slug]);
+        return Promise.resolve();
+      },
       removeWts: (paths) => {
         removed.push(paths);
         return Promise.resolve(
@@ -73,7 +81,7 @@ const make = (
     },
     log: () => {},
   });
-  return Object.assign(t, { removed, closes });
+  return Object.assign(t, { removed, closes, created });
 };
 
 Deno.test("wts filters by pr state and recent", async () => {
@@ -294,6 +302,24 @@ Deno.test("sessions q fuzzy-matches titles; no params is an error", async () => 
   );
 });
 
+Deno.test("create_wt makes a worktree in a known repo and refuses an unknown repo or bad slug", async () => {
+  const t = make([mkRepo({ worktrees: [worktree({ path: "/r/forest" })] })]);
+  assertEquals(
+    await t.callTool("create_wt", { repo: "forest", slug: " feat/x " }),
+    { repo: "forest", slug: "feat/x" },
+  );
+  assertEquals(t.created, [["forest", " feat/x "]]);
+  for (
+    const a of [{ repo: "nope", slug: "ok" }, {
+      repo: "forest",
+      slug: "a/../b",
+    }]
+  ) {
+    assert(t.toolError(await t.callTool("create_wt", a).catch((e) => e)));
+  }
+  assertEquals(t.created.length, 1);
+});
+
 Deno.test("remove_wts never removes a worktree that would lose work or is in use", async () => {
   const t = make(
     [mkRepo({
@@ -404,6 +430,7 @@ const openPr = (over: Partial<Pr> = {}): Pr => ({
   mergeable: "MERGEABLE",
   mergeState: "CLEAN",
   autoMerge: true,
+  queue: null,
   ci: { state: "pending", failing: [] },
   ciSince: null,
   reviewSince: null,

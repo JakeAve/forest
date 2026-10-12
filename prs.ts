@@ -24,6 +24,7 @@ const NO_DETAIL: PrDetail = {
   mergeable: "UNKNOWN",
   mergeState: "UNKNOWN",
   autoMerge: false,
+  queue: null,
   ci: { state: null, failing: [] },
   ciSince: null,
   reviewSince: null,
@@ -39,6 +40,7 @@ const PR_VIEW_FIELDS =
 const CARD_QUERY =
   `query($owner:String!,$repo:String!,$n:Int!,$head:String!){repository(owner:$owner,name:$repo){pullRequest(number:$n){
 author{login} createdAt updatedAt additions deletions changedFiles headRefName mergeStateStatus
+mergeQueueEntry{position state}
 baseRef{compare(headRef:$head){aheadBy behindBy}}
 reviewRequests(first:20){nodes{requestedReviewer{... on User{login} ... on Bot{login} ... on Team{name} ... on Mannequin{login}}}}
 reviews(last:100){nodes{author{login} state submittedAt url body}}
@@ -140,6 +142,7 @@ export function createPrs(
       mergeable: d.mergeable,
       mergeState: d.mergeStateStatus ?? "UNKNOWN",
       autoMerge: !!d.autoMergeRequest,
+      queue: (card ?? prev?.card)?.queue ?? null,
       ci,
       ciSince: ciSince(d.statusCheckRollup ?? [], ci.state) ??
         (prev && prev.ci.state === ci.state ? prev.ciSince : now),
