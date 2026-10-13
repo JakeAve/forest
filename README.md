@@ -339,6 +339,27 @@ macOS gets one grouped banner per cycle.
 | `POST /api/notify/read`   | `{ "ids": [...] }` or `{ "all": true }` | `{ "ok": true }`     |
 | `POST /api/notify/snooze` | `{ "key": "..." }`                      | `{ "ok": true }`     |
 
+Sound is separate from delivery. `notifySound` maps a kind (or `*`) to one of:
+
+| value                 | plays                                              |
+| --------------------- | -------------------------------------------------- |
+| `Glass`               | a macOS system sound from `/System/Library/Sounds` |
+| `~/sounds/ding.mp3`   | any audio file, through `afplay`                   |
+| `say`, `say:Samantha` | the title and body spoken, optionally in a voice   |
+| `say:Daniel:PR {pr}`  | your own words; `{repo} {wt} {pr} {title} {body}`  |
+| `hook:~/bin/note.sh`  | your command, with the event as JSON on stdin      |
+
+```json
+{
+  "notify": { "ci-failed": "app" },
+  "notifySound": { "ci-failed": "Basso", "*": "Pop" }
+}
+```
+
+Every event gets its sound, one at a time in arrival order; hooks wait their
+turn too, and one that runs past 30 s stops holding up the queue. A kind set to
+`app` and given a sound alerts without a macOS banner.
+
 ### Launchers
 
 By default, "new worktree" runs `git worktree add <repo>-wt/<slug> -b <slug>`.

@@ -1,4 +1,11 @@
-import { type Draft, edges, type Facts, facts, snoozeKey } from "./parse.ts";
+import {
+  type Draft,
+  edges,
+  type Facts,
+  facts,
+  fillCommand,
+  snoozeKey,
+} from "./parse.ts";
 import { writeFileAtomic } from "./cache.ts";
 import type { Shell } from "./exec.ts";
 import type { Settings } from "./settings.ts";
@@ -90,6 +97,7 @@ export function fileInbox(path: string): InboxStore {
 }
 
 const DELIVER = new Set(["app", "os", "both"]);
+const SOUND_MAX_MS = 30_000;
 
 export const factsNow = (repos: Repo[], settings: Settings, now: number) =>
   facts(repos, {
@@ -117,6 +125,8 @@ export function createNotify(
   let last: Repo[] = [];
   let prev = EMPTY;
   let osFailed = false;
+  const soundFailed = new Set<string>();
+  let sounds: Promise<unknown> = Promise.resolve();
   // Serialized so a disk-backed store sees ops in the order they were made.
   let queue: Promise<void> = Promise.resolve();
   const write = (op: () => Promise<void>) =>
@@ -154,6 +164,52 @@ export function createNotify(
     });
   }
 
+  const soundFor = (kind: string) =>
+    settings.notifySound?.[kind] ?? settings.notifySound?.["*"];
+  const soundFile = (s: string) =>
+    /^\w+$/.test(s)
+      ? `/System/Library/Sounds/${s}.aiff`
+      : s.replace(/^~(?=\/)/, Deno.env.get("HOME") ?? "~");
+
+  const base = (p: string | null) => p?.slice(p.lastIndexOf("/") + 1) ?? "";
+  const sound = (e: Ev, spec: string) => {
+    const said = spec.match(/^say(?::([^:]*)(?::(.*))?)?$/s);
+    const cmd = spec.startsWith("hook:")
+      ? ["sh", "-c", spec.slice(5)]
+      : said
+      ? [
+        "say",
+        ...(said[1] ? ["-v", said[1]] : []),
+        "--",
+        fillCommand(said[2] ?? "{title}. {body}", {
+          title: e.title,
+          body: e.body,
+          repo: base(e.repo),
+          wt: base(e.wt),
+          pr: String(e.pr ?? ""),
+        }),
+      ]
+      : ["afplay", soundFile(spec)];
+    let t: ReturnType<typeof setTimeout> | undefined;
+    return Promise.race([
+      sh.exec("/", cmd, cmd[0] === "sh" ? JSON.stringify(e) : undefined),
+      new Promise((r) => t = setTimeout(r, SOUND_MAX_MS)),
+    ]).catch((err) => {
+      if (soundFailed.has(spec)) return;
+      soundFailed.add(spec);
+      log({ type: "notify-sound-error", spec, error: String(err) });
+    }).finally(() => clearTimeout(t));
+  };
+
+  // ponytail: unbounded; a burst of N events plays N sounds back to back
+  function play(evs: Ev[]) {
+    if (!os) return;
+    for (const e of evs) {
+      const spec = soundFor(e.kind)?.trim();
+      if (spec) sounds = sounds.then(() => sound(e, spec));
+    }
+  }
+
   function cycle() {
     try {
       run();
@@ -189,6 +245,7 @@ export function createNotify(
     write(() => inbox.append(kept).then(() => inbox.trim(max)));
     for (const ev of kept) sse.emit("notify", JSON.stringify(ev));
     osNotify(kept.filter((e) => deliver(e) === "os" || deliver(e) === "both"));
+    play(kept);
   }
 
   return {
