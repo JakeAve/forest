@@ -28,6 +28,7 @@ export const DEFAULTS = {
   ticketPollMs: 300000,
   keys: {} as Record<string, string>,
   notify: {} as Record<string, string>,
+  notifySound: {} as Record<string, string>,
   notifyMuted: [] as string[],
   columns: [] as string[],
   notifyMax: 200,

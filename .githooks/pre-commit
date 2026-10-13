@@ -1,3 +1,4 @@
 #!/bin/sh
 export PATH="$HOME/.deno/bin:$PATH"
+unset GIT_INDEX_FILE
 deno task pre-commit

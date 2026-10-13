@@ -99,6 +99,79 @@ test("notify: PR title with quotes reaches osascript as argv", (mk) => {
   ]]);
 });
 
+test("notify: sound specs map to afplay, say and hook", async (mk) => {
+  const run = async (spec: string) => {
+    const { n, argv } = mk({
+      notify: { "pr-opened": "app" },
+      notifySound: { "pr-opened": spec },
+    });
+    n.observe(snap({ path: "/r/forest-feat" }));
+    n.observe(snap({ path: "/r/forest-feat", pr: pr() }));
+    await flush();
+    return argv;
+  };
+  assertEquals(await run("Glass"), [[
+    "afplay",
+    "/System/Library/Sounds/Glass.aiff",
+  ]]);
+  assertEquals(await run("/a/b.mp3"), [["afplay", "/a/b.mp3"]]);
+  assertEquals(await run("say:Samantha"), [[
+    "say",
+    "-v",
+    "Samantha",
+    "--",
+    "PR opened: forest #7. Add the thing",
+  ]]);
+  assertEquals((await run("say")).map((c) => c.slice(0, 2)), [["say", "--"]]);
+  assertEquals(await run("say:Daniel:Created PR {repo} {pr}"), [[
+    "say",
+    "-v",
+    "Daniel",
+    "--",
+    "Created PR forest 7",
+  ]]);
+  assertEquals(await run("say::{title}: x"), [[
+    "say",
+    "--",
+    "PR opened: forest #7: x",
+  ]]);
+  assertEquals(await run("hook:~/h.sh --loud"), [[
+    "sh",
+    "-c",
+    "~/h.sh --loud",
+  ]]);
+});
+
+Deno.test("notify: every event's sound plays, one after another", async () => {
+  const started: string[] = [];
+  const done: (() => void)[] = [];
+  const n = createNotify({
+    sh: {
+      ...fakeExec({}),
+      exec: (_cwd, cmd) =>
+        new Promise((r) => (started.push(cmd[1]), done.push(() => r("")))),
+    },
+    settings: {
+      ...structuredClone(DEFAULTS),
+      notify: { "wt-added": "app" },
+      notifySound: { "*": "Glass" },
+    },
+    sse: { emit: () => {} },
+    inbox: memoryInbox(),
+    now: () => 1,
+    os: true,
+    log: () => {},
+  });
+  n.observe(snap());
+  n.observe(snap({ path: "/r/a" }, { path: "/r/b" }));
+  await flush();
+  assertEquals(started.length, 1);
+  done[0]();
+  await flush();
+  assertEquals(started.length, 2);
+  done[1]();
+});
+
 test("notify: several events in one cycle make one osascript call", (mk) => {
   const { n, sh, emitted } = mk({
     notify: { "wt-added": "both", "pushed-to-branch": "app" },
