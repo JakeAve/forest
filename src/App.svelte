@@ -48,6 +48,20 @@ function zoomBy(d) {
 }
 
 const AXES = { stack: "yy", sidebar: "xy", columns: "xx" };
+const ICON = {
+  save:
+    "M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zM17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7M7 3v4a1 1 0 0 0 1 1h7",
+  undo: "M9 14 4 9l5-5M4 9h10.5a5.5 5.5 0 0 1 0 11H11",
+  plus: "M5 12h14M12 5v14",
+  minus: "M5 12h14",
+  x: "M18 6 6 18M6 6l12 12",
+  copy:
+    "M10 8h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H10a2 2 0 0 1-2-2V10a2 2 0 0 1 2-2zM4 16a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2",
+  up: "m5 12 7-7 7 7M12 19V5",
+  down: "M12 5v14m7-7-7 7-7-7",
+  max: "M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7",
+  min: "M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7",
+};
 const LAYOUTS = [
   ["stack", "Stack", "M4 4h16v5H4zM4 11h16v3H4zM4 16h16v4H4z"],
   ["sidebar", "Sidebar", "M4 4h6v16H4zM12 4h8v6h-8zM12 12h8v8h-8z"],
@@ -2584,9 +2598,12 @@ async function confirmDiscard() {
   onkeydown={runKey}
 />
 
+{#snippet ico(d)}<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
+  <path {d} />
+</svg>{/snippet}
 {#snippet closeX(fn)}
   <button class="circ x" title="Close (Esc)" aria-label="Close"
-  onclick={fn}>×</button>
+  onclick={fn}>{@render ico(ICON.x)}</button>
 {/snippet}
 
 <div class="app" class:desktop={settings?.desktop}>
@@ -2629,7 +2646,8 @@ async function confirmDiscard() {
   {#if prOff && prOff.text !== prOffHidden}
     <div class="banner t-band" data-tone="warn" role="status" title={prOff.detail}>
       <span>{prOff.text}</span><span class="sp"></span>
-      <button class="btn" onclick={() => (prOffHidden = prOff.text)}>Dismiss</button>
+      <button class="btn ib" title="Dismiss" aria-label="Dismiss"
+              onclick={() => (prOffHidden = prOff.text)}>{@render ico(ICON.x)}</button>
     </div>
   {/if}
 
@@ -2638,7 +2656,7 @@ async function confirmDiscard() {
   {#snippet maxBtn(n)}
     <button class="btn max" class:on={max === n} title={max === n ? "Restore panes" : "Full screen"}
             aria-label={max === n ? "Restore panes" : "Full screen"}
-            onclick={() => toggleMax(n)}>{max === n ? "⤡" : "⤢"}</button>
+            onclick={() => toggleMax(n)}>{@render ico(max === n ? ICON.min : ICON.max)}</button>
   {/snippet}
   <div class="panes {preset}" class:max style:--b1={paneSize(1)} style:--b2={paneSize(2)}>
   <div class="band wts" class:maxed={max === 1} class:selecting bind:this={b1El}>
@@ -2725,11 +2743,13 @@ async function confirmDiscard() {
             >Remove</button
           >
           <button
-            class="btn"
+            class="btn ib"
+            title="Clear selection"
+            aria-label="Clear selection"
             onclick={() => {
               checked = {};
               confirming = null;
-            }}>Clear</button
+            }}>{@render ico(ICON.x)}</button
           >
         {/if}
       </div>
@@ -2801,7 +2821,7 @@ async function confirmDiscard() {
           {#if r.cached}<span class="ct late" title="Last known state; refreshing"><span class="spin"></span> cached</span>{/if}
           <span class="sp"></span>
           <button class="circ plus" title="New worktree" aria-label="New worktree"
-                  onclick={(e) => { e.stopPropagation(); creating = creating === r.name ? null : r.name; slug = ""; }}>+</button>
+                  onclick={(e) => { e.stopPropagation(); creating = creating === r.name ? null : r.name; slug = ""; }}>{@render ico(ICON.plus)}</button>
         {/if}
       </div>
       {#if r && creating === r.name}
@@ -2924,7 +2944,7 @@ async function confirmDiscard() {
                  bind:this={newEl} onkeydown={newBoxKey} onblur={() => (newing = false)}>
         {:else}
           <button class="btn max" title="New file or folder" aria-label="New file or folder"
-                  onclick={startNew}>＋</button>
+                  onclick={startNew}>{@render ico(ICON.plus)}</button>
         {/if}
       {/if}
       <FilterInput bind:this={fileFilterEl} bind:value={fq} label="Filter files"
@@ -2975,11 +2995,11 @@ async function confirmDiscard() {
           <span class="p"><span class="dir">{dir}</span>{@render rowName(f.path, name)}</span>
           <span class="acts">
             {#if mode === "staged"}
-              <button onclick={(e) => op("unstage", { path: f.path }, e)}>Unstage</button>
+              <button title="Unstage" aria-label="Unstage" onclick={(e) => op("unstage", { path: f.path }, e)}>{@render ico(ICON.minus)}</button>
             {:else if mode === "unstaged"}
-              <button onclick={(e) => op("stage", { path: f.path }, e)}>Stage</button>
-              <button class="dg" title="discard changes"
-                      onclick={(e) => discardArm(f, e)}>↺</button>
+              <button title="Stage" aria-label="Stage" onclick={(e) => op("stage", { path: f.path }, e)}>{@render ico(ICON.plus)}</button>
+              <button class="dg" title="Discard changes" aria-label="Discard changes"
+                      onclick={(e) => discardArm(f, e)}>{@render ico(ICON.undo)}</button>
             {/if}
           </span>
           <span class="n"><span class="pl">+{f.added}</span><span class="mi">−{f.removed}</span></span>
@@ -3034,12 +3054,12 @@ async function confirmDiscard() {
       {:else if sectioned}
         {#if stagedFiles.length}
           <div class="sechd"><b>Staged</b>{stagedFiles.length}<span class="sp"></span>
-            <button onclick={(e) => op("unstage", { path: "." }, e)}>Unstage all</button></div>
+            <button title="Unstage all" aria-label="Unstage all" onclick={(e) => op("unstage", { path: "." }, e)}>{@render ico(ICON.minus)}</button></div>
           {#each stagedFiles as f (f.path)}{@render fileRow(f, "staged")}{/each}
         {/if}
         {#if unstagedFiles.length}
           <div class="sechd"><b>Unstaged</b>{unstagedFiles.length}<span class="sp"></span>
-            <button onclick={(e) => op("stage", { path: "." }, e)}>Stage all</button></div>
+            <button title="Stage all" aria-label="Stage all" onclick={(e) => op("stage", { path: "." }, e)}>{@render ico(ICON.plus)}</button></div>
           {#each unstagedFiles as f (f.path)}{@render fileRow(f, "unstaged")}{/each}
         {/if}
         {#if committedFiles.length}
@@ -3074,9 +3094,11 @@ async function confirmDiscard() {
       {/if}
       {#if diffDirty}
         <span class="unsaved" data-tone="warn">● Unsaved ⌘S</span>
-        <button class="btn p" onclick={() => diffRef?.save()}>Save</button>
-        <button class="btn" title="discard editor changes, reload from disk"
-                onclick={() => { banner = null; diffRef?.reloadTheirs(); }}>Discard</button>
+        <button class="btn ib p" title="Save" aria-label="Save" onclick={() => diffRef?.save()}>
+          {@render ico(ICON.save)}</button>
+        <button class="btn ib" title="Discard editor changes, reload from disk" aria-label="Discard"
+                onclick={() => { banner = null; diffRef?.reloadTheirs(); }}>
+          {@render ico(ICON.undo)}</button>
       {/if}
       {#if mode === "text" && !srcBinary}
         <FilterInput bind:this={findEl} bind:value={lq} label="Find" kbd={kbdOf("find")}
@@ -3213,7 +3235,8 @@ async function confirmDiscard() {
       {/if}
       <section class="foot">
         <a class="btn" href={t.url} target="_blank" rel="noreferrer">Open ticket ↗</a>
-        <button class="btn" onclick={(e) => copy(e, t.url, "tklink:" + t.url)}>Copy link</button>
+        <button class="btn ib" title="Copy link" aria-label="Copy link"
+                onclick={(e) => copy(e, t.url, "tklink:" + t.url)}>{@render ico(ICON.copy)}</button>
       </section>
     {:else if cardWt?.pr}
       {@const w = cardWt}
@@ -3395,7 +3418,8 @@ async function confirmDiscard() {
       <section class="foot">
         <a class="btn" href={p.url} target="_blank" rel="noreferrer">Open on GitHub ↗</a>
         <a class="btn" href="{p.url}/files" target="_blank" rel="noreferrer">Files changed</a>
-        <button class="btn" onclick={(e) => copy(e, p.url, "prlink:" + p.url)}>Copy link</button>
+        <button class="btn ib" title="Copy link" aria-label="Copy link"
+                onclick={(e) => copy(e, p.url, "prlink:" + p.url)}>{@render ico(ICON.copy)}</button>
       </section>
     {/if}
   </div>
@@ -3491,9 +3515,9 @@ async function confirmDiscard() {
         <span class="cbx" class:on></span>{c.label}
       </label>
       {#if on}
-        <button class="btn" aria-label="Move up" disabled={i === 0} onclick={() => moveCol(c.key, i - 1)}>↑</button>
-        <button class="btn" aria-label="Move down" disabled={i === visibleCols.length - 1}
-                onclick={() => moveCol(c.key, i + 1)}>↓</button>
+        <button class="btn ib" title="Move up" aria-label="Move up" disabled={i === 0} onclick={() => moveCol(c.key, i - 1)}>{@render ico(ICON.up)}</button>
+        <button class="btn ib" title="Move down" aria-label="Move down" disabled={i === visibleCols.length - 1}
+                onclick={() => moveCol(c.key, i + 1)}>{@render ico(ICON.down)}</button>
       {/if}
     </div>
   {/each}
@@ -3515,7 +3539,7 @@ async function confirmDiscard() {
     <datalist id="repo-names">
       {#each repos as r (r.name)}<option value={r.name}></option>{/each}
     </datalist>
-    <button class="btn" disabled={!newRepo.trim()} onclick={addLauncher}>Add</button>
+    <button class="btn ib" title="Add" aria-label="Add" disabled={!newRepo.trim()} onclick={addLauncher}>{@render ico(ICON.plus)}</button>
   </div>
   <div class="hint">
     Shell command run in the repo to make a worktree, instead of plain
@@ -3535,7 +3559,7 @@ async function confirmDiscard() {
   <div class="row">
     <input class="lname" list="repo-names" placeholder="Repo name, or *"
            bind:value={newTicketRepo} onkeydown={(e) => e.key === "Enter" && addTicket()}>
-    <button class="btn" disabled={!newTicketRepo.trim()} onclick={addTicket}>Add</button>
+    <button class="btn ib" title="Add" aria-label="Add" disabled={!newTicketRepo.trim()} onclick={addTicket}>{@render ico(ICON.plus)}</button>
   </div>
   <div class="hint">
     URL for the ticket key found in a branch name, PR title or last commit
@@ -3561,7 +3585,8 @@ async function confirmDiscard() {
   {#each settings?.notifyMuted ?? [] as p, i (p)}
     <div class="row">
       <span class="kind mono">{p}</span>
-      <button class="btn" onclick={() => (settings.notifyMuted.splice(i, 1), saveSettings())}>Remove</button>
+      <button class="btn ib" title="Unmute" aria-label="Unmute"
+              onclick={() => (settings.notifyMuted.splice(i, 1), saveSettings())}>{@render ico(ICON.x)}</button>
     </div>
   {:else}
     <div class="hint">Nothing muted. Mute a worktree or repo from an inbox row.</div>
@@ -3643,8 +3668,18 @@ async function confirmDiscard() {
 .circ.plus {
   width: 1.25rem;
   height: 1.25rem;
-  font-size: 0.875rem;
   margin-left: auto;
+}
+.circ.x .ico,
+.circ.plus .ico {
+  width: 0.75rem;
+  height: 0.75rem;
+}
+.acts .ico,
+.sechd .ico {
+  width: 0.625rem;
+  height: 0.625rem;
+  stroke-width: 2;
 }
 .card .ago + .x {
   margin-left: 0;
@@ -4129,14 +4164,14 @@ dialog.settings::backdrop {
   place-items: center;
   padding: 0.25rem 0.5rem;
 }
-.btn.max {
+.btn.max,
+.btn.ib {
   display: grid;
   place-items: center;
   flex: none;
   width: 1.75rem;
   height: 1.75rem;
   padding: 0;
-  font-size: 0.875rem;
 }
 .btn.on {
   color: var(--acc);
@@ -4801,9 +4836,8 @@ select.theme {
   background: var(--bg3);
   border: 1px solid var(--line);
   border-radius: 999px;
-  padding: 0 0.5rem;
+  padding: 0.125rem 0.375rem;
   color: var(--dim);
-  font: 0.6875rem var(--sans);
   cursor: pointer;
 }
 .sechd button:hover {
@@ -4860,11 +4894,15 @@ select.theme {
   gap: 0.1875rem;
   justify-content: flex-end;
 }
+.acts button,
+.sechd button {
+  display: grid;
+  place-items: center;
+}
 .acts button {
-  font: 0.625rem var(--sans);
   color: var(--dim);
   cursor: pointer;
-  padding: 0 0.5rem;
+  padding: 0.125rem 0.375rem;
   border: 1px solid var(--line);
   border-radius: 999px;
   background: var(--bg3);
