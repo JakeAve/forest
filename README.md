@@ -209,10 +209,13 @@ ignores `notify` settings, mutes and snoozes. A kind that is already true
 returns at once, so a `wait` started after a PR merged still sees `pr-merged`.
 To wait for the next event instead, pass the keys you have handled back in
 `seen`. A seen key is skipped until it clears, so a check that fails again after
-a fix still wakes you. `timeout` is in seconds (default 600, max 3600, `0` for a
-single check). Over MCP the call holds the agent's tool slot until it returns,
-so keep `timeout` short there. For long waits an agent should run the `curl`
-form below as a background command, which costs no tokens while it waits:
+a fix still wakes you. Edge-only kinds (`dequeued`, `wt-removed`, `server-died`,
+`wt-added`, `branch-switched`, `automerge-changed`) are never "already true":
+they return when the edge happens during the wait. `timeout` is in seconds
+(default 600, max 3600, `0` for a single check). Over MCP the call holds the
+agent's tool slot until it returns, so keep `timeout` short there. For long
+waits an agent should run the `curl` form below as a background command, which
+costs no tokens while it waits:
 
 ```sh
 curl -s --max-time 3700 'forest-server.localhost:38471/api/t/wait?wt=1234&for=pr-merged,act&timeout=3600'

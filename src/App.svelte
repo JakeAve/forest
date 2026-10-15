@@ -1236,13 +1236,12 @@ function conflictBanner() {
 
 async function act(ep, body, key, e) {
   e?.stopPropagation();
-  busy[key] = true;
+  busy[key] = body;
   const res = await fetch(`/api/${ep}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
-  });
-  delete busy[key];
+  }).finally(() => delete busy[key]);
   if (!res.ok) {
     errBanner(await res.text());
     return false;
@@ -1256,6 +1255,7 @@ async function op(ep, body, e) {
   diffTick++;
 }
 
+const rowBusy = (path) => Object.keys(busy).some((k) => k.endsWith(":" + path));
 const rebase = (w, e) => act("rebase", { wt: w.path }, "rb:" + w.path, e);
 const updateBranch = (w, e) =>
   act("update-branch", { wt: w.path, number: w.pr.number }, "ub:" + w.path, e);
@@ -1293,6 +1293,7 @@ function prActions(w) {
   if (p?.state !== "OPEN") return [];
   const behind = prAb(w).behind;
   const ahead = prAb(w).ahead;
+  const ps = busy["ps:" + w.path]?.action;
   return [
     prStatus(p).tone === "ok" && !p.queue && {
       key: "merge",
@@ -1302,6 +1303,7 @@ function prActions(w) {
       confirm: `Squash ${ahead} commit${
         ahead === 1 ? "" : "s"
       } into ${p.baseRefName}?`,
+      wait: ps === "merge",
       go: (e) => prState(w, "merge", e),
     },
     behind > 0 && !p.queue && {
@@ -1309,6 +1311,7 @@ function prActions(w) {
       label: `Update branch ↓${behind}`,
       menu: `Update branch (↓${behind} from ${p.baseRefName})`,
       cls: "warn",
+      wait: !!busy["ub:" + w.path],
       go: (e) => updateBranch(w, e),
     },
     {
@@ -1316,6 +1319,7 @@ function prActions(w) {
       label: p.isDraft ? "Ready for review" : "Convert to draft",
       menu: p.isDraft ? "Publish pull request" : "Convert to draft",
       cls: "",
+      wait: ps === "ready" || ps === "draft",
       go: (e) => prState(w, p.isDraft ? "ready" : "draft", e),
     },
     {
@@ -1324,6 +1328,7 @@ function prActions(w) {
       menu: `Close pull request #${p.number}`,
       cls: "dg",
       confirm: `Close #${p.number} without merging?`,
+      wait: ps === "close",
       go: (e) => prState(w, "close", e),
     },
   ].filter(Boolean);
@@ -2709,9 +2714,9 @@ async function confirmDiscard() {
           <span class="sp"></span>
           <button
             class="btn dg"
+            class:wait={removing}
             disabled={removing}
-            onclick={() => removeWts(confirming, false)}
-            >{removing ? "Removing…" : "Remove"}</button
+            onclick={() => removeWts(confirming, false)}>Remove</button
           >
           <button class="btn" onclick={() => (confirming = null)}>Cancel</button
           >
@@ -2829,8 +2834,8 @@ async function confirmDiscard() {
           <!-- svelte-ignore a11y_autofocus -->
           <input class="filter" autofocus placeholder="Branch or slug" bind:value={slug}
                  onkeydown={(e) => { if (e.key === "Enter") createWt(r); if (e.key === "Escape") creating = null; }}>
-          <button class="btn" disabled={busy["new:" + r.name]} onclick={() => createWt(r)}>
-            {busy["new:" + r.name] ? "Creating…" : "Create"}</button>
+          <button class="btn" class:wait={busy["new:" + r.name]} disabled={busy["new:" + r.name]}
+                  onclick={() => createWt(r)}>Create</button>
         </div>
       {/if}
       {#if isOpen(key)}
@@ -2854,7 +2859,9 @@ async function confirmDiscard() {
            onkeydown={(e) => e.key === "Enter" ? selectWt(w.path) : menuKey(e, wtItems(w))}
            oncontextmenu={(e) => openMenu(e, wtItems(w))}>
         {#if w.pr}{@const s = prStatus(w.pr)}<i class="t-bar" class:loud={s.weight === "loud"} data-tone={s.tone}></i>{/if}
-        {#if w.isPrimary}
+        {#if rowBusy(w.path)}
+          <span class="spin late" role="status" aria-label="working"></span>
+        {:else if w.isPrimary}
           <span></span>
         {:else}
           <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
@@ -3216,7 +3223,7 @@ async function confirmDiscard() {
       {#if ti.actions?.length}
         <section class="practs">
           {#each ti.actions as to (to)}
-            <button class="btn" disabled={busy["tk:" + cardWt.path]}
+            <button class="btn" class:wait={busy["tk:" + cardWt.path]?.to === to} disabled={busy["tk:" + cardWt.path]}
                     onclick={(e) => act("ticket", { wt: cardWt.path, to }, "tk:" + cardWt.path, e)}>Mark {to.replace(/_/g, " ")}</button>
           {/each}
         </section>
@@ -3265,12 +3272,12 @@ async function confirmDiscard() {
         <section class="practs">
           {#if ask}
             <span class="q">{ask.confirm}</span>
-            <button class="btn {ask.cls}" disabled={busy["ps:" + w.path]}
+            <button class="btn {ask.cls}" class:wait={ask.wait} disabled={busy["ps:" + w.path]}
                     onclick={(e) => runAction(ask, w, e)}>{ask.label}</button>
             <button class="btn" onclick={() => (asking = null)}>Cancel</button>
           {:else}
             {#each acts as a (a.key)}
-              <button class="btn {a.cls}"
+              <button class="btn {a.cls}" class:wait={a.wait}
                       disabled={busy["ps:" + w.path] || busy["ub:" + w.path]}
                       onclick={(e) => runAction(a, w, e)}>{a.label}</button>
             {/each}
@@ -3292,7 +3299,7 @@ async function confirmDiscard() {
           <div class="r" data-tone={behind ? "warn" : "off"}>
             <span>{behind ? `↓${behind} behind` : "Up to date with"} {p.baseRefName}</span>
             {#if behind > 0 && !p.queue}
-              <button class="btn" disabled={busy["ub:" + w.path]}
+              <button class="btn" class:wait={busy["ub:" + w.path]} disabled={busy["ub:" + w.path]}
                       onclick={(e) => updateBranch(w, e)}>Update branch</button>
             {/if}
           </div>
@@ -3476,8 +3483,8 @@ async function confirmDiscard() {
       <option value="default">default</option>
       {#each themes as t (t)}<option value={t}>{t}</option>{/each}
     </select>
-    <button class="btn" disabled={busy.theme} onclick={() => fileEl.click()}>
-      {busy.theme ? "Applying…" : "Import…"}</button>
+    <button class="btn" class:wait={busy.theme?.json} disabled={busy.theme}
+            onclick={() => fileEl.click()}>Import…</button>
     <input type="file" accept=".json,.jsonc" hidden bind:this={fileEl} onchange={importTheme}>
   </div>
   {#if vsThemes.length}
@@ -4042,6 +4049,22 @@ dialog.settings::backdrop {
   outline: 1px solid var(--acc);
   outline-offset: 1px;
 }
+.cbxin:disabled + .cbx {
+  border-radius: 50%;
+  border-color: var(--dimmer);
+  border-top-color: var(--acc);
+  background: none;
+  cursor: default;
+  animation: spin 0.7s linear infinite;
+}
+.cbxin:disabled + .cbx::after {
+  content: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .cbxin:disabled + .cbx {
+    animation: none;
+  }
+}
 .body {
   --colsh: 1.375rem;
   --repoh: 1.75rem;
@@ -4181,6 +4204,31 @@ dialog.settings::backdrop {
 .btn.dg {
   color: var(--danger);
   border-color: color-mix(in srgb, var(--danger) var(--edge), var(--line));
+}
+.btn.wait {
+  position: relative;
+  color: transparent !important;
+}
+.btn.wait:disabled {
+  opacity: 1;
+}
+.btn.wait::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 0.7rem;
+  height: 0.7rem;
+  box-sizing: border-box;
+  border: 2px solid var(--dimmer);
+  border-top-color: var(--acc);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .btn.wait::after {
+    animation: none;
+  }
 }
 .btn.dg:hover {
   color: var(--danger);
