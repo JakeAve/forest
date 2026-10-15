@@ -3,6 +3,8 @@ import { z } from "zod";
 import { matchWt, rank } from "./src/filter.js";
 import {
   type Draft,
+  edges,
+  type Facts,
   type Kind,
   KINDS,
   normPath,
@@ -33,7 +35,8 @@ export type Tool = {
   run: (a: Record<string, unknown>) => unknown | Promise<unknown>;
 };
 
-// Always active while a worktree exists, or fire on falling: no use to wait on.
+// Always active while a worktree exists, or fire on falling: wait returns them
+// on the edge it sees, never from before the call.
 const EDGE_ONLY = new Set<string>([
   "wt-added",
   "wt-removed",
@@ -42,9 +45,6 @@ const EDGE_ONLY = new Set<string>([
   "automerge-changed",
   "dequeued",
 ]);
-const WAITABLE = (Object.keys(KINDS) as Kind[]).filter((k) =>
-  !EDGE_ONLY.has(k)
-);
 
 export class ToolError extends Error {
   candidates?: unknown[];
@@ -102,14 +102,12 @@ export function createTools(deps: {
   }
 
   // ponytail: an abandoned wait holds its timer until timeout; pass req.signal through if they pile up
-  const waiters = new Set<(active: Draft[]) => void>();
-  const active = () => [
-    ...factsNow([...repoByPath.values()], settings, Date.now()).active.values(),
-  ];
+  const waiters = new Set<(f: Facts) => void>();
+  const facts = () => factsNow([...repoByPath.values()], settings, Date.now());
   function wake() {
     if (!waiters.size) return;
-    const a = active();
-    for (const w of waiters) w(a);
+    const f = facts();
+    for (const w of waiters) w(f);
   }
 
   const tools: Record<string, Tool> = {
@@ -256,7 +254,7 @@ export function createTools(deps: {
     },
     wait: {
       desc:
-        "Block until a worktree has any of the given event kinds active, or timeout seconds pass (default 600, max 3600). for is comma-separated kinds or groups (act, move, life, clean). Returns the matching events, [] on timeout. An event already active returns at once; pass its key back in seen (comma-separated) to wait for the next one, and a seen key counts again once it clears.",
+        "Block until a worktree has any of the given event kinds active, or timeout seconds pass (default 600, max 3600). for is comma-separated kinds or groups (act, move, life, clean). Returns the matching events, [] on timeout. An event already active returns at once; pass its key back in seen (comma-separated) to wait for the next one, and a seen key counts again once it clears. Edge-only kinds (dequeued, wt-removed, server-died, wt-added, branch-switched, automerge-changed) return only when they happen during the wait.",
       input: {
         wt: z.string(),
         for: z.string(),
@@ -267,25 +265,35 @@ export function createTools(deps: {
         const w = resolveWt(String(a.wt));
         const want = new Set<string>();
         for (const n of String(a.for).split(",")) {
-          const ks = WAITABLE.filter((k) => k === n || KINDS[k].group === n);
+          const ks = (Object.keys(KINDS) as Kind[]).filter((k) =>
+            k === n || KINDS[k].group === n
+          );
           if (!ks.length) {
             throw new ToolError(
-              `can't wait for ${n}; use ${WAITABLE.join(", ")}`,
+              `can't wait for ${n}; use ${Object.keys(KINDS).join(", ")}`,
             );
           }
           for (const k of ks) want.add(k);
         }
         const seen = new Set(a.seen ? String(a.seen).split(",") : []);
-        const match = (all: Draft[]) => {
-          const live = all.filter((d) => d.wt === w.path && want.has(d.kind));
+        const mine = (d: Draft) => d.wt === w.path && want.has(d.kind);
+        let prev = facts();
+        const match = (f: Facts) => {
+          const live = [...f.active.values()].filter((d) =>
+            mine(d) && !EDGE_ONLY.has(d.kind)
+          );
           for (const k of seen) {
             if (!live.some((d) => d.key === k)) seen.delete(k);
           }
-          return live.filter((d) => !seen.has(d.key)).map((
+          const fired = edges(prev, f).filter((d) =>
+            mine(d) && EDGE_ONLY.has(d.kind)
+          );
+          prev = f;
+          return [...live.filter((d) => !seen.has(d.key)), ...fired].map((
             { scope: _, ...d },
           ) => d);
         };
-        const hits = match(active());
+        const hits = match(prev);
         const ms = ((a.timeout as number | undefined) ?? 600) * 1000;
         if (hits.length || !ms) return hits;
         return new Promise((resolve) => {
@@ -294,8 +302,8 @@ export function createTools(deps: {
             waiters.delete(check);
             resolve(out);
           };
-          const check = (all: Draft[]) => {
-            const h = match(all);
+          const check = (f: Facts) => {
+            const h = match(f);
             if (h.length) done(h);
           };
           const timer = setTimeout(() => done([]), ms);

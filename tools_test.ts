@@ -505,13 +505,47 @@ Deno.test("wait returns [] on timeout; timeout=0 is a single check", async () =>
   assertEquals(await p, []);
 });
 
-Deno.test("wait refuses unknown and always-on kinds", async () => {
+Deno.test("wait refuses unknown kinds", async () => {
   const { t } = waitSetup(openPr());
-  for (const k of ["nope", "wt-added", "automerge-changed"]) {
-    await assertRejects(
-      () => t.callTool("wait", { wt: "feat", for: k }),
-      Error,
-      `can't wait for ${k}`,
-    );
-  }
+  await assertRejects(
+    () => t.callTool("wait", { wt: "feat", for: "nope" }),
+    Error,
+    "can't wait for nope",
+  );
+});
+
+// babysit-prs' for-list, which once failed whole on dequeued
+const BABYSIT =
+  "pr-merged,pr-closed,conflict,autorebase-failed,ci-failed,changes-requested,new-comment,ci-stuck,dequeued";
+const queued = { position: 1, state: "QUEUED" };
+
+Deno.test("wait sees a merge-queue merge after the head branch is gone", async () => {
+  const { w, t } = waitSetup(openPr({ autoMerge: false, queue: queued }));
+  const p = t.callTool("wait", { wt: "feat", for: BABYSIT, seen: "" });
+  w.pr = { ...w.pr!, state: "MERGED", queue: null };
+  w.remote = null;
+  w.gone = true;
+  t.wake();
+  assertEquals(
+    ((await p) as { kind: string }[]).map((d) => d.kind),
+    ["pr-merged"],
+  );
+});
+
+Deno.test("wait fires an edge-only kind on the edge, not from before it", async () => {
+  using time = new FakeTime();
+  const { w, t } = waitSetup(openPr({ queue: queued }));
+  let out: unknown = null;
+  t.callTool("wait", { wt: "feat", for: "dequeued" }).then((o) => out = o);
+  t.wake();
+  await time.tickAsync(0);
+  assertEquals(out, null);
+  w.pr = { ...w.pr!, queue: null };
+  t.wake();
+  await time.tickAsync(0);
+  assertEquals((out as { kind: string }[]).map((d) => d.kind), ["dequeued"]);
+  assertEquals(
+    await t.callTool("wait", { wt: "feat", for: "dequeued", timeout: "0" }),
+    [],
+  );
 });
