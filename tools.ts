@@ -254,7 +254,7 @@ export function createTools(deps: {
     },
     wait: {
       desc:
-        "Block until a worktree has any of the given event kinds active, or timeout seconds pass (default 600, max 3600). for is comma-separated kinds or groups (act, move, life, clean). Returns the matching events, [] on timeout. An event already active returns at once; pass its key back in seen (comma-separated) to wait for the next one, and a seen key counts again once it clears. Edge-only kinds (dequeued, wt-removed, server-died, wt-added, branch-switched, automerge-changed) return only when they happen during the wait.",
+        "Block until a worktree has any of the given event kinds active, or timeout seconds pass (default 600, max 3600). for is comma-separated kinds or groups (act, move, life, clean). Returns the matching events, [] on timeout. An event already active returns at once; pass its key back in seen (comma-separated) to wait for the next one, and a seen key counts again once it clears. Edge-only kinds (dequeued, wt-removed, server-died, wt-added, branch-switched, automerge-changed) return only when they happen during the wait. If the call fails because forest restarted, call again with the same seen; edge-only kinds from the gap are not replayed.",
       input: {
         wt: z.string(),
         for: z.string(),

@@ -218,8 +218,17 @@ waits an agent should run the `curl` form below as a background command, which
 costs no tokens while it waits:
 
 ```sh
-curl -s --max-time 3700 'forest-server.localhost:38471/api/t/wait?wt=1234&for=pr-merged,act&timeout=3600'
+until out=$(curl -s --max-time 3700 'forest-server.localhost:38471/api/t/wait?wt=1234&for=pr-merged,act&timeout=3600'); do sleep 2; done; echo "$out"
 ```
+
+A restart drops every pending `wait`, so the loop retries until the server is
+back. It retries only when the connection fails; an error such as an ambiguous
+`wt` comes back as JSON and ends the loop. `seen` lives with the caller, so a
+retried `wait` sees level kinds as before, but edge-only kinds that fired while
+the server was down are not replayed. Over MCP, a failed call after a restart
+means call again with the same `seen`. The inbox does catch up: the boot cache
+seeds the previous state, so a change made during the restart notifies once, and
+nothing already true re-fires.
 
 ### Write tools
 
