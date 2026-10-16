@@ -2860,7 +2860,7 @@ async function confirmDiscard() {
            oncontextmenu={(e) => openMenu(e, wtItems(w))}>
         {#if w.pr}{@const s = prStatus(w.pr)}<i class="t-bar" class:loud={s.weight === "loud"} data-tone={s.tone}></i>{/if}
         {#if rowBusy(w.path)}
-          <span class="spin late" role="status" aria-label="working"></span>
+          <span class="late" role="status" aria-label="working"><span class="spin"></span></span>
         {:else if w.isPrimary}
           <span></span>
         {:else}
