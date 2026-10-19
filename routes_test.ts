@@ -436,6 +436,37 @@ Deno.test("POST /api/agent-terminal runs an indexed session's command in Termina
   assertEquals(unknown.status, 400);
 });
 
+Deno.test("POST /api/terminal runs the terminal command at a worktree or folder, only for this machine", async () => {
+  const { routes, sh } = make({
+    table: {
+      "sh -c open -a Terminal '/r/forest'": "",
+      "sh -c open -a Terminal '/r/forest/src'": "",
+    },
+  });
+  const ok = await routes(post("/api/terminal", { wt: "/r/forest" }), LOCAL);
+  assertEquals(ok.status, 200);
+  const sub = await routes(
+    post("/api/terminal", { wt: "/r/forest", path: "src" }),
+    LOCAL,
+  );
+  assertEquals(sub.status, 200);
+  assertEquals(sh.calls, [
+    "/r/forest $ sh -c open -a Terminal '/r/forest'",
+    "/r/forest/src $ sh -c open -a Terminal '/r/forest/src'",
+  ]);
+  const escape = await routes(
+    post("/api/terminal", { wt: "/r/forest", path: "../x" }),
+    LOCAL,
+  );
+  assertEquals(escape.status, 400);
+  const foreign = await routes(
+    post("/api/terminal", { wt: "/r/forest" }),
+    FOREIGN,
+  );
+  assertEquals(foreign.status, 400);
+  assertEquals(sh.calls.length, 2);
+});
+
 Deno.test("an unknown POST is 404", async () => {
   const { routes, mutations } = make();
   const res = await routes(post("/api/bogus", { wt: "/r/forest" }), LOCAL);

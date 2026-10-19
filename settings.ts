@@ -23,6 +23,7 @@ export const DEFAULTS = {
   collapseMargin: 3,
   collapseMinSize: 5,
   launchers: {} as Record<string, string>,
+  terminal: "open -a Terminal {path}",
   tickets: {} as Record<string, string>,
   ticketCmds: {} as Record<string, string>,
   ticketPollMs: 300000,

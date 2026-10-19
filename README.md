@@ -321,6 +321,7 @@ are written.
 | `collapseMargin`    | `3`         | context lines kept around a hunk                                    |
 | `collapseMinSize`   | `5`         | shortest run of unchanged lines that collapses                      |
 | `launchers`         | `{}`        | per-repo worktree-creation commands                                 |
+| `terminal`          | Terminal    | "Open terminal here" command, see [Terminal](#terminal)             |
 | `tickets`           | `{}`        | per-repo ticket URL templates                                       |
 | `ticketCmds`        | `{}`        | per-repo ticket status commands                                     |
 | `ticketPollMs`      | `300000`    | how often a ticket's status is re-fetched                           |
@@ -381,6 +382,18 @@ substituted; `*` is the fallback for repos without their own entry.
 
 ```json
 { "launchers": { "*": "./scripts/new-worktree.sh {slug}" } }
+```
+
+### Terminal
+
+Right-click a worktree, file or folder → "Open terminal here" (`` ⌃` `` for the
+selected folder, else the selected worktree) runs `terminal` in that folder.
+`{path}` is substituted already shell-quoted, and appended when the command has
+no `{`. The default is `open -a Terminal {path}`; any terminal works, e.g.
+`open -a Ghostty {path}` or `wezterm start --cwd {path}`.
+
+```json
+{ "terminal": "open -a iTerm {path}" }
 ```
 
 ### Tickets

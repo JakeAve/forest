@@ -2,6 +2,8 @@
 // tails every file `sessionOf` claims, and asks `line` for facts. Supporting a
 // new agent means adding an entry here; nothing else changes.
 
+import { shQuote } from "./parse.ts";
+
 export type Facts = {
   at?: number; // line timestamp, ms
   cwd?: string;
@@ -43,8 +45,6 @@ const ts = (l: string) => {
   return Number.isNaN(t) ? undefined : t;
 };
 
-const q = (s: string) => `'${s.replaceAll("'", "'\\''")}'`;
-
 export const PROVIDERS: Provider[] = [
   {
     agent: "claude",
@@ -65,7 +65,7 @@ export const PROVIDERS: Provider[] = [
     }),
     // Imports a CLI session into the desktop app, or focuses it if it's there.
     url: (id) => `claude://resume?session=${id}`,
-    command: (s) => `cd ${q(s.cwd)} && claude --resume ${s.id}`,
+    command: (s) => `cd ${shQuote(s.cwd)} && claude --resume ${s.id}`,
   },
   {
     agent: "codex",
@@ -95,6 +95,6 @@ export const PROVIDERS: Provider[] = [
       },
     },
     url: (id) => `codex://threads/${id}`,
-    command: (s) => `cd ${q(s.cwd)} && codex resume ${s.id}`,
+    command: (s) => `cd ${shQuote(s.cwd)} && codex resume ${s.id}`,
   },
 ];

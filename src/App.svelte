@@ -688,6 +688,7 @@ async function openAt(r) {
   loose = r.loose;
   explore = true;
   if (!same) {
+    selDir = null;
     tree = [];
     treeDirs = [];
     treeIgnored = [];
@@ -731,6 +732,7 @@ function selectWt(path) {
   pendingLine = 0;
   sel = path;
   file = null;
+  selDir = null;
   tree = [];
   treeDirs = [];
   treeIgnored = [];
@@ -1640,6 +1642,11 @@ function wtItems(w, solo = false) {
   const paths = t.map((x) => x.path).join("\n");
   return [
     !many && { label: "Open", fn: () => selectWt(w.path) },
+    !many && {
+      label: "Open terminal here",
+      kbd: w === selWt && kbdOf("open-terminal"),
+      fn: (e) => act("terminal", { wt: w.path }, "term:" + w.path, e),
+    },
     !many && "-",
     ...(many ? [] : agentItems(w)),
     {
@@ -2011,7 +2018,20 @@ function repoItems(r, shown) {
 }
 
 function fileItems(f, mode) {
+  const dir = f.dir ? f.path : f.path.split("/").slice(0, -1).join("/");
   return [
+    {
+      label: "Open terminal here",
+      kbd: f.dir && selDir === f.path && kbdOf("open-terminal"),
+      fn: (e) =>
+        act(
+          "terminal",
+          { wt: sel, path: dir || undefined },
+          "term:" + f.path,
+          e,
+        ),
+    },
+    "-",
     {
       label: "Copy path (relative)",
       kbd: file === f.path && kbdOf("copy-path"),
@@ -2275,6 +2295,20 @@ const COMMANDS = [
       const w = focusedWt();
       if (w) toggleCheck(w, e);
     },
+  },
+  {
+    id: "open-terminal",
+    label: "Open terminal here",
+    section: "Worktrees",
+    keys: "ctrl+backquote",
+    when: () => sel,
+    run: (e) =>
+      act(
+        "terminal",
+        { wt: sel, path: selDir || undefined },
+        "term:" + sel,
+        e,
+      ),
   },
   {
     id: "copy-ticket",
