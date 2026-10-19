@@ -905,9 +905,13 @@ export function prCard(d: Gql): PrCard {
     ahead: d.baseRef?.compare?.aheadBy ?? null,
     behind: d.baseRef?.compare?.behindBy ?? null,
     reviews: [...latest.values()].sort((a, b) => (b.at ?? 0) - (a.at ?? 0)),
-    awaiting: (d.reviewRequests?.nodes ?? [])
-      .map((r: { requestedReviewer: Login }) => who(r.requestedReviewer))
-      .filter((l: string) => !latest.has(l)),
+    awaiting: [
+      ...new Set<string>(
+        (d.reviewRequests?.nodes ?? [])
+          .map((r: { requestedReviewer: Login }) => who(r.requestedReviewer))
+          .filter((l: string) => !latest.has(l)),
+      ),
+    ],
     threads: (d.reviewThreads?.nodes ?? []).map((t: Gql) => {
       const first = t.comments?.nodes?.[0] ?? {};
       return {

@@ -859,9 +859,17 @@ Deno.test("prCard: verdicts outrank comments, author and empty bodies drop out",
   const c = prCard({
     author: { login: "me" },
     reviewRequests: {
-      nodes: [{ requestedReviewer: { login: "bob" } }, {
-        requestedReviewer: { name: "team" },
-      }, { requestedReviewer: { login: "ann" } }],
+      nodes: [
+        { requestedReviewer: { login: "bob" } },
+        {
+          requestedReviewer: { name: "team" },
+        },
+        { requestedReviewer: { login: "ann" } },
+        { requestedReviewer: null },
+        {
+          requestedReviewer: null,
+        },
+      ],
     },
     reviews: {
       nodes: [
@@ -955,7 +963,7 @@ Deno.test("prCard: verdicts outrank comments, author and empty bodies drop out",
     at: Date.parse(t(1)),
     url: "r1",
   }]);
-  assertEquals(c.awaiting, ["bob", "team"]);
+  assertEquals(c.awaiting, ["bob", "team", "ghost"]);
   assertEquals(c.comments.map((x) => [x.login, x.body, x.review]), [
     ["ghost", "Hi there", false],
     ["ann", "ok", true],
