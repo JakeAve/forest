@@ -139,6 +139,40 @@ Deno.test("listFiles merges name-status, numstat, status flags and untracked lin
   });
 });
 
+Deno.test("listFiles merges an untracked file at a path the diff shows deleted into one M row", async () => {
+  await withTmp(async (dir) => {
+    await Deno.writeTextFile(join(dir, "old.ts"), "a\nb\nc\n");
+    const { files } = make({
+      [`${G} diff --no-renames --name-status -z ${BASE}`]:
+        "D\0old.ts\0A\0new.ts\0",
+      [`${G} diff --no-renames --numstat -z ${BASE}`]:
+        "0\t5\told.ts\x004\t0\tnew.ts\0",
+      [`${G} status --porcelain=v2 -z --untracked-files=all`]:
+        "2 R. N... 100644 100644 100644 h1 h2 R90 new.ts\0old.ts\0? old.ts\0",
+    }, [[dir, dir]]);
+
+    const out = await files.listFiles(dir, "branch");
+    assertEquals(out.files, [
+      {
+        path: "new.ts",
+        status: "A",
+        added: 4,
+        removed: 0,
+        staged: true,
+        unstaged: false,
+      },
+      {
+        path: "old.ts",
+        status: "M",
+        added: 3,
+        removed: 5,
+        staged: false,
+        unstaged: true,
+      },
+    ]);
+  });
+});
+
 Deno.test("fileContents: binary, large text, UTF-16, and base from git show", async () => {
   await withTmp(async (dir) => {
     await Deno.writeFile(join(dir, "big.bin"), new Uint8Array(MAX_PREVIEW + 1));

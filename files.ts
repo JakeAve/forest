@@ -226,6 +226,11 @@ export function createFiles(deps: {
     for (const p of st.untracked) {
       const text = await Deno.readTextFile(join(wt, p)).catch(() => "");
       const lines = text.split("\n").length - (text.endsWith("\n") ? 1 : 0);
+      const row = files.find((f) => f.path === p);
+      if (row) {
+        Object.assign(row, { status: "M", added: lines, ...flags(p) });
+        continue;
+      }
       files.push({
         path: p,
         status: "U",
