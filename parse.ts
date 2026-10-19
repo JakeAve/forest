@@ -237,10 +237,14 @@ export function ticketInfo(out: string): TicketInfo | null {
     category: CATEGORY[s(j.category ?? j.status, 30).toLowerCase()] ?? null,
     assignee: s(j.assignee, 80) || null,
     // passed back to the command as $2, so only plain status words
-    actions: actions.filter((a: unknown): a is string =>
-      typeof a === "string" && /^[\w -]{1,40}$/.test(a) &&
-      a.replace(/_/g, " ").toLowerCase() !== status.toLowerCase()
-    ).slice(0, 8),
+    actions: [
+      ...new Set<string>(
+        actions.filter((a: unknown): a is string =>
+          typeof a === "string" && /^[\w -]{1,40}$/.test(a) &&
+          a.replace(/_/g, " ").toLowerCase() !== status.toLowerCase()
+        ),
+      ),
+    ].slice(0, 8),
   };
 }
 

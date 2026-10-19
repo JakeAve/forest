@@ -1823,6 +1823,7 @@ Deno.test("ticketInfo: actions drop the current status and anything unsafe for $
         "in_review",
         "done",
         "cancelled",
+        "done",
         "a;rm -rf",
         3,
         "",
