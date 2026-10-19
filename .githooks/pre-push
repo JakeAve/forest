@@ -1,3 +1,4 @@
 #!/bin/sh
 export PATH="$HOME/.deno/bin:$PATH"
+unset $(git rev-parse --local-env-vars)
 deno task pre-push
