@@ -175,6 +175,8 @@ export function coerceSettings(
   return out;
 }
 
+export const shQuote = (s: string) => `'${s.replaceAll("'", "'\\''")}'`;
+
 export function fillCommand(
   tpl: string,
   vars: Record<string, string>,

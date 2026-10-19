@@ -10,6 +10,7 @@ import { dirname, join, relative, resolve } from "@std/path";
 import { resolveTheme } from "./src/theme.js";
 import {
   coerceSettings,
+  fillCommand,
   isLocalRequest,
   isTrustedWrite,
   normPath,
@@ -17,6 +18,7 @@ import {
   parseDiffHunks,
   parseGrep,
   parseOpenInput,
+  shQuote,
 } from "./parse.ts";
 import type { Shell } from "./exec.ts";
 import type { FilesApi } from "./files.ts";
@@ -49,6 +51,15 @@ const json = (body: unknown) =>
 export const BW = (Deno as unknown as {
   BrowserWindow?: new (opts: Record<string, unknown>) => unknown;
 }).BrowserWindow;
+
+// Routes that also take a loose root (a path opened outside every repo).
+const ROOT_ROUTES = [
+  "/api/save",
+  "/api/new",
+  "/api/rename",
+  "/api/delete",
+  "/api/terminal",
+];
 
 export function createRoutes(deps: {
   settings: Settings;
@@ -376,8 +387,7 @@ export function createRoutes(deps: {
           url.pathname === "/api/agent-terminal";
         const wt = noWt
           ? ""
-          : ["/api/save", "/api/new", "/api/rename", "/api/delete"]
-              .includes(url.pathname)
+          : ROOT_ROUTES.includes(url.pathname)
           ? guardRoot(b.wt ?? null, req, info)
           : guardWt(b.wt ?? null);
         switch (url.pathname) {
@@ -512,6 +522,22 @@ export function createRoutes(deps: {
               ],
             );
             break;
+          }
+          case "/api/terminal": {
+            const host = (info.remoteAddr as Deno.NetAddr).hostname;
+            if (!isLocalRequest(host, req.headers.get("host"))) {
+              throw new Error("Forest only opens terminals on this machine");
+            }
+            const dir = b.path ? join(wt, guardPath(b.path)) : wt;
+            const tpl = SETTINGS.terminal;
+            await exec(dir, [
+              "sh",
+              "-c",
+              fillCommand(tpl.includes("{") ? tpl : tpl + " {path}", {
+                path: shQuote(dir),
+              }),
+            ]);
+            return json({ ok: true });
           }
           case "/api/wt-create":
             await actions.createWt(String(b.repo), String(b.slug ?? ""));
