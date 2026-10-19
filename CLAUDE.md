@@ -23,6 +23,16 @@ deno task test                 # unit tests
 deno task setup                # git hooks run check + test on commit/push
 ```
 
+## Workflow
+
+- The main checkout is the running forest: Jake's `forest` shell function serves
+  it (`:38471` API and MCP, `:38472` vite) and fast-forwards `main` every
+  minute, so a merged PR is live within a minute. Never edit, branch or start a
+  server there; never kill the processes on `:38471`/`:38472`.
+- Work in `.worktrees/<slug>` off `origin/main`. Preview UI changes with the
+  `forest-preview` launch config (vite on `:38473`, proxying to the live API).
+  Server changes aren't visible until merged; cover them with tests.
+
 ## Rules
 
 - `parse.ts` is imported by both Deno and the Vite bundle. Any package it

@@ -1,4 +1,4 @@
 #!/bin/sh
 export PATH="$HOME/.deno/bin:$PATH"
-unset GIT_INDEX_FILE
+unset $(git rev-parse --local-env-vars)
 deno task pre-commit

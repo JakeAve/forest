@@ -2,11 +2,11 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "forest",
-      "runtimeExecutable": "deno",
-      "runtimeArgs": ["task", "serve"],
-      "port": 38471,
-      "url": "http://forest-app.localhost:38471"
+      "name": "forest-preview",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": ["-c", "npm install --silent && exec npx vite --port 38473"],
+      "port": 38473,
+      "url": "http://forest-app.localhost:38473"
     }
   ]
 }
