@@ -237,10 +237,14 @@ export function ticketInfo(out: string): TicketInfo | null {
     category: CATEGORY[s(j.category ?? j.status, 30).toLowerCase()] ?? null,
     assignee: s(j.assignee, 80) || null,
     // passed back to the command as $2, so only plain status words
-    actions: actions.filter((a: unknown): a is string =>
-      typeof a === "string" && /^[\w -]{1,40}$/.test(a) &&
-      a.replace(/_/g, " ").toLowerCase() !== status.toLowerCase()
-    ).slice(0, 8),
+    actions: [
+      ...new Set<string>(
+        actions.filter((a: unknown): a is string =>
+          typeof a === "string" && /^[\w -]{1,40}$/.test(a) &&
+          a.replace(/_/g, " ").toLowerCase() !== status.toLowerCase()
+        ),
+      ),
+    ].slice(0, 8),
   };
 }
 
@@ -905,9 +909,13 @@ export function prCard(d: Gql): PrCard {
     ahead: d.baseRef?.compare?.aheadBy ?? null,
     behind: d.baseRef?.compare?.behindBy ?? null,
     reviews: [...latest.values()].sort((a, b) => (b.at ?? 0) - (a.at ?? 0)),
-    awaiting: (d.reviewRequests?.nodes ?? [])
-      .map((r: { requestedReviewer: Login }) => who(r.requestedReviewer))
-      .filter((l: string) => !latest.has(l)),
+    awaiting: [
+      ...new Set<string>(
+        (d.reviewRequests?.nodes ?? [])
+          .map((r: { requestedReviewer: Login }) => who(r.requestedReviewer))
+          .filter((l: string) => !latest.has(l)),
+      ),
+    ],
     threads: (d.reviewThreads?.nodes ?? []).map((t: Gql) => {
       const first = t.comments?.nodes?.[0] ?? {};
       return {
