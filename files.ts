@@ -1,5 +1,5 @@
-import { dirname, join } from "@std/path";
-import { matchPath } from "./src/filter.js";
+import { dirname, isAbsolute, join, resolve } from "@std/path";
+import { matchPath, rank } from "./src/filter.js";
 import {
   type Encoding,
   type FileRow,
@@ -7,6 +7,7 @@ import {
   fmtSize,
   isLocalRequest,
   MAX_PREVIEW,
+  normPath,
   parseIgnored,
   parseStatus,
   sniff,
@@ -64,6 +65,31 @@ export type FilesApi = {
     content: string,
   ): Promise<"ok" | { current: string | null }>;
 };
+
+/** Typed path text into its completions, each the typed directory part plus an entry name (dirs end in "/"). */
+export async function completePath(
+  typed: string,
+  home: string,
+  from?: string | null,
+): Promise<string[]> {
+  const cut = typed.lastIndexOf("/") + 1;
+  const dir = typed.slice(0, cut);
+  const stem = typed.slice(cut);
+  const p = normPath(dir || ".", home);
+  if (!isAbsolute(p) && !from) return [];
+  const entries: Deno.DirEntry[] = [];
+  try {
+    for await (const e of Deno.readDir(resolve(from ?? "/", p))) {
+      if (!e.name.startsWith(".") || stem.startsWith(".")) entries.push(e);
+    }
+  } catch {
+    return [];
+  }
+  const names = entries
+    .sort((a, b) => a.name < b.name ? -1 : 1)
+    .map((e) => e.isDirectory ? `${e.name}/` : e.name);
+  return rank(stem, names, 50, (n: string) => n).map((n: string) => dir + n);
+}
 
 // ponytail: fixed name list, not per-ecosystem detection; add names as they turn up
 const DEP_DIRS = new Set([
