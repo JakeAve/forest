@@ -144,6 +144,9 @@ let loadedDirs = $state({});
 let treeOf = $state(null);
 let openEl = $state();
 let editingPath = $state(false);
+let completions = $state([]);
+let completeHi = $state(-1);
+let growEl = $state();
 let newing = $state(false);
 let renaming = $state(null);
 let headRename = $state(false);
@@ -603,6 +606,7 @@ async function editPath() {
   openEl.value = sel ?? "";
   openEl.focus();
   openEl.select();
+  completeOpen();
 }
 
 async function startNew() {
@@ -677,9 +681,63 @@ function dropPath(p) {
   if (selDir && gone(selDir)) selDir = null;
 }
 
+let completeTimer;
+function completeOpen() {
+  clearTimeout(completeTimer);
+  completeTimer = setTimeout(async () => {
+    const from = sel ? `&from=${encodeURIComponent(sel)}` : "";
+    const r = await fetch(
+      `/api/complete?path=${encodeURIComponent(openEl.value)}${from}`,
+    );
+    completions = r.ok ? await r.json() : [];
+    completeHi = -1;
+  }, 80);
+}
+
+$effect(() => {
+  growEl?.togglePopover(completions.length > 0);
+});
+$effect(() => {
+  growEl?.children[completeHi]?.scrollIntoView({ block: "nearest" });
+});
+
+const leaf = (c) => c.slice(c.lastIndexOf("/", c.length - 2) + 1);
+
+async function pickCompletion(c) {
+  openEl.value = c;
+  if (c.endsWith("/")) return completeOpen();
+  completions = [];
+  if (await openPath(c)) editingPath = false;
+}
+
 async function openBoxKey(e) {
-  if (e.key === "Escape") return openEl.blur();
-  if (e.key !== "Enter" || !openEl.value.trim()) return;
+  const n = completions.length;
+  if (e.key === "Escape") {
+    if (n) return (completions = []);
+    return openEl.blur();
+  }
+  if (n && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+    e.preventDefault();
+    completeHi = e.key === "ArrowDown"
+      ? (completeHi + 1) % n
+      : (completeHi <= 0 ? n : completeHi) - 1;
+    return;
+  }
+  if (e.key === "Tab" && n) {
+    e.preventDefault();
+    if (completeHi >= 0) return pickCompletion(completions[completeHi]);
+    let common = completions[0];
+    for (const c of completions) {
+      while (!c.startsWith(common)) common = common.slice(0, -1);
+    }
+    openEl.value = common.length > openEl.value.length
+      ? common
+      : completions[0];
+    return completeOpen();
+  }
+  if (e.key !== "Enter") return;
+  if (completeHi >= 0) return pickCompletion(completions[completeHi]);
+  if (!openEl.value.trim()) return;
   if (await openPath(openEl.value.trim())) editingPath = false;
 }
 
@@ -2965,8 +3023,19 @@ async function confirmDiscard() {
   <div class="band files" class:maxed={max === 2} bind:this={b2El}>
     <div class="bhead"><b>{explore ? "Files" : "Changed files"}</b>
       {#if editingPath}
-        <input class="filter open" placeholder="Open path…" bind:this={openEl}
-               onkeydown={openBoxKey} onblur={() => (editingPath = false)}>
+        <input class="filter open" class:grown={completions.length} placeholder="Open path…"
+               bind:this={openEl} role="combobox" aria-controls="open-complete"
+               aria-expanded={completions.length > 0} aria-autocomplete="list"
+               aria-activedescendant={completeHi >= 0 ? `oc-${completeHi}` : undefined}
+               oninput={completeOpen} onkeydown={openBoxKey}
+               onblur={() => ((editingPath = false), (completions = []))}>
+        <div id="open-complete" class="grow" popover="manual" role="listbox" bind:this={growEl}>
+          {#each completions as c, i (c)}
+            <button id="oc-{i}" role="option" tabindex="-1" aria-selected={i === completeHi}
+                    class:on={i === completeHi} onmousedown={(e) => e.preventDefault()}
+                    onclick={() => pickCompletion(c)}>{leaf(c)}</button>
+          {/each}
+        </div>
       {:else}
         <button class="meta pth" title="open a path… {kbdOf('open-path') ?? ''}" onclick={editPath}
                 oncontextmenu={(e) => sel && openMenu(e, [
@@ -4317,6 +4386,59 @@ input.ren {
 :global(input.filter.open) {
   flex: 1;
   font-family: var(--mono);
+  anchor-name: --open-box;
+  border-radius: 0.75rem;
+  transition: border-radius 0.12s;
+}
+:global(input.filter.open.grown) {
+  border-radius: 0.75rem 0.75rem 0 0;
+  border-bottom-color: var(--line);
+}
+.grow {
+  position-anchor: --open-box;
+  inset: auto;
+  top: anchor(bottom);
+  left: anchor(left);
+  width: anchor-size(width);
+  margin: 0;
+  max-height: 16rem;
+  overflow-y: auto;
+  padding: 0.25rem;
+  background: var(--input);
+  border: 1px solid var(--acc);
+  border-top: none;
+  border-radius: 0 0 0.75rem 0.75rem;
+  box-shadow: 0 0.5rem 1.5rem color-mix(in srgb, var(--bg) 70%, transparent);
+  clip-path: inset(0 -2rem -2rem);
+  transition: clip-path 0.12s, display 0.12s allow-discrete, overlay 0.12s
+    allow-discrete;
+}
+@starting-style {
+  .grow:popover-open {
+    clip-path: inset(0 -2rem 100%);
+  }
+}
+.grow button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  border-radius: 0.5rem;
+  color: var(--fg);
+  font: 0.75rem var(--mono);
+  padding: 0.25rem 0.5rem;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.grow button:hover {
+  background: var(--hov);
+}
+.grow button.on {
+  background: var(--hl);
+  color: var(--hlfg);
 }
 .bhead .pth {
   background: none;

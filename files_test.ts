@@ -2,7 +2,7 @@ import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
 import { join } from "@std/path";
 import { FakeTime } from "@std/testing/time";
 import { fakeExec, pushable, STATUS_V2 } from "./fixtures.ts";
-import { createFiles } from "./files.ts";
+import { completePath, createFiles } from "./files.ts";
 import { guardThemeName } from "./themes.ts";
 import { MAX_PREVIEW, TREE_CAP } from "./parse.ts";
 
@@ -434,5 +434,35 @@ Deno.test("a capped temporary root stops watching", async () => {
     await time.tickAsync(500);
     assertEquals(emits, []);
     stream.end();
+  });
+});
+
+Deno.test("completePath lists the typed directory, ranked by the stem", async () => {
+  await withTmp(async (dir) => {
+    await Deno.mkdir(join(dir, "src"));
+    await Deno.mkdir(join(dir, "src-old"));
+    await Deno.mkdir(join(dir, ".git"));
+    await Deno.writeTextFile(join(dir, "README.md"), "");
+    await Deno.writeTextFile(join(dir, "scripts.sh"), "");
+    assertEquals(await completePath(`${dir}/`, "/h"), [
+      `${dir}/README.md`,
+      `${dir}/scripts.sh`,
+      `${dir}/src/`,
+      `${dir}/src-old/`,
+    ]);
+    assertEquals(await completePath(`${dir}/sr`, "/h"), [
+      `${dir}/src/`,
+      `${dir}/src-old/`,
+      `${dir}/scripts.sh`,
+    ]);
+    assertEquals(await completePath(`${dir}/.g`, "/h"), [`${dir}/.git/`]);
+    assertEquals(await completePath("src-", "/h", dir), ["src-old/"]);
+    assertEquals(await completePath("~/sc", dir), [
+      "~/scripts.sh",
+      "~/src/",
+      "~/src-old/",
+    ]);
+    assertEquals(await completePath("sr", "/h"), []);
+    assertEquals(await completePath(`${dir}/nope/x`, "/h"), []);
   });
 });

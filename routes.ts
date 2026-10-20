@@ -21,7 +21,7 @@ import {
   shQuote,
 } from "./parse.ts";
 import type { Shell } from "./exec.ts";
-import type { FilesApi } from "./files.ts";
+import { completePath, type FilesApi } from "./files.ts";
 import {
   guardThemeName,
   loadVsCodeTheme,
@@ -313,6 +313,21 @@ export function createRoutes(deps: {
           loose: isLoose(owner),
           line,
         });
+      }
+      if (url.pathname === "/api/complete") {
+        const host = (info.remoteAddr as Deno.NetAddr).hostname;
+        if (!isLocalRequest(host, req.headers.get("host"))) {
+          return new Response("Forest only lists paths for this machine", {
+            status: 403,
+          });
+        }
+        return json(
+          await completePath(
+            url.searchParams.get("path") ?? "",
+            HOME,
+            url.searchParams.get("from"),
+          ),
+        );
       }
       if (url.pathname === "/api/tree") {
         const wt = guardRoot(url.searchParams.get("wt"), req, info);
