@@ -207,6 +207,7 @@ let newTicketRepo = $state("");
 let creating = $state(null);
 let slug = $state("");
 let busy = $state({});
+let killing = $state({});
 let pendingLine = $state(0);
 let removing = $state(false);
 let confirming = $state(null);
@@ -1315,7 +1316,17 @@ async function op(ep, body, e) {
   diffTick++;
 }
 
-const rowBusy = (path) => Object.keys(busy).some((k) => k.endsWith(":" + path));
+const rowBusy = (w) =>
+  Object.keys(busy).some((k) => k.endsWith(":" + w.path)) ||
+  w.procs?.some((p) => killing[p.pid]) ||
+  w.agents?.some((a) => busy["ag:" + a.id] || busy["at:" + a.id]);
+async function killPid(p, e) {
+  killing[p.pid] = true;
+  setTimeout(() => delete killing[p.pid], 10_000);
+  if (!await act("kill-pid", { pid: p.pid }, "kill:" + p.pid, e)) {
+    delete killing[p.pid];
+  }
+}
 const rebase = (w, e) => act("rebase", { wt: w.path }, "rb:" + w.path, e);
 const updateBranch = (w, e) =>
   act("update-branch", { wt: w.path, number: w.pr.number }, "ub:" + w.path, e);
@@ -1813,7 +1824,7 @@ function wtItems(w, solo = false) {
       ? (w.procs ?? []).map((p) => ({
         label: `Kill pid ${p.pid} (:${p.port})`,
         danger: true,
-        fn: (e) => act("kill-pid", { pid: p.pid }, "kill:" + p.pid, e),
+        fn: (e) => killPid(p, e),
       }))
       : []),
     !w.isPrimary && "-",
@@ -2085,7 +2096,7 @@ function fileItems(f, mode) {
         act(
           "terminal",
           { wt: sel, path: dir || undefined },
-          "term:" + f.path,
+          "term:" + sel,
           e,
         ),
     },
@@ -2951,7 +2962,7 @@ async function confirmDiscard() {
            onkeydown={(e) => e.key === "Enter" ? selectWt(w.path) : menuKey(e, wtItems(w))}
            oncontextmenu={(e) => openMenu(e, wtItems(w))}>
         {#if w.pr}{@const s = prStatus(w.pr)}<i class="t-bar" class:loud={s.weight === "loud"} data-tone={s.tone}></i>{/if}
-        {#if rowBusy(w.path)}
+        {#if rowBusy(w)}
           <span class="late" role="status" aria-label="working"><span class="spin"></span></span>
         {:else if w.isPrimary}
           <span></span>
