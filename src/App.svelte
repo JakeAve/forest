@@ -5277,13 +5277,17 @@ select.theme {
 .card {
   width: 27rem;
   max-width: calc(100vw - 1rem);
-  max-height: calc(100vh - 1rem);
+  max-height: min(40rem, calc(100vh - 1rem));
   overflow-y: auto;
   padding: 0 0 0.25rem;
   font: 0.75rem var(--sans);
   color: var(--fg);
 }
 .card .top {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--bg2);
   padding: 0.625rem 0.75rem 0.5rem;
 }
 .card .r,
