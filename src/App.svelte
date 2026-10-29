@@ -3479,7 +3479,7 @@ async function confirmDiscard() {
               <span><span data-tone={open.length ? "warn" : undefined}>{open.length} unresolved</span> of {c.threads.length}</span></div>
             {#each open as t (t.url)}
               <details class="th" ontoggle={placeCard}>
-                <summary>
+                <summary title="Click to expand or collapse">
                   <span class="r0">
                     <span>{t.login}</span>
                     <span class="mono dim t">{t.path}{t.line ? `:${t.line}` : ""}</span>
