@@ -467,6 +467,31 @@ Deno.test("POST /api/terminal runs the terminal command at a worktree or folder,
   assertEquals(sh.calls.length, 2);
 });
 
+Deno.test("POST /api/reveal selects a file in Finder, only for this machine", async () => {
+  const { routes, sh } = make({
+    table: { "open -R /r/forest/src/App.svelte": "" },
+  });
+  const ok = await routes(
+    post("/api/reveal", { wt: "/r/forest", path: "src/App.svelte" }),
+    LOCAL,
+  );
+  assertEquals(ok.status, 200);
+  assertEquals(sh.calls, ["/r/forest $ open -R /r/forest/src/App.svelte"]);
+  for (const path of ["../x", undefined]) {
+    const bad = await routes(
+      post("/api/reveal", { wt: "/r/forest", path }),
+      LOCAL,
+    );
+    assertEquals(bad.status, 400);
+  }
+  const foreign = await routes(
+    post("/api/reveal", { wt: "/r/forest", path: "src/App.svelte" }),
+    FOREIGN,
+  );
+  assertEquals(foreign.status, 400);
+  assertEquals(sh.calls.length, 1);
+});
+
 Deno.test("an unknown POST is 404", async () => {
   const { routes, mutations } = make();
   const res = await routes(post("/api/bogus", { wt: "/r/forest" }), LOCAL);

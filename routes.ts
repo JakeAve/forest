@@ -59,6 +59,7 @@ const ROOT_ROUTES = [
   "/api/rename",
   "/api/delete",
   "/api/terminal",
+  "/api/reveal",
 ];
 
 export function createRoutes(deps: {
@@ -552,6 +553,14 @@ export function createRoutes(deps: {
                 path: shQuote(dir),
               }),
             ]);
+            return json({ ok: true });
+          }
+          case "/api/reveal": {
+            const host = (info.remoteAddr as Deno.NetAddr).hostname;
+            if (!isLocalRequest(host, req.headers.get("host"))) {
+              throw new Error("Forest only reveals files on this machine");
+            }
+            await exec(wt, ["open", "-R", join(wt, guardPath(b.path ?? null))]);
             return json({ ok: true });
           }
           case "/api/wt-create":

@@ -2100,6 +2100,10 @@ function fileItems(f, mode) {
           e,
         ),
     },
+    {
+      label: "Reveal in Finder",
+      fn: (e) => act("reveal", { wt: sel, path: f.path }, "reveal:" + sel, e),
+    },
     "-",
     {
       label: "Copy path (relative)",
