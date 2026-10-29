@@ -815,7 +815,7 @@ export type PrCard = {
   checks: CardCheck[];
 };
 
-/** Markdown/HTML comment body as one plain line. */
+/** Markdown/HTML comment body as plain text, one line per paragraph. */
 export const snippet = (body = "") =>
   body
     .replace(/<!--[\s\S]*?-->/g, " ")
@@ -824,9 +824,10 @@ export const snippet = (body = "") =>
     .replace(/<[^>]+>/g, " ")
     .replace(/:[a-z_]+:/g, " ")
     .replace(/[*_`#>|]/g, "")
-    .replace(/\s+/g, " ")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\s*\n\s*/g, "\n")
     .trim()
-    .slice(0, 280);
+    .slice(0, 4000);
 
 const VERDICT = new Set(["APPROVED", "CHANGES_REQUESTED"]);
 const PASS_CONCLUSION = new Set(["SUCCESS", "NEUTRAL"]);

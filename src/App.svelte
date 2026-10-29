@@ -3478,16 +3478,19 @@ async function confirmDiscard() {
             <div class="hd"><span>Code threads</span>
               <span><span data-tone={open.length ? "warn" : undefined}>{open.length} unresolved</span> of {c.threads.length}</span></div>
             {#each open as t (t.url)}
-              <a class="th" href={t.url} target="_blank" rel="noreferrer">
-                <span class="r0">
-                  <span>{t.login}</span>
-                  <span class="mono dim t">{t.path}{t.line ? `:${t.line}` : ""}</span>
-                  {#if t.tag}<span class="tag" data-tone={TAG[t.tag] ?? "off"}>{t.tag}</span>{/if}
-                  <span class="ago">{ago(t.at)}</span><span class="go">↗</span>
-                </span>
-                <span class="txt">{t.body}</span>
-                <span class="meta">{t.replies ? `${t.replies} repl${t.replies === 1 ? "y" : "ies"} · last by ${t.lastBy}` : "No replies"}</span>
-              </a>
+              <details class="th" ontoggle={placeCard}>
+                <summary title="Click to expand or collapse">
+                  <span class="r0">
+                    <span>{t.login}</span>
+                    <span class="mono dim t">{t.path}{t.line ? `:${t.line}` : ""}</span>
+                    {#if t.tag}<span class="tag" data-tone={TAG[t.tag] ?? "off"}>{t.tag}</span>{/if}
+                    <span class="ago">{ago(t.at)}</span>
+                    <a class="go" href={t.url} target="_blank" rel="noreferrer" title="Open on GitHub">↗</a>
+                  </span>
+                  <span class="txt">{t.body}</span>
+                  <span class="meta">{t.replies ? `${t.replies} repl${t.replies === 1 ? "y" : "ies"} · last by ${t.lastBy}` : "No replies"}</span>
+                </summary>
+              </details>
             {/each}
             {#if done.length}
               <details ontoggle={placeCard}>
@@ -5384,6 +5387,30 @@ select.theme {
   border-radius: 0.5rem;
   padding: 0.375rem 0.5rem;
   margin: 0 0.375rem 0.3125rem;
+}
+.card details.th > summary {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  color: inherit;
+}
+.card details.th > summary::before {
+  content: none;
+}
+.card details.th:hover {
+  background: var(--hl);
+}
+.card details.th .go {
+  text-decoration: none;
+}
+.card details.th:hover .go,
+.card details.th .go:focus-visible {
+  visibility: visible;
+}
+.card details.th[open] .txt {
+  display: block;
+  max-height: none;
+  white-space: pre-line;
 }
 .card .th.flat {
   background: none;
