@@ -989,6 +989,7 @@ Deno.test("prCard: verdicts outrank comments, author and empty bodies drop out",
     ],
   );
   assertEquals(snippet(""), "");
+  assertEquals(snippet("**a**  b\n\n  c"), "a b\nc");
   // no baseRef in the fixture: the vs-base counts fall back to null so the UI
   // can keep using its local ones.
   assertEquals([c.ahead, c.behind], [null, null]);
