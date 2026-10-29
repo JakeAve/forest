@@ -1713,7 +1713,7 @@ function wtItems(w, solo = false) {
     !many && { label: "Open", fn: () => selectWt(w.path) },
     !many && {
       label: "Open terminal here",
-      kbd: w === selWt && kbdOf("open-terminal"),
+      kbd: w === selWt && !selDir && !file && kbdOf("open-terminal"),
       fn: (e) => act("terminal", { wt: w.path }, "term:" + w.path, e),
     },
     !many && "-",
@@ -2088,10 +2088,11 @@ function repoItems(r, shown) {
 
 function fileItems(f, mode) {
   const dir = f.dir ? f.path : f.path.split("/").slice(0, -1).join("/");
+  const cur = selDir ? selDir === f.path : file === f.path;
   return [
     {
       label: "Open terminal here",
-      kbd: f.dir && selDir === f.path && kbdOf("open-terminal"),
+      kbd: cur && kbdOf("open-terminal"),
       fn: (e) =>
         act(
           "terminal",
@@ -2102,6 +2103,7 @@ function fileItems(f, mode) {
     },
     {
       label: "Reveal in Finder",
+      kbd: cur && kbdOf("reveal"),
       fn: (e) => act("reveal", { wt: sel, path: f.path }, "reveal:" + sel, e),
     },
     "-",
@@ -2253,6 +2255,8 @@ let palTree = $state({ of: null, files: [], dirs: [] });
 
 const desktop = () => settings?.desktop;
 const hasFile = () => sel && file;
+const termDir = () =>
+  selDir || file?.split("/").slice(0, -1).join("/") || undefined;
 const navWts = $derived([
   ...(isOpen("__pinned") ? pinnedWts : []),
   ...(isOpen("__recent") ? recentWts : []),
@@ -2375,13 +2379,16 @@ const COMMANDS = [
     section: "Worktrees",
     keys: "ctrl+backquote",
     when: () => sel,
+    run: (e) => act("terminal", { wt: sel, path: termDir() }, "term:" + sel, e),
+  },
+  {
+    id: "reveal",
+    label: "Reveal in Finder",
+    section: "Files",
+    keys: "alt+shift+cmd+r",
+    when: () => sel && (selDir || file),
     run: (e) =>
-      act(
-        "terminal",
-        { wt: sel, path: selDir || undefined },
-        "term:" + sel,
-        e,
-      ),
+      act("reveal", { wt: sel, path: selDir || file }, "reveal:" + sel, e),
   },
   {
     id: "copy-ticket",
