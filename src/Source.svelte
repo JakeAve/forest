@@ -48,6 +48,7 @@ let {
   oncopy,
   onready,
   onbinary,
+  oninfo,
 } = $props();
 
 const highlight = syntaxHighlighting(
@@ -76,6 +77,7 @@ let el;
 let view = null;
 let lang = [];
 let disk = null;
+let size = null;
 let dirty = $state(false);
 let skip = $state(null);
 let note = $state(null);
@@ -322,7 +324,8 @@ function build({ file, hunks }) {
   onbinary?.(!!skip);
   stream = null;
   note = file.encoding ? `${file.encoding.toUpperCase()} · read-only` : null;
-  if (skip) return;
+  size = file.size ?? null;
+  if (skip) return report();
   const theme = EditorView.theme({}, { dark: true });
   const ro = [
     wrapC.of(wrapExt(wrap)),
@@ -356,6 +359,7 @@ function build({ file, hunks }) {
       findReport,
       EditorView.updateListener.of((u) => {
         if (u.docChanged && !applying) setDirty(true);
+        if (u.docChanged) report();
       }),
     ]
     : ro;
@@ -389,7 +393,7 @@ function build({ file, hunks }) {
     stream = {
       src: rawUrl(wt, path),
       off: 0,
-      size: file.large,
+      size: file.size,
       dec: new TextDecoder(file.encoding ?? "utf-8"),
       carry: "",
       busy: false,
@@ -399,7 +403,17 @@ function build({ file, hunks }) {
   if (line && line !== usedLine) scrollToLine(line);
   const f = view.b.state.field(findField);
   onfind?.({ i: f.cur + 1, n: f.hits.length });
+  report();
   onready?.();
+}
+
+function report() {
+  const d = view?.b.state.doc;
+  const partial = !d || (stream && stream.off < stream.size);
+  oninfo?.({
+    size,
+    lines: partial ? null : d.lines - (d.line(d.lines).length ? 0 : 1),
+  });
 }
 
 export function findStep(dir) {
@@ -480,6 +494,7 @@ async function more() {
       insert: decodeChunk(s, buf, s.off >= s.size),
     },
   });
+  report();
   const enc = s.dec.encoding;
   note = `${fmtSize(s.off)} of ${fmtSize(s.size)} loaded${
     enc === "utf-8" ? "" : ` · ${enc.toUpperCase()} · read-only`
@@ -537,6 +552,7 @@ async function check() {
   if (!view || skip || file.skip || file.large || file.encoding || !sameBase) {
     return build(data);
   }
+  size = file.size ?? null;
   applyDisk(file.work);
   disk = file.work;
   note = null;

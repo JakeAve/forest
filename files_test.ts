@@ -182,14 +182,20 @@ Deno.test("fileContents: binary, large text, UTF-16, and base from git show", as
     }, [[dir, dir]]);
 
     const big = await files.fileContents(dir, "big.bin", "branch");
-    assertEquals(big, { base: null, work: null, skip: "binary · 1.0 MB" });
+    assertEquals(big, {
+      base: null,
+      work: null,
+      skip: "binary · 1 MB",
+      size: MAX_PREVIEW + 1,
+    });
 
     await Deno.writeTextFile(join(dir, "big.log"), "x\n".repeat(MAX_PREVIEW));
     const log = await files.fileContents(dir, "big.log", "branch");
     assertEquals(log, {
       base: null,
       work: null,
-      large: 2 * MAX_PREVIEW,
+      large: true,
+      size: 2 * MAX_PREVIEW,
       encoding: undefined,
     });
 
@@ -198,11 +204,12 @@ Deno.test("fileContents: binary, large text, UTF-16, and base from git show", as
     assertEquals(await files.fileContents(dir, "u16.txt", "branch"), {
       base: null,
       work: "hi",
+      size: 6,
       encoding: "utf-16le",
     });
 
     const small = await files.fileContents(dir, "small.txt", "branch");
-    assertEquals(small, { base: "old\n", work: "hi\n" });
+    assertEquals(small, { base: "old\n", work: "hi\n", size: 3 });
   });
 });
 
@@ -214,6 +221,11 @@ Deno.test("fileContents on a loose root has no base", async () => {
     assertEquals(await files.fileContents(dir, "a.txt", "branch"), {
       base: null,
       work: "hi\n",
+      size: 3,
+    });
+    assertEquals(await files.fileContents(dir, "gone.txt", "branch"), {
+      base: null,
+      work: null,
     });
     assertEquals(sh.calls, []);
   });

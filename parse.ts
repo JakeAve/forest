@@ -1337,12 +1337,19 @@ export function ancestorDirs(paths: string[]): Set<string> {
 
 export const MAX_PREVIEW = 1 << 20;
 
-export const fmtSize = (n: number) =>
-  n < 1024
-    ? `${n} B`
-    : n < 1 << 20
-    ? `${(n / 1024).toFixed(1)} KB`
-    : `${(n / (1 << 20)).toFixed(1)} MB`;
+const SIZE_UNITS = ["byte", "kilobyte", "megabyte", "gigabyte"];
+
+export const fmtSize = (n: number) => {
+  const i = Math.min(Math.floor(Math.log10(n || 1) / 3), 3);
+  return new Intl.NumberFormat(undefined, {
+    style: "unit",
+    unit: SIZE_UNITS[i],
+    unitDisplay: i ? "short" : "long",
+    maximumFractionDigits: 1,
+  }).format(n / 1000 ** i);
+};
+
+export const fmtCount = new Intl.NumberFormat().format;
 
 export type Encoding = "utf-8" | "utf-16le" | "utf-16be";
 

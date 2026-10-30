@@ -21,7 +21,8 @@ export type FileContents = {
   base: string | null;
   work: string | null;
   skip?: string;
-  large?: number;
+  large?: true;
+  size?: number;
   encoding?: Encoding;
 };
 
@@ -283,24 +284,35 @@ export function createFiles(deps: {
       .catch(() => null);
     const enc = bytes && sniff(bytes);
     if (enc === "binary") {
-      return { base: null, work: null, skip: `binary · ${fmtSize(size)}` };
+      return {
+        base: null,
+        work: null,
+        skip: `binary · ${fmtSize(size)}`,
+        size,
+      };
     }
     // ponytail: no base for UTF-16, git show decodes as UTF-8; decode its bytes if UTF-16 diffs matter
     const encoding = enc && enc !== "utf-8" ? enc : undefined;
     if (size > MAX_PREVIEW) {
-      return { base: null, work: null, large: size, encoding };
+      return { base: null, work: null, large: true, size, encoding };
     }
     if (bytes && encoding) {
       return {
         base: null,
         work: new TextDecoder(encoding).decode(bytes),
+        size,
         encoding,
       };
     }
     const work = bytes && new TextDecoder().decode(bytes);
-    if (isLoose(wt)) return { base: null, work };
+    const known = bytes && { size };
+    if (isLoose(wt)) return { base: null, work, ...known };
     const base = await resolveBase(wt, mode);
-    return { base: await tryGit(wt, "show", `${base}:${path}`), work };
+    return {
+      base: await tryGit(wt, "show", `${base}:${path}`),
+      work,
+      ...known,
+    };
   }
 
   async function listTree(wt: string): Promise<Tree> {
