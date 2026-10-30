@@ -19,6 +19,8 @@ import {
   bucketSummary,
   clampMenu,
   discardPrompt,
+  fmtCount,
+  fmtSize,
   isIgnoredPath,
   KINDS,
   orderWts,
@@ -194,6 +196,7 @@ const prOff = $derived.by(() => {
 let discarding = $state(null);
 let touched = $state({});
 let fresh = $state({}); // rel path -> when it last changed on disk, for the row flash
+let srcInfo = $state(null);
 let diskAt = $state(0); // when the open file last changed on disk
 let now = $state(Date.now());
 let b1El = $state(), b2El = $state();
@@ -255,6 +258,7 @@ const rawSrc = $derived(rawUrl(sel ?? "", file ?? ""));
 $effect(() => {
   void sel, void file;
   diskAt = 0;
+  srcInfo = null;
   srcBinary = false;
   previewSrc = "";
   previewReady = false;
@@ -3217,6 +3221,14 @@ async function confirmDiscard() {
                onkeydown={(e) => renameKey(e, file, "")} onblur={() => (headRename = false)}>
       {:else if file}
         <button class="nm" title="Rename" onclick={(e) => startRename({ path: file }, e, true)}>{file}</button>
+        {#if srcInfo}
+          <span class="meta mono finfo" title={srcInfo.size === null ? null : `${fmtCount(srcInfo.size)} bytes`}>
+            {[
+              srcInfo.lines === null ? null : `${fmtCount(srcInfo.lines)} ${srcInfo.lines === 1 ? "line" : "lines"}`,
+              srcInfo.size === null ? null : fmtSize(srcInfo.size),
+            ].filter(Boolean).join(" · ")}
+          </span>
+        {/if}
       {:else}
         <b>Source</b>
       {/if}
@@ -3291,7 +3303,8 @@ async function confirmDiscard() {
               oncopy={showToast}
               onsaved={loadFiles}
               onready={restoreRawView}
-              onbinary={(b) => (srcBinary = b)} />
+              onbinary={(b) => (srcBinary = b)}
+              oninfo={(i) => (srcInfo = i)} />
       {:else if restoring}
         {@render loadingRow()}
       {:else}
@@ -4386,6 +4399,10 @@ input.ren {
 .f .p input.ren {
   font: inherit;
   width: 60%;
+}
+.bhead .finfo {
+  flex: none;
+  white-space: nowrap;
 }
 .bhead input.ren {
   font: 600 0.875rem var(--sans);

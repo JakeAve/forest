@@ -15,6 +15,8 @@ import {
   decodeChunk,
   diffSnapshots,
   discardPrompt,
+  fmtCount,
+  fmtSize,
   hotBackoff,
   isIgnoredPath,
   isLocalRequest,
@@ -1844,4 +1846,12 @@ Deno.test("doneAction: first action whose word means done", () => {
   }))!;
   assertEquals(doneAction(info), "Done");
   assertEquals(doneAction({ ...info, actions: ["cancelled"] }), null);
+});
+
+Deno.test("fmtSize steps decimal units and fmtCount groups digits", () => {
+  assertEquals(
+    [0, 1, 999, 43_118, 14_200_000, 3e12].map(fmtSize),
+    ["0 bytes", "1 byte", "999 bytes", "43.1 kB", "14.2 MB", "3,000 GB"],
+  );
+  assertEquals(fmtCount(1340), "1,340");
 });
