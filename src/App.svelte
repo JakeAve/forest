@@ -49,7 +49,7 @@ function zoomBy(d) {
   saveLayout();
 }
 
-const AXES = { stack: "yy", sidebar: "xy", columns: "xx" };
+const AXES = { stack: "yy", sidebar: "xy", columns: "xx", rail: "yx" };
 const ICON = {
   save:
     "M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zM17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7M7 3v4a1 1 0 0 0 1 1h7",
@@ -68,12 +68,14 @@ const LAYOUTS = [
   ["stack", "Stack", "M4 4h16v5H4zM4 11h16v3H4zM4 16h16v4H4z"],
   ["sidebar", "Sidebar", "M4 4h6v16H4zM12 4h8v6h-8zM12 12h8v8h-8z"],
   ["columns", "Columns", "M3 4h5v16H3zM10 4h4v16h-4zM16 4h5v16h-5z"],
+  ["rail", "Rail", "M4 4h6v7H4zM4 13h6v7H4zM12 4h8v16h-8z"],
 ];
 let preset = $state("stack");
 let panes = $state({
   stack: { b1: { h: "32%", c: false }, b2: { h: "24%", c: false } },
   sidebar: { b1: { h: "30%", c: false }, b2: { h: "40%", c: false } },
   columns: { b1: { h: "25%", c: false }, b2: { h: "30%", c: false } },
+  rail: { b1: { h: "40%", c: false }, b2: { h: "34%", c: false } },
 });
 let split = $state(50);
 let max = $state(null);
@@ -1037,6 +1039,17 @@ const colTemplate = $derived(
     ...(lead && !widths[lead.key] ? [] : ["minmax(0, 1fr)"]),
   ].join(" "),
 );
+const colsMin = $derived(
+  `calc(${
+    [
+      "3.75rem",
+      `${(visibleCols.length + 1) * 0.5}rem`,
+      ...visibleCols.map((c) =>
+        widths[c.key] ?? (c === lead ? "12rem" : c.width)
+      ),
+    ].join(" + ")
+  })`,
+);
 let colsEl = $state();
 // a header gesture in flight: `size` drags a column edge, `move` drags a
 // column to a new slot. `x` is where the guide line is drawn.
@@ -1044,7 +1057,7 @@ let colOp = $state(null);
 const movingCol = $derived(colOp?.kind === "move" ? colOp.key : null);
 
 function listBox() {
-  const r = colsEl.parentElement.getBoundingClientRect();
+  const r = colsEl.closest(".body").getBoundingClientRect();
   return { top: r.top, h: r.height };
 }
 
@@ -2877,7 +2890,7 @@ async function confirmDiscard() {
         {/if}
       </div>
     {/if}
-    <div class="body">
+    <div class="body"><div class="list" style:min-width={colsMin}>
       <!-- svelte-ignore a11y_no_static_element_interactions, a11y_no_noninteractive_tabindex -->
       <div class="cols" style:grid-template-columns={colTemplate} tabindex="0" bind:this={colsEl}
            onkeydown={(e) => menuKey(e, colItems())}
@@ -2920,7 +2933,7 @@ async function confirmDiscard() {
       {#if !filtering || repos.some((r) => repoWts[r.name].length)}
         {@render container("__all", "All worktrees", shownWts.length, bucketSummary(shownWts), allItems, [], allRepos)}
       {/if}
-    </div>
+    </div></div>
   </div>
   {#snippet allRepos()}
     {#each repos as r (r.name)}
@@ -3063,15 +3076,15 @@ async function confirmDiscard() {
           {/each}
         </div>
       {:else}
-        <button class="meta pth" title="open a path… {kbdOf('open-path') ?? ''}" onclick={editPath}
+        {@const where = loose ? sel : selWt ? `${selWt.repo} · ${selWt.branch}` : null}
+        <button class="meta pth" title="{where ? `${where} · ` : ""}open a path… {kbdOf('open-path') ?? ''}" onclick={editPath}
                 oncontextmenu={(e) => sel && openMenu(e, [
                   {
                     label: "Copy path (relative)",
                     fn: (e) => copy(e, selWt ? relWt(repoOf(selWt), selWt) : sel, "ctx"),
                   },
                   { label: "Copy path (absolute)", fn: (e) => copy(e, sel, "ctx") },
-                ])}>{loose ? sel : selWt ? `${selWt.repo} · ${selWt.branch}` : `Open path… ${kbdOf("open-path") ?? ""}`}</button>
-        <span class="sp"></span>
+                ])}>{where ?? `Open path… ${kbdOf("open-path") ?? ""}`}</button>
       {/if}
       {#if sel}
         {#if newing}
@@ -4093,6 +4106,13 @@ dialog.settings::backdrop {
     minmax(14rem, var(--b1)) 0.625rem minmax(14rem, var(--b2)) 0.625rem
     minmax(14rem, 1fr);
 }
+.panes.rail {
+  grid-template:
+    "w g2 d" minmax(var(--head), var(--b1))
+    "g1 g2 d" 0.625rem
+    "f g2 d" minmax(var(--head), 1fr) /
+    minmax(14rem, var(--b2)) 0.625rem minmax(14rem, 1fr);
+}
 .panes.max {
   grid-template: "m" minmax(0, 1fr) / minmax(0, 1fr);
 }
@@ -4483,12 +4503,35 @@ input.ren {
   color: var(--hlfg);
 }
 .bhead .pth {
+  flex: 1 1 6rem;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: left;
   background: none;
   border: 1px solid transparent;
   border-radius: 999px;
   font: 0.75rem var(--mono);
   padding: 0.1875rem 0.5rem;
   cursor: text;
+}
+.files > .bhead:not(.selbar) {
+  flex-wrap: wrap;
+  height: auto;
+  min-height: var(--head);
+  padding-block: 0.375rem;
+  row-gap: 0.375rem;
+}
+.files > .bhead:not(.selbar) > b {
+  flex: none;
+}
+.files > .bhead .seg {
+  min-width: 0;
+}
+.files > .bhead .seg button {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .bhead .pth:hover {
   border-color: var(--line);
@@ -4510,6 +4553,8 @@ select.theme {
 .repo {
   position: sticky;
   top: var(--colsh);
+  left: calc(0.375rem + var(--depth, 0) * var(--indent));
+  width: calc(100cqw - 0.75rem - var(--depth, 0) * var(--indent));
   scroll-margin-top: var(--colsh);
   z-index: 1;
   height: var(--repoh);
@@ -4524,7 +4569,7 @@ select.theme {
   font-size: 0.75rem;
   user-select: none;
 }
-.body > .box {
+.list > .box {
   margin-top: 0.375rem;
 }
 .kids {
@@ -5556,6 +5601,9 @@ select.theme {
     padding-block: 0.5rem;
     row-gap: 0.375rem;
   }
+  .wts .bhead:not(.selbar) > span:not(.sp, .cbx) {
+    display: none;
+  }
   :global(.fbox) {
     flex: 1 1 6rem;
     min-width: 0;
@@ -5564,50 +5612,6 @@ select.theme {
     flex: 1 1 6rem;
     width: auto;
     min-width: 0;
-  }
-  .body {
-    --colsh: 0px;
-  }
-  .cols {
-    display: none;
-  }
-  .wt {
-    display: flex;
-    flex-wrap: wrap;
-    row-gap: 0.0625rem;
-  }
-  .wt > * {
-    order: 3;
-  }
-  .wt > :first-child,
-  .wt .lead {
-    order: 0;
-  }
-  .wt [data-col="active"] {
-    order: 1;
-  }
-  .wt::before,
-  .wt::after {
-    content: "";
-    order: 2;
-    width: 0.75rem;
-  }
-  .wt::before {
-    flex-basis: 100%;
-  }
-  .wt [data-col="title"],
-  .wt .lead {
-    flex: 1 1 0;
-  }
-  .wt > :first-child {
-    flex: 0 0 0.75rem;
-  }
-  .wt [data-col="active"] {
-    flex: 0 0 2.875rem;
-    margin-left: auto;
-  }
-  .wt .c:empty {
-    display: none;
   }
 }
 </style>
