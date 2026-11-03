@@ -997,10 +997,10 @@ const COLUMNS = [
   },
   {
     key: "ports",
-    label: "Ports",
+    label: "Running",
     align: "left",
     stretch: false,
-    width: "4rem",
+    width: "8rem",
   },
   {
     key: "agent",
@@ -1344,6 +1344,72 @@ async function killPid(p, e) {
     delete killing[p.pid];
   }
 }
+const killItem = (p) => ({
+  label: `Kill ${clip(p.command, 32)} (pid ${p.pid})`,
+  danger: true,
+  fn: (e) => killPid(p, e),
+});
+const portsOf = (p) => p.ports.map((n) => `:${n}`).join(" ");
+const procPreview = (p) =>
+  [p.command.split(" ")[0].split("/").pop(), p.ports[0] && `:${p.ports[0]}`]
+    .filter(Boolean)
+    .join(" ");
+const procTip = (w) =>
+  w.procs.slice(0, 8).map((p) => [clip(p.command, 40), portsOf(p)].join(" "))
+    .concat(w.procs.length > 8 ? [`+${w.procs.length - 8} more`] : [])
+    .join("\n") + "\nclick to view";
+const procSub = (p) =>
+  [
+    portsOf(p),
+    `pid ${p.pid}`,
+    p.since && `up ${ago(p.since)}`,
+    `${p.mb} MB`,
+    `${p.cpu}%`,
+  ]
+    .filter(Boolean).join(" · ");
+function procItems(w) {
+  const n = w.procs.length;
+  return [
+    { head: n > 1 ? `Running · ${n} processes` : "Running" },
+    ...w.procs.map((p) => ({
+      label: clip(p.command, 56),
+      sub: procSub(p),
+      tip: p.args,
+      keep: true,
+      fn: (e) => drill(procActions(w, p), e),
+    })),
+  ];
+}
+const procActions = (w, p) => [
+  { head: "Process actions" },
+  {
+    label: `‹ ${clip(p.command, 40)}`,
+    sub: procSub(p),
+    tip: "Back to all processes",
+    kbd: "←",
+    back: true,
+    keep: true,
+    fn: (e) => drill(procItems(w), e),
+  },
+  "-",
+  ...p.ports.map((port) => ({
+    label: `Open :${port}`,
+    fn: () => open(`http://localhost:${port}`, "_blank", "noreferrer"),
+  })),
+  {
+    label: "Copy command",
+    sub: clip(p.args, 56),
+    tip: p.args,
+    fn: (e) => copy(e, p.args, "ctx", "command"),
+  },
+  {
+    label: "Copy pid",
+    sub: String(p.pid),
+    fn: (e) => copy(e, String(p.pid), "ctx"),
+  },
+  "-",
+  killItem(p),
+];
 const rebase = (w, e) => act("rebase", { wt: w.path }, "rb:" + w.path, e);
 const updateBranch = (w, e) =>
   act("update-branch", { wt: w.path, number: w.pr.number }, "ub:" + w.path, e);
@@ -1560,11 +1626,12 @@ $effect(() => {
   const onKey = (ev) => (ev.key === "Escape" ? hideMenu() : menuNav(ev));
   addEventListener("pointerdown", onDown, true);
   addEventListener("keydown", onKey, true);
-  addEventListener("scroll", hideMenu, true);
+  const onScroll = (ev) => menuEl?.contains(ev.target) || hideMenu();
+  addEventListener("scroll", onScroll, true);
   return () => {
     removeEventListener("pointerdown", onDown, true);
     removeEventListener("keydown", onKey, true);
-    removeEventListener("scroll", hideMenu, true);
+    removeEventListener("scroll", onScroll, true);
   };
 });
 
@@ -1837,13 +1904,7 @@ function wtItems(w, solo = false) {
       fn: (e) => rebase(w, e),
     },
     !many && w.procs?.length > 0 && "-",
-    ...(!many
-      ? (w.procs ?? []).map((p) => ({
-        label: `Kill pid ${p.pid} (:${p.port})`,
-        danger: true,
-        fn: (e) => killPid(p, e),
-      }))
-      : []),
+    ...(!many ? (w.procs ?? []).map(killItem) : []),
     !w.isPrimary && "-",
     !w.isPrimary && {
       label: many ? `Remove ${t.length} worktrees…` : "Remove worktree…",
@@ -2618,7 +2679,8 @@ const paletteItems = $derived.by(() => {
     detail: [
       w.repo,
       w.pr && `#${w.pr.number} ${w.pr.title}`,
-      w.ports?.map((p) => `:${p}`).join(" "),
+      w.procs?.map((p) => [p.command, ...p.ports.map((n) => `:${n}`)].join(" "))
+        .join(" · "),
     ].filter(Boolean).join(" · "),
     fn: () => {
       selectWt(w.path);
@@ -3034,15 +3096,10 @@ async function confirmDiscard() {
                     ab.behind > 0 ? " — right-click to update branch" : ""
                   }`
                   : null}>{[ab.ahead && `↑${ab.ahead}`, ab.behind && `↓${ab.behind}`].filter(Boolean).join(" ")}</span>{/if}{:else if
-            col.key === "ports"}{#if w.ports?.length}<span class="pts" style:counter-reset="more {w.ports.length}"
-                title={w.ports.map((p) => `:${p}`).join(" ")}>{#each w.ports as p (p)}<a
-                href="http://localhost:{p}" target="_blank" rel="noreferrer"
-                onclick={(e) => e.stopPropagation()}>:{p}</a>{/each}{#if w.ports.length > 1}<button
-                class="more" aria-haspopup="menu" aria-label="all ports" title="all ports"
-                onclick={(e) => openMenu(e, w.ports.map((p) => ({
-                  label: `Open :${p}`,
-                  fn: () => open(`http://localhost:${p}`, "_blank", "noreferrer"),
-                })), e.detail === 0)}></button>{/if}</span>{/if}{:else if
+            col.key === "ports"}{#if w.procs?.length}<button class="ag pcell" style="--ag: var(--mid)" aria-haspopup="menu"
+                aria-label="{w.procs.length} running {w.procs.length === 1 ? "process" : "processes"}"
+                title={procTip(w)}
+                onclick={(e) => openMenu(e, procItems(w), e.detail === 0)}><i>{w.procs.length}</i><span>{procPreview(w.procs[0])}</span></button>{/if}{:else if
             col.key === "agent"}{#if w.agents?.length}{@const a = full(w.agents[0])}{@const n = w.agents.filter((x) => x.deep).length}<button
                 class="ag" style="--ag: var(--{a.tone})" aria-haspopup="menu"
                 title={badgeTip(w)}
@@ -4782,96 +4839,15 @@ select.theme {
   vertical-align: bottom;
   padding: 0 0.375rem;
 }
-.wt .more {
-  margin-left: 0.25rem;
-  font: 0.6875rem var(--mono);
-  color: var(--dim);
-  background: none;
-  border: 0;
-  padding: 0;
-  cursor: pointer;
+.ag.pcell {
+  max-width: 100%;
+  justify-content: flex-start;
 }
-.wt .more:hover {
-  color: var(--fg);
-  text-decoration: underline;
-}
-/* each port is ~7ch with its gap, "+n" ~3ch; show the ports that fit */
-.wt .c[data-col="ports"] {
-  container: ports / inline-size;
-  font: 0.6875rem var(--mono);
-}
-.wt .pts {
-  display: flex;
-  gap: 1ch;
-}
-.wt .pts a {
-  color: var(--mid);
-  counter-increment: more -1;
-}
-.wt .pts .more {
-  display: none;
-  margin: 0;
-}
-.wt .pts .more::after {
-  content: "+" counter(more);
-}
-.wt .pts a:nth-of-type(n + 6) {
-  display: none;
-}
-.wt .pts:has(a:nth-of-type(6)) .more {
-  display: block;
-}
-@container ports (width < 16ch) {
-  .wt .pts a:nth-of-type(2):not(:last-of-type) {
-    display: none;
-  }
-}
-@container ports (width < 13ch) {
-  .wt .pts a:nth-of-type(2) {
-    display: none;
-  }
-  .wt .pts:has(a:nth-of-type(2):last-of-type) .more {
-    display: block;
-  }
-}
-@container ports (width < 23ch) {
-  .wt .pts a:nth-of-type(3):not(:last-of-type) {
-    display: none;
-  }
-}
-@container ports (width < 20ch) {
-  .wt .pts a:nth-of-type(3) {
-    display: none;
-  }
-  .wt .pts:has(a:nth-of-type(3):last-of-type) .more {
-    display: block;
-  }
-}
-@container ports (width < 30ch) {
-  .wt .pts a:nth-of-type(4):not(:last-of-type) {
-    display: none;
-  }
-}
-@container ports (width < 27ch) {
-  .wt .pts a:nth-of-type(4) {
-    display: none;
-  }
-  .wt .pts:has(a:nth-of-type(4):last-of-type) .more {
-    display: block;
-  }
-}
-@container ports (width < 37ch) {
-  .wt .pts a:nth-of-type(5):not(:last-of-type) {
-    display: none;
-  }
-}
-@container ports (width < 34ch) {
-  .wt .pts a:nth-of-type(5) {
-    display: none;
-  }
-  .wt .pts:has(a:nth-of-type(5):last-of-type) .more {
-    display: block;
-  }
+.ag.pcell span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .wt [data-col="title"],
 .wt [data-col="branch"] {
@@ -5238,6 +5214,9 @@ select.theme {
   inset: auto;
   padding: 0.25rem;
   min-width: 11rem;
+  max-height: min(30rem, calc(100vh - 1rem));
+  overflow-y: auto;
+  overscroll-behavior: contain;
   background: var(--bg2);
   border: 1px solid var(--line);
   border-radius: 0.625rem;

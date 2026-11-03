@@ -113,13 +113,16 @@ export function createStore(
         const w = wtByPath.get(ownerWorktree(cwd, wtPaths) ?? "");
         if (w) {
           const byKey = new Map(
-            [...w.procs, ...ps].map((p) => [`${p.pid}:${p.port}`, p]),
+            [...w.procs, ...ps].map((p) => [p.pid, p]),
           );
-          w.procs = [...byKey.values()].sort((a, b) => a.port - b.port);
+          w.procs = [...byKey.values()].sort((a, b) =>
+            (a.ports[0] ?? Infinity) - (b.ports[0] ?? Infinity) ||
+            a.command.localeCompare(b.command)
+          );
         }
       }
       for (const w of wtByPath.values()) {
-        w.ports = [...new Set(w.procs.map((p) => p.port))].sort((a, b) =>
+        w.ports = [...new Set(w.procs.flatMap((p) => p.ports))].sort((a, b) =>
           a - b
         );
       }

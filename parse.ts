@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { Repo, Worktree } from "./types.ts";
+import type { Procs, Repo, Worktree } from "./types.ts";
 
 export function parseWorktreeList(porcelain: string) {
   const wts: { path: string; head: string; branch: string }[] = [];
@@ -86,37 +86,105 @@ export function parseLsofPidPorts(net: string): Map<string, number[]> {
   return byPid;
 }
 
-export function parseLsofCommands(net: string): Map<string, string> {
-  const cmds = new Map<string, string>();
-  let pid = "";
-  fieldLines(net, (p) => (pid = p), () => {}, (c) => cmds.set(pid, c));
-  return cmds;
+export type PsRow = {
+  ppid: number;
+  up: number;
+  cpu: number;
+  rss: number;
+  args: string;
+};
+
+const etimeSecs = (s: string) => {
+  const [d, t] = s.includes("-") ? s.split("-") : ["0", s];
+  const [ss = 0, mm = 0, hh = 0] = t.split(":").map(Number).reverse();
+  return ((Number(d) * 24 + hh) * 60 + mm) * 60 + ss;
+};
+
+// ps -axo pid=,ppid=,etime=,%cpu=,rss=,args=
+export function parsePs(out: string): Map<number, PsRow> {
+  const rows = new Map<number, PsRow>();
+  for (const l of out.split("\n")) {
+    const m = l.match(/^\s*(\d+)\s+(\d+)\s+(\S+)\s+(\S+)\s+(\d+)\s+(.+)$/);
+    if (m) {
+      rows.set(Number(m[1]), {
+        ppid: Number(m[2]),
+        up: etimeSecs(m[3]),
+        cpu: Number(m[4]),
+        rss: Number(m[5]),
+        args: m[6].slice(0, 500),
+      });
+    }
+  }
+  return rows;
 }
 
+const label = (args: string) =>
+  args.split(" ").map((t) =>
+    t.startsWith("/") ? t.slice(t.lastIndexOf("/") + 1) : t
+  )
+    .join(" ");
+
+export type ProcRules = {
+  skip: ReadonlySet<string>;
+  agents: ReadonlySet<string>;
+  shells: ReadonlySet<string>;
+};
+
+// Every process by cwd. A listener always shows. A portless one is hidden when
+// its name is in skip or an agent is its ancestor with no shell between (an
+// MCP server, not a command someone ran), and a parent whose only visible
+// child shares its cwd folds into that child.
 export function procsByCwd(
   byPid: Map<string, number[]>,
-  cmds: Map<string, string>,
   cwds: string,
-): Map<string, { port: number; pid: number; command: string }[]> {
-  const byCwd = new Map<
-    string,
-    { port: number; pid: number; command: string }[]
-  >();
+  ps: Map<number, PsRow>,
+  now: number,
+  rules: ProcRules,
+): Map<string, Procs> {
+  const found: { pid: number; command: string; cwd: string }[] = [];
+  const cmds = new Map<number, string>();
   let pid = "";
+  let command = "";
   fieldLines(cwds, (p) => (pid = p), (cwd) => {
-    const ports = byPid.get(pid);
-    if (ports) {
-      const entries = [...new Set(ports)].map((port) => ({
-        port,
-        pid: Number(pid),
-        command: cmds.get(pid) ?? "",
-      }));
-      byCwd.set(
-        cwd,
-        [...(byCwd.get(cwd) ?? []), ...entries].sort((a, b) => a.port - b.port),
-      );
+    cmds.set(Number(pid), command);
+    found.push({ pid: Number(pid), command, cwd });
+  }, (c) => (command = c));
+
+  const underAgent = (p: number) => {
+    for (let a = ps.get(p)?.ppid ?? 0; a > 1; a = ps.get(a)?.ppid ?? 0) {
+      const c = cmds.get(a) ?? "";
+      if (rules.shells.has(c)) return false;
+      if (rules.agents.has(c)) return true;
     }
-  });
+    return false;
+  };
+
+  const byCwd = new Map<string, Procs>();
+  for (const f of found) {
+    const ports = [...new Set(byPid.get(String(f.pid)))].sort((a, b) => a - b);
+    if (!ports.length && (rules.skip.has(f.command) || underAgent(f.pid))) {
+      continue;
+    }
+    const r = ps.get(f.pid);
+    const args = r?.args ?? f.command;
+    byCwd.set(f.cwd, [...(byCwd.get(f.cwd) ?? []), {
+      pid: f.pid,
+      command: label(args),
+      args,
+      ports,
+      since: now - (r?.up ?? 0) * 1000,
+      cpu: Math.round(r?.cpu ?? 0),
+      mb: Math.round((r?.rss ?? 0) / 5120) * 5,
+    }]);
+  }
+  for (const [cwd, list] of byCwd) {
+    const kids = new Map<number, number>();
+    for (const p of list) {
+      const pp = ps.get(p.pid)?.ppid ?? 0;
+      kids.set(pp, (kids.get(pp) ?? 0) + 1);
+    }
+    byCwd.set(cwd, list.filter((p) => p.ports.length || kids.get(p.pid) !== 1));
+  }
   return byCwd;
 }
 

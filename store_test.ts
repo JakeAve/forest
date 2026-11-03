@@ -59,15 +59,48 @@ Deno.test("publish rebuilds known and repoPaths from byPath and sorts repos by n
   assertEquals([...store.repoPaths.keys()], ["zulu"]);
 });
 
-Deno.test("publish attaches pr, procs sorted by port and unique ports per worktree", () => {
+Deno.test("publish attaches pr, procs sorted by port, portless last, and unique ports per worktree", () => {
   const pr = { number: 7, url: "u" } as Pr;
   const { store } = make({
     prFor: (repo, w) => repo === "/r/forest" && w.branch === "main" ? pr : null,
     procs: new Map<string, Procs>([
-      ["/r/forest", [{ port: 3000, pid: 9, command: "node" }]],
+      ["/r/forest", [{
+        pid: 9,
+        command: "node",
+        args: "node",
+        ports: [3000],
+        since: 0,
+        cpu: 0,
+        mb: 0,
+      }]],
       ["/r/forest/src", [
-        { port: 1901, pid: 5, command: "vite" },
-        { port: 3000, pid: 9, command: "node" },
+        {
+          pid: 5,
+          command: "vite",
+          args: "vite",
+          ports: [1901],
+          since: 0,
+          cpu: 0,
+          mb: 0,
+        },
+        {
+          pid: 9,
+          command: "node",
+          args: "node",
+          ports: [3000],
+          since: 0,
+          cpu: 0,
+          mb: 0,
+        },
+        {
+          pid: 7,
+          command: "tsc",
+          args: "tsc",
+          ports: [],
+          since: 0,
+          cpu: 0,
+          mb: 0,
+        },
       ]],
     ]),
   });
@@ -76,7 +109,7 @@ Deno.test("publish attaches pr, procs sorted by port and unique ports per worktr
 
   const w = store.byPath.get("/r/forest")!.worktrees[0];
   assertEquals(w.pr, pr);
-  assertEquals(w.procs.map((p) => p.port), [1901, 3000]);
+  assertEquals(w.procs.map((p) => p.command), ["vite", "node", "tsc"]);
   assertEquals(w.ports, [1901, 3000]);
 });
 
@@ -94,7 +127,15 @@ Deno.test("store: publish sets prListed from prs", () => {
 Deno.test("a proc whose cwd is inside a nested worktree goes to the deepest owner", () => {
   const { store } = make({
     procs: new Map<string, Procs>([
-      ["/r/forest/nested/app", [{ port: 8080, pid: 1, command: "deno" }]],
+      ["/r/forest/nested/app", [{
+        pid: 1,
+        command: "deno",
+        args: "deno",
+        ports: [8080],
+        since: 0,
+        cpu: 0,
+        mb: 0,
+      }]],
     ]),
   });
   store.byPath.set(

@@ -1,6 +1,14 @@
 import type { PrCard, Ticket } from "./parse.ts";
 
-export type Procs = { port: number; pid: number; command: string }[];
+export type Procs = {
+  pid: number;
+  command: string;
+  args: string;
+  ports: number[];
+  since: number;
+  cpu: number;
+  mb: number;
+}[];
 
 export type Worktree = {
   repo: string;
