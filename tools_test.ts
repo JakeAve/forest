@@ -337,7 +337,15 @@ Deno.test("remove_wts never removes a worktree that would lose work or is in use
     undefined,
     undefined,
     new Map([
-      ["/r/forest-srv", [{ port: 5173, pid: 9, command: "vite" }]],
+      ["/r/forest-srv", [{
+        pid: 9,
+        command: "vite",
+        args: "vite",
+        ports: [5173],
+        since: 0,
+        cpu: 0,
+        mb: 0,
+      }]],
     ]),
   );
   const out = await t.callTool("remove_wts", {

@@ -36,6 +36,7 @@ export function fakeExec(
       await exec(cwd, ["git", ...args], stdin);
     },
     lsof: (...args) => exec("", ["lsof", ...args]).catch(() => ""),
+    ps: (...args) => exec("", ["ps", ...args]).catch(() => ""),
   };
 }
 

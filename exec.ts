@@ -12,6 +12,7 @@ export type Shell = {
   tryGit(cwd: string, ...args: string[]): Promise<string | null>;
   gitIn(cwd: string, stdin: string, ...args: string[]): Promise<void>;
   lsof(...args: string[]): Promise<string>;
+  ps(...args: string[]): Promise<string>;
 };
 
 const dec = new TextDecoder();
@@ -28,6 +29,22 @@ export function createExec(stats: Stats): Shell {
       stats.subprocessInflight--;
       stats.subprocessMsTotal += performance.now() - t0;
     };
+  };
+  const readOnly = async (bin: string, args: string[]) => {
+    const done = spawned(bin);
+    try {
+      // try, not .catch(): a missing binary throws before output() returns
+      const out = await new Deno.Command(bin, {
+        args,
+        stdout: "piped",
+        stderr: "null",
+      }).output();
+      return dec.decode(out.stdout);
+    } catch {
+      return "";
+    } finally {
+      done();
+    }
   };
 
   const exec: Exec = async (cwd, cmd, stdin) => {
@@ -72,22 +89,8 @@ export function createExec(stats: Stats): Shell {
     gitIn: async (cwd, stdin, ...args) => {
       await exec(cwd, ["git", ...args], stdin);
     },
-    lsof: async (...args) => {
-      const done = spawned("lsof");
-      try {
-        // try, not .catch(): a missing binary throws before output() returns
-        const out = await new Deno.Command("lsof", {
-          args,
-          stdout: "piped",
-          stderr: "null",
-        }).output();
-        return dec.decode(out.stdout);
-      } catch {
-        return "";
-      } finally {
-        done();
-      }
-    },
+    lsof: (...args) => readOnly("lsof", args),
+    ps: (...args) => readOnly("ps", args),
   };
 }
 

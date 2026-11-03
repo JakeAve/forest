@@ -28,9 +28,9 @@ import {
   parseDiffHunks,
   parseGrep,
   parseIgnored,
-  parseLsofCommands,
   parseLsofPidPorts,
   parseOpenInput,
+  parsePs,
   parseStatus,
   parseUpstreamTrack,
   parseWorktreeList,
@@ -999,44 +999,98 @@ Deno.test("prCard: verdicts outrank comments, author and empty bodies drop out",
   assertEquals([cmp.ahead, cmp.behind], [6, 1]);
 });
 
-Deno.test("parseLsofCommands and procsByCwd: c lines join to pid->command", () => {
-  const net = [
-    "p1175",
-    "cnode",
-    "f23",
-    "n*:5173",
-    "p1200",
-    "cvite",
-    "n127.0.0.1:5173",
-    "p1300",
-    "n/tmp/sock",
-    "p1500",
-    "n*:4000",
-    "",
-  ].join("\n");
-  const cmds = parseLsofCommands(net);
-  assertEquals(cmds.get("1175"), "node");
-  assertEquals(cmds.get("1200"), "vite");
-  assertEquals(cmds.has("1500"), false);
+Deno.test("parsePs reads etime, cpu, rss and the whole args tail", () => {
+  const ps = parsePs([
+    "  1     0     05:12   0.0  1024 /sbin/launchd",
+    "283     1  2-03:04:05  1.5 45056 /opt/bin/deno run -A main.ts",
+    "bad line",
+  ].join("\n"));
+  assertEquals(ps.size, 2);
+  assertEquals(ps.get(283), {
+    ppid: 1,
+    up: ((2 * 24 + 3) * 60 + 4) * 60 + 5,
+    cpu: 1.5,
+    rss: 45056,
+    args: "/opt/bin/deno run -A main.ts",
+  });
+  assertEquals(ps.get(1)!.up, 312);
+});
 
-  const byPid = parseLsofPidPorts(net);
+Deno.test("procsByCwd: listeners always show; MCP servers, shells and wrappers hide; a parent folds into its only child", () => {
+  const byPid = parseLsofPidPorts(
+    ["p10", "n*:5173", "p50", "n*:4000", ""].join("\n"),
+  );
   const cwds = [
-    "p1175",
-    "n/Repos/forest",
-    "p1200",
-    "n/Repos/forest",
-    "p1500",
-    "n/Repos/other",
+    "p10",
+    "cnode",
+    "n/r/forest",
+    "p20",
+    "cdeno",
+    "n/r/forest",
+    "p21",
+    "cdeno",
+    "n/r/forest",
+    "p30",
+    "ctsc",
+    "n/r/forest",
+    "p40",
+    "czsh",
+    "n/r/forest",
+    "p41",
+    "cclaude",
+    "n/r/forest",
+    "p42",
+    "cdeno",
+    "n/r/forest",
+    "p43",
+    "czsh",
+    "n/r/forest",
+    "p44",
+    "ctsc",
+    "n/r/forest",
+    "p50",
+    "czsh",
+    "n/r/other",
     "",
   ].join("\n");
-  const byCwd = procsByCwd(byPid, cmds, cwds);
-  assertEquals(byCwd.get("/Repos/forest"), [
-    { port: 5173, pid: 1175, command: "node" },
-    { port: 5173, pid: 1200, command: "vite" },
+  const row = (ppid: number, args: string) => ({
+    ppid,
+    up: 60,
+    cpu: 0.4,
+    rss: 10240,
+    args,
+  });
+  const ps = new Map([
+    [10, row(1, "/n/bin/node /r/forest/vite.js --port 5173")],
+    [20, row(1, "/bin/deno task start")],
+    [21, row(20, "/bin/deno run -A main.ts")],
+    [30, row(1, "/bin/tsc --watch")],
+    [40, row(1, "-zsh")],
+    [41, row(1, "/x/claude")],
+    [42, row(41, "/bin/deno run mcp.ts")],
+    [43, row(41, "/bin/zsh -c test")],
+    [44, row(43, "/bin/tsc -w")],
+    [50, row(1, "-zsh")],
   ]);
-  assertEquals(byCwd.get("/Repos/other"), [
-    { port: 4000, pid: 1500, command: "" },
-  ]);
+  const rules = {
+    skip: new Set(["zsh", "claude"]),
+    agents: new Set(["claude"]),
+    shells: new Set(["zsh"]),
+  };
+  const got = procsByCwd(byPid, cwds, ps, 1_000_000, rules);
+  assertEquals(
+    got.get("/r/forest")!.map((p) => [p.pid, p.command, p.ports]),
+    [
+      [10, "node vite.js --port 5173", [5173]],
+      [21, "deno run -A main.ts", []],
+      [30, "tsc --watch", []],
+      [44, "tsc -w", []],
+    ],
+  );
+  assertEquals(got.get("/r/forest")![0].since, 1_000_000 - 60_000);
+  assertEquals(got.get("/r/forest")![0].mb, 10);
+  assertEquals(got.get("/r/forest")![0].cpu, 0);
+  assertEquals(got.get("/r/other")!.map((p) => p.pid), [50]);
 });
 
 const WT_ROWS = [

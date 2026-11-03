@@ -509,7 +509,7 @@ export function createRoutes(deps: {
               procs.some((p) => p.pid === pid)
             );
             if (!Number.isInteger(pid) || !known) {
-              throw new Error("not a known listening process");
+              throw new Error("not a known process");
             }
             Deno.kill(pid, "SIGTERM");
             break;

@@ -60,7 +60,7 @@ repo name (`dc` finds `discount-codes`), or narrow to dirty-only / running-only.
 
 Right-click a worktree to open it, copy its path or branch, view or create its
 PR, push, rebase onto `origin/HEAD`, update the branch, enable auto-merge, mark
-a PR draft or ready, close it, kill a process listening in it, turn on
+a PR draft or ready, close it, kill a process running in it, turn on
 auto-rebase, or remove the worktree. Select several to copy or remove them
 together. Right-click a repo for new worktree. Hover a row for its checkbox, or
 ⌘-click, ⇧-click, or press Space to add it to the selection.
