@@ -417,7 +417,15 @@ const repoWts = $derived.by(() => {
   ]));
 });
 
+// Browsers cap HTTP/1.1 at 6 connections per host and each SSE stream holds
+// one, so only visible tabs keep a stream. A reconnect gets a full snapshot.
+let hidden = $state(document.hidden);
+const onVis = () => (hidden = document.hidden);
+document.addEventListener("visibilitychange", onVis);
+$effect(() => () => document.removeEventListener("visibilitychange", onVis));
+
 $effect(() => {
+  if (hidden) return;
   const es = new EventSource("/api/events");
   es.onopen = () =>
     fetch("/api/notify").then((r) => r.json()).then((l) => (inbox = l));
