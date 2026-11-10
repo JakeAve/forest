@@ -303,7 +303,7 @@ are written.
 | ------------------- | ----------- | ------------------------------------------------------------------- |
 | `port`              | `38471`     | server port (restart)                                               |
 | `host`              | `127.0.0.1` | address the server binds (restart)                                  |
-| `root`              | `~/Repos`   | directory scanned for repos (restart)                               |
+| `root`              | `~`         | directory scanned for repos (restart)                               |
 | `pollMs`            | `5000`      | rescan tick; with `watch` on, ports and PRs only                    |
 | `prPollMs`          | `60000`     | PR refresh for a repo with an open PR                               |
 | `prIdleMs`          | `300000`    | PR refresh for a repo without one                                   |
