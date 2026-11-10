@@ -4,7 +4,7 @@ import { settingsOverrides } from "./parse.ts";
 export const DEFAULTS = {
   host: "127.0.0.1",
   port: 38471,
-  root: "~/Repos",
+  root: "~",
   pollMs: 5000,
   prPollMs: 60000, // a repo with an open PR: only that state can still change
   prIdleMs: 300000, // a repo without one: catches PRs opened outside this machine
