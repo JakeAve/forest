@@ -38,11 +38,11 @@ deno task setup                # git hooks run check + test on commit/push
 - `parse.ts` is imported by both Deno and the Vite bundle. Any package it
   imports must be in both `deno.json` imports and `package.json`, pinned to the
   same version; no `@std/*` or `jsr:` imports there.
-- Logic with edge cases goes in `parse.ts`, `src/theme.js` or `src/filter.js` so
-  it's testable without spawning git. IO-driven logic goes in its system module
-  and takes its IO as deps (`Shell` from `exec.ts`, the store, the clock) so
-  it's testable with `fakeExec` from `fixtures.ts` and `FakeTime`. `main.ts` is
-  wiring only.
+- Logic with edge cases goes in `parse.ts`, `src/theme.js`, `src/filter.js` or
+  `src/keys.js`, never in `.svelte`/`.svelte.js`, so it's testable without
+  spawning git. IO-driven logic goes in its system module and takes its IO as
+  deps (`Shell` from `exec.ts`, the store, the clock) so it's testable with
+  `fakeExec` from `fixtures.ts` and `FakeTime`. `main.ts` is wiring only.
 - Filters (UI, palette, agent `q`) match through `fuzzy`/`rank` in
   `src/filter.js`. `selectWt` stays substring so a `wt` selector is precise.
 - Colors, CSS vars, status tones, shades and glyphs: follow the `theming` skill
@@ -53,7 +53,10 @@ deno task setup                # git hooks run check + test on commit/push
 - Panes are one flat grid in `App.svelte`; each layout in `AXES`/`LAYOUTS` is a
   `grid-template` on `.panes`. A new pane or layout needs areas in every
   template. Adapt pane contents to width with `@container` on `.band`, never by
-  checking `preset`.
+  checking `preset`. The `.band` element is App's; a pane component renders
+  `.bhead` first, then `.body`, inside it.
+- Svelte architecture: `.claude/rules/svelte.md`. `App.svelte` is the layout
+  shell only; `ui_test.ts` caps component size and import direction.
 - UI text is sentence case; no `text-transform: uppercase`. Header height is
   `--head`, which collapsed panes and drag minimums depend on.
 - Coding agents (Claude, Codex, …) are entries in `PROVIDERS` in `agents.ts`;
