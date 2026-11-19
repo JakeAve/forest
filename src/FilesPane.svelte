@@ -34,8 +34,7 @@ import {
   setBase,
   toggleDir,
 } from "./nav.svelte.js";
-
-let { kbdOf } = $props();
+import { kbdOf } from "./commands.svelte.js";
 
 let openEl = $state();
 let editingPath = $state(false);

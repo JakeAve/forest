@@ -26,8 +26,7 @@ import {
   toggleRepo,
 } from "./rows.svelte.js";
 import { allItems, repoItems } from "./wtActions.js";
-
-let { kbdOf } = $props();
+import { kbdOf } from "./commands.svelte.js";
 
 let wtFilterEl = $state();
 

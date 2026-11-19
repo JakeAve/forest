@@ -10,9 +10,7 @@ import {
   noteOutside,
   runItem,
 } from "./menu.svelte.js";
-
-// Until the commands store exists, App passes what it will own.
-let { kbdOf, keymap } = $props();
+import { cmds, kbdOf } from "./commands.svelte.js";
 
 $effect(() => {
   if (!menu.shown) return;
@@ -38,9 +36,9 @@ $effect(() => {
 // mouse navigates too, and j / k move here instead of between worktrees.
 function menuNav(e) {
   const k = combo(e);
-  const step = k === "arrowdown" || keymap.byId["next-wt"]?.includes(k)
+  const step = k === "arrowdown" || cmds.keymap.byId["next-wt"]?.includes(k)
     ? 1
-    : k === "arrowup" || keymap.byId["prev-wt"]?.includes(k)
+    : k === "arrowup" || cmds.keymap.byId["prev-wt"]?.includes(k)
     ? -1
     : 0;
   const back = menu.shown?.items.find((x) => x.back);

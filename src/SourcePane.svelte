@@ -16,8 +16,7 @@ import {
   renameKey,
   startRename,
 } from "./nav.svelte.js";
-
-let { kbdOf } = $props();
+import { kbdOf } from "./commands.svelte.js";
 
 const MODE_LABEL = { text: "Text", preview: "Preview", hex: "Hex" };
 
