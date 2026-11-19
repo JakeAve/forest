@@ -397,8 +397,13 @@ export function createFiles(deps: {
     await Deno.rename(join(root, guardPath(from)), dest);
   }
 
+  // macOS 15+ ships /usr/bin/trash (Finder's Put Back works); without it this
+  // fails rather than falling back to a permanent delete
   async function remove(root: string, rel: string) {
-    await Deno.remove(join(root, guardPath(rel)), { recursive: true });
+    await deps.sh.exec(root, ["/usr/bin/trash", join(root, guardPath(rel))])
+      .catch((e) => {
+        throw new Error(`couldn't move ${rel} to the Trash: ${e.message}`);
+      });
   }
 
   async function save(

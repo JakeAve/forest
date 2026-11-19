@@ -9,6 +9,9 @@ export default defineConfig({
   server: {
     port: 38472,
     strictPort: true,
-    proxy: { "/api": "http://localhost:38471" },
+    // object form: the string shorthand sets changeOrigin, which rewrites Host
+    // to :38471 so a write from any other vite port (forest-preview's :38473)
+    // fails the server's Origin-vs-Host check
+    proxy: { "/api": { target: "http://localhost:38471" } },
   },
 });
