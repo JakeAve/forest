@@ -11,18 +11,10 @@ import {
   setDeliver,
   toggleCol,
 } from "./prefs.svelte.js";
+import { applyTheme, importTheme, importVsTheme, ui } from "./ui.svelte.js";
 
-// Until the ui, rows and commands stores exist, App passes what they will own.
-let {
-  busy,
-  themes,
-  repos,
-  applyTheme,
-  importTheme,
-  importVsTheme,
-  kbdOf,
-  onshortcuts,
-} = $props();
+// Until the rows and commands stores exist, App passes what they will own.
+let { repos, kbdOf, onshortcuts } = $props();
 
 let dlg = $state();
 let fileEl = $state();
@@ -81,19 +73,19 @@ function addTicket() {
   <h3 class="sec">Theme</h3>
   <div class="row">
     <label for="theme-sel">theme</label>
-    <select id="theme-sel" class="theme" value={prefs.theme} disabled={busy.theme}
+    <select id="theme-sel" class="theme" value={prefs.theme} disabled={ui.busy.theme}
             onchange={(e) => applyTheme(e.target.value)}>
       <option value="default">default</option>
-      {#each themes as t (t)}<option value={t}>{t}</option>{/each}
+      {#each ui.themes as t (t)}<option value={t}>{t}</option>{/each}
     </select>
-    <button class="btn" class:wait={busy.theme?.json} disabled={busy.theme}
+    <button class="btn" class:wait={ui.busy.theme?.json} disabled={ui.busy.theme}
             onclick={() => fileEl.click()}>Import…</button>
     <input type="file" accept=".json,.jsonc" hidden bind:this={fileEl} onchange={importTheme}>
   </div>
   {#if vsThemes.length}
     <div class="row">
       <label for="vs-sel">installed</label>
-      <select id="vs-sel" class="theme" value="" disabled={busy.theme} onchange={pickVsTheme}>
+      <select id="vs-sel" class="theme" value="" disabled={ui.busy.theme} onchange={pickVsTheme}>
         <option value="">Pick a VS Code theme…</option>
         {#each vsThemes as t (t.path)}<option value={t.path}>{t.name}</option>{/each}
       </select>

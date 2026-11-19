@@ -7,6 +7,7 @@ import Shortcuts from "./Shortcuts.svelte";
 import Hex from "./Hex.svelte";
 import Icon from "./Icon.svelte";
 import Settings from "./Settings.svelte";
+import Menu from "./Menu.svelte";
 import {
   matchPath,
   matchWt,
@@ -16,12 +17,10 @@ import {
   wtScore,
 } from "./filter.js";
 import {
-  agoText,
   ancestorDirs,
   branchUrl,
   bucket,
   bucketSummary,
-  clampMenu,
   clip,
   colsMin,
   colTemplate,
@@ -47,7 +46,6 @@ import {
   splitPath,
   TREE_CAP,
   treeRows,
-  trimSeps,
 } from "../parse.ts";
 import {
   AC_ICON,
@@ -61,7 +59,6 @@ import {
   TICKET_ST,
   VERDICT,
 } from "./icons.js";
-import { parseThemeText, resolveTheme, setFavicon } from "./theme.js";
 import { combo, label as keyLabel, resolve } from "./keys.js";
 import { marked } from "marked";
 import {
@@ -84,6 +81,34 @@ import {
   toggleMax,
   zoomBy,
 } from "./prefs.svelte.js";
+import {
+  act,
+  ago,
+  applyTheme,
+  clickCell,
+  copy,
+  errBanner,
+  loadThemes,
+  post,
+  scrollRow,
+  showToast,
+  ui,
+} from "./ui.svelte.js";
+import {
+  askInCard,
+  card,
+  drill,
+  hideCard,
+  hideMenu,
+  menu,
+  menuKey,
+  menuSession,
+  noteOutside,
+  openCard,
+  openMenu,
+  placeCard,
+  runAction,
+} from "./menu.svelte.js";
 
 loadSettings();
 loadLayout().then((t) => t && applyTheme(t, false));
@@ -139,11 +164,9 @@ let fileFilterEl = $state();
 let found = $state({ i: 0, n: 0 });
 let dirtyOnly = $state(false);
 let runningOnly = $state(false);
-let copied = $state("");
 let diffRef = $state();
 let diffDirty = $state(false);
 let diffTick = $state(0);
-let banner = $state(null);
 let prOffHidden = $state("");
 // Dismissing hides this text; a different failure shows again.
 const prOff = $derived(prOffSummary(repos));
@@ -152,30 +175,22 @@ let touched = $state({});
 let fresh = $state({}); // rel path -> when it last changed on disk, for the row flash
 let srcInfo = $state(null);
 let diskAt = $state(0); // when the open file last changed on disk
-let now = $state(Date.now());
 let b1El = $state(), b2El = $state();
-let themes = $state([]);
-let settingsDlg = $state();
 let creating = $state(null);
 let slug = $state("");
-let busy = $state({});
-let killing = $state({});
 let pendingLine = $state(0);
 let removing = $state(false);
 let confirming = $state(null);
 let confirmSel = $state(false);
-let menu = $state(null);
-let menuEl = $state();
-let card = $state(null); // { path, x, y, kind }: PR or ticket card under its cell
-let cardEl = $state();
-let cardReturn;
-const cardWt = $derived(card && allWts.find((w) => w.path === card.path));
+const cardWt = $derived(
+  card.shown && allWts.find((w) => w.path === card.shown.path),
+);
 let restored = false;
 const initialParams = new URLSearchParams(location.search);
 let restoring = $state(initialParams.has("path") || initialParams.has("wt"));
 let markBooted;
 const booted = new Promise((r) => (markBooted = r));
-fetch("/api/themes").then((r) => r.json()).then((t) => (themes = t));
+loadThemes();
 
 const selWt = $derived(
   repos.flatMap((r) => r.worktrees).find((w) => w.path === sel),
@@ -434,7 +449,7 @@ $effect(() => {
 $effect(() => {
   if (!prefs.settings) return;
   const tick = setInterval(
-    () => (now = Date.now()),
+    () => (ui.now = Date.now()),
     prefs.settings.agoRefreshMs,
   );
   return () => clearInterval(tick);
@@ -558,7 +573,7 @@ async function openPath(text) {
     errBanner(await res.text());
     return false;
   }
-  if (banner?.kind === "bad") banner = null;
+  if (ui.banner?.kind === "bad") ui.banner = null;
   await openAt(await res.json());
   return true;
 }
@@ -769,13 +784,6 @@ $effect(() => {
   if (!fq) scrollRow(untrack(() => file));
 });
 
-async function scrollRow(path) {
-  if (!path) return;
-  await tick();
-  document.querySelector(`[data-path="${CSS.escape(path)}"]`)
-    ?.scrollIntoView({ block: "nearest" });
-}
-
 function selectWt(path) {
   loose = false;
   pendingLine = 0;
@@ -885,8 +893,6 @@ function gutterKey(e, n, el) {
   resize(n, el, (isX(n) ? el.offsetWidth : el.offsetHeight) + d);
   saveLayout();
 }
-
-const ago = (ms) => agoText(now, ms);
 
 const colGrid = $derived(
   colTemplate(prefs.visibleCols, prefs.lead, prefs.widths),
@@ -1007,14 +1013,6 @@ const colItems = (key) => [
   })),
 ];
 
-let toast = $state("");
-let toastT;
-function showToast(text) {
-  toast = text;
-  clearTimeout(toastT);
-  toastT = setTimeout(() => (toast = ""), prefs.settings?.toastMs ?? 7000);
-}
-
 let inbox = $state([]);
 let inboxEl = $state();
 let toasts = $state([]);
@@ -1070,65 +1068,25 @@ const evItems = (ev) => [
 
 function notifySettings() {
   inboxEl?.hidePopover();
-  settingsDlg.open("notify");
-}
-
-async function copy(e, text, key, label = text) {
-  e.stopPropagation();
-  await navigator.clipboard.writeText(text);
-  showToast(label);
-  copied = key;
-  setTimeout(() => {
-    if (copied === key) copied = "";
-  }, 900);
-}
-
-function errBanner(text) {
-  banner = {
-    kind: "bad",
-    text,
-    actions: [{ label: "Dismiss", fn: () => (banner = null) }],
-  };
+  ui.refs.settings.open("notify");
 }
 
 function conflictBanner() {
-  banner = {
+  ui.banner = {
     kind: "warn",
     text: `${file} changed on disk while you have unsaved edits.`,
     actions: [
       {
         label: "Reload from disk",
         fn: () => {
-          banner = null;
+          ui.banner = null;
           diffRef?.reloadTheirs();
         },
       },
-      { label: "Keep mine", fn: () => (banner = null) },
+      { label: "Keep mine", fn: () => (ui.banner = null) },
     ],
   };
 }
-
-/** POST an action; the server's error text, or null when it worked. */
-async function post(ep, body) {
-  const res = await fetch(`/api/${ep}`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  }).catch((e) => ({ ok: false, text: () => e.message }));
-  return res.ok ? null : await res.text();
-}
-
-async function act(ep, body, key, e) {
-  e?.stopPropagation();
-  busy[key] = body;
-  const err = await post(ep, body).finally(() => delete busy[key]);
-  if (err !== null) {
-    errBanner(err);
-    return false;
-  }
-  return true;
-}
-
 async function op(ep, body, e) {
   await act(ep, { wt: sel, ...body }, ep, e);
   loadFiles();
@@ -1136,14 +1094,14 @@ async function op(ep, body, e) {
 }
 
 const rowBusy = (w) =>
-  Object.keys(busy).some((k) => k.endsWith(":" + w.path)) ||
-  w.procs?.some((p) => killing[p.pid]) ||
-  w.agents?.some((a) => busy["ag:" + a.id] || busy["at:" + a.id]);
+  Object.keys(ui.busy).some((k) => k.endsWith(":" + w.path)) ||
+  w.procs?.some((p) => ui.killing[p.pid]) ||
+  w.agents?.some((a) => ui.busy["ag:" + a.id] || ui.busy["at:" + a.id]);
 async function killPid(p, e) {
-  killing[p.pid] = true;
-  setTimeout(() => delete killing[p.pid], 10_000);
+  ui.killing[p.pid] = true;
+  setTimeout(() => delete ui.killing[p.pid], 10_000);
   if (!await act("kill-pid", { pid: p.pid }, "kill:" + p.pid, e)) {
-    delete killing[p.pid];
+    delete ui.killing[p.pid];
   }
 }
 const killItem = (p) => ({
@@ -1249,7 +1207,7 @@ function prActions(w) {
   if (p?.state !== "OPEN") return [];
   const behind = prAb(w).behind;
   const ahead = prAb(w).ahead;
-  const ps = busy["ps:" + w.path]?.action;
+  const ps = ui.busy["ps:" + w.path]?.action;
   return [
     prStatus(p).tone === "ok" && !p.queue && {
       key: "merge",
@@ -1267,7 +1225,7 @@ function prActions(w) {
       label: `Update branch ↓${behind}`,
       menu: `Update branch (↓${behind} from ${p.baseRefName})`,
       cls: "warn",
-      wait: !!busy["ub:" + w.path],
+      wait: !!ui.busy["ub:" + w.path],
       go: (e) => updateBranch(w, e),
     },
     {
@@ -1290,31 +1248,10 @@ function prActions(w) {
   ].filter(Boolean);
 }
 
-// which action the card is asking about: { path, key }
-let asking = $state(null);
-function runAction(a, w, e) {
-  e?.stopPropagation();
-  if (a.confirm && !(asking?.path === w.path && asking.key === a.key)) {
-    asking = { path: w.path, key: a.key };
-    return;
-  }
-  asking = null;
-  a.go(e);
-}
-
-// A menu pick of a confirmable action opens the card on its question, so there
-// is one confirm UI however you got there -- and no merge on a single misclick.
-function askInCard(w, a, e) {
-  asking = { path: w.path, key: a.key };
-  if (e?.detail !== 0) return showCard(w, e?.clientX ?? 0, e?.clientY ?? 0);
-  menuReturn = null;
-  clickCell(w, "pr");
-}
-
 async function removeWts(wts, force) {
   const live = wts.filter((w) => allWts.some((a) => a.path === w.path));
   if (!live.length) return (confirming = null);
-  banner = null;
+  ui.banner = null;
   removing = true;
   const res = await fetch("/api/wt-remove", {
     method: "POST",
@@ -1328,7 +1265,7 @@ async function removeWts(wts, force) {
   const stuck = live.filter((w) => failed.some((f) => f.path === w.path));
   for (const w of live) if (!stuck.includes(w)) delete checked[w.path];
   if (!stuck.length) return;
-  banner = {
+  ui.banner = {
     kind: "warn",
     text: removeSummary(live.length, stuck.map((w) => w.branch)),
     actions: [
@@ -1337,192 +1274,18 @@ async function removeWts(wts, force) {
         primary: true,
         fn: () => removeWts(stuck, true),
       },
-      { label: "Dismiss", fn: () => (banner = null) },
+      { label: "Dismiss", fn: () => (ui.banner = null) },
     ],
   };
 }
 
-let menuReturn = null;
 let opened = $state(null); // the agent session just resumed, for its toast
 let openedT;
 
-// The outside-pointerdown that closes a popover fires before the click on the
-// button that opened it, which would reopen it; remember that button so the
-// click toggles instead.
-let opener = null;
-let closedBy = null;
-function noteOutside(ev) {
-  if (!opener?.contains(ev.target)) return;
-  closedBy = opener;
-  addEventListener("pointerup", () => setTimeout(() => (closedBy = null)), {
-    once: true,
-    capture: true,
-  });
-}
-function reopens(e) {
-  const same = e.type === "click" && closedBy === e.currentTarget;
-  closedBy = null;
-  opener = e.type === "click" ? e.currentTarget : null;
-  return same;
-}
-
-async function openMenu(e, items, viaKey) {
-  e.preventDefault();
-  e.stopPropagation();
-  if (reopens(e)) return;
-  if (card) hideCard();
-  const box = e.currentTarget.getBoundingClientRect();
-  menuReturn = viaKey ? e.currentTarget : null;
-  menu = {
-    x: (!viaKey && e.clientX) || Math.round(box.left + 16),
-    y: (!viaKey && e.clientY) || Math.round(box.bottom),
-    items: trimSeps(items.filter(Boolean)),
-    closable: e.type !== "contextmenu",
-  };
-  await tick();
-  if (!menuEl || !menu) return;
-  menuEl.showPopover();
-  placeMenu();
-  if (viaKey) menuEl.querySelector("button:not(.x)")?.focus();
-}
-
-function placeMenu() {
-  const r = menuEl.getBoundingClientRect();
-  const p = clampMenu(
-    menu.x,
-    menu.y,
-    r.width,
-    r.height,
-    innerWidth,
-    innerHeight,
-  );
-  menuEl.style.left = `${p.x}px`;
-  menuEl.style.top = `${p.y}px`;
-}
-
-function menuKey(e, items) {
-  if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) {
-    openMenu(e, items, true);
-  }
-}
-
-function closeMenu() {
-  menu = null;
-  menuCur = null;
-  menuReturn?.focus();
-  menuReturn = null;
-}
-
-function hideMenu() {
-  menuEl?.hidePopover();
-  closeMenu();
-}
-
 $effect(() => {
-  if (!menu) return;
-  const onDown = (ev) => {
-    if (menuEl?.contains(ev.target)) return;
-    noteOutside(ev);
-    hideMenu();
-  };
-  const onKey = (ev) => (ev.key === "Escape" ? hideMenu() : menuNav(ev));
-  addEventListener("pointerdown", onDown, true);
-  addEventListener("keydown", onKey, true);
-  const onScroll = (ev) => menuEl?.contains(ev.target) || hideMenu();
-  addEventListener("scroll", onScroll, true);
-  return () => {
-    removeEventListener("pointerdown", onDown, true);
-    removeEventListener("keydown", onKey, true);
-    removeEventListener("scroll", onScroll, true);
-  };
-});
-
-function runItem(item, e) {
-  if (!item.keep) menuEl?.hidePopover();
-  item.fn(e);
-}
-
-// ← goes back, → opens a session's actions: the agent popover's drill-down.
-// The menu item under focus, else under the pointer; its session is what
-// t / c / l act on.
-let menuCur = $state(null);
-const curItem = () => {
-  const i = menuEl?.contains(document.activeElement) &&
-    document.activeElement.dataset.i;
-  return i ? menu?.items[+i] : menuCur;
-};
-const menuSession = () => menu && (menu.session ?? curItem()?.agent);
-
-// ↑ ↓ (and whatever moves between worktrees) step through items; → opens a
-// session's actions, ← goes back. Runs in capture so a menu opened with the
-// mouse navigates too, and j / k move here instead of between worktrees.
-function menuNav(e) {
-  const k = combo(e);
-  const step = k === "arrowdown" || keymap.byId["next-wt"]?.includes(k)
-    ? 1
-    : k === "arrowup" || keymap.byId["prev-wt"]?.includes(k)
-    ? -1
-    : 0;
-  const back = menu?.items.find((x) => x.back);
-  if (step) {
-    const bs = [...menuEl.querySelectorAll("button:not(:disabled, .more, .x)")];
-    const i = bs.indexOf(document.activeElement);
-    bs.at(i < 0 ? (step > 0 ? 0 : -1) : (i + step) % bs.length)?.focus();
-  } else if (k === "arrowleft" && back) back.fn(e);
-  else if (k === "arrowright" && curItem()?.more) curItem().more(e);
-  else return;
-  e.preventDefault();
-  e.stopPropagation();
-}
-
-async function showCard(w, x, y, kind = "pr") {
-  card = { path: w.path, x, y, kind };
-  await tick();
-  if (!cardEl || !card) return;
-  if (!cardEl.matches(":popover-open")) cardEl.showPopover();
-  placeCard();
-}
-// A plain click on the PR pill opens its card, as the agent badge opens its
-// menu; a modified click still follows the link to GitHub.
-async function openCard(w, e, kind = "pr") {
-  e.stopPropagation();
-  if (e.metaKey || e.ctrlKey || e.shiftKey) return;
-  e.preventDefault();
-  if (reopens(e)) return;
-  if (menu) hideMenu();
-  const box = e.currentTarget.getBoundingClientRect();
-  cardReturn = e.detail === 0 ? e.currentTarget : null;
-  await showCard(w, Math.round(box.left), Math.round(box.bottom + 4), kind);
-  if (cardReturn) {
-    cardEl?.querySelector(asking ? ".practs .btn" : "a, button")?.focus();
-  }
-}
-function placeCard() {
-  if (!cardEl || !card) return;
-  const r = cardEl.getBoundingClientRect();
-  const p = clampMenu(
-    card.x,
-    card.y,
-    r.width,
-    r.height,
-    innerWidth,
-    innerHeight,
-  );
-  cardEl.style.left = `${p.x}px`;
-  cardEl.style.top = `${p.y}px`;
-}
-function hideCard() {
-  cardEl?.hidePopover();
-  card = null;
-  asking = null;
-  cardReturn?.focus();
-  cardReturn = null;
-}
-
-$effect(() => {
-  if (!card) return;
+  if (!card.shown) return;
   const outside = (ev) => {
-    if (cardEl?.contains(ev.target)) return;
+    if (card.el?.contains(ev.target)) return;
     if (ev.type === "pointerdown") noteOutside(ev);
     hideCard();
   };
@@ -1541,7 +1304,7 @@ const runFor = (c) =>
   !c.startedAt
     ? c.bucket === "pending" ? "queued" : "–"
     : c.bucket === "pending"
-    ? `${dur(now - c.startedAt)}…`
+    ? `${dur(ui.now - c.startedAt)}…`
     : dur((c.completedAt ?? c.startedAt) - c.startedAt);
 
 function wtItems(w, solo = false) {
@@ -1556,7 +1319,7 @@ function wtItems(w, solo = false) {
     !many && { label: "Open", fn: () => selectWt(w.path) },
     !many && {
       label: "Open terminal here",
-      kbd: w === selWt && !selDir && !file && kbdOf("open-terminal"),
+      cmd: w === selWt && !selDir && !file && "open-terminal",
       fn: (e) => act("terminal", { wt: w.path }, "term:" + w.path, e),
     },
     !many && "-",
@@ -1593,7 +1356,7 @@ function wtItems(w, solo = false) {
     },
     !many && w.ticket && {
       label: "Copy ticket link",
-      kbd: w === selWt && kbdOf("copy-ticket"),
+      cmd: w === selWt && "copy-ticket",
       fn: (e) => copy(e, w.ticket.url, "ctx"),
     },
     !many && repoOf(w)?.webUrl && (!w.remote || w.ahead > 0) && {
@@ -1644,7 +1407,7 @@ function wtItems(w, solo = false) {
     },
     !many && !w.isPrimary && (w.autoRebase || w.pr?.state !== "MERGED") && {
       label: w.autoRebase ? "Disable auto-rebase" : "Enable auto-rebase",
-      kbd: w === selWt && kbdOf("auto-rebase"),
+      cmd: w === selWt && "auto-rebase",
       fn: (e) => toggleAutoRebase(w, e),
     },
     !many && w.ticket?.info && (w.autoClose || w.pr?.state === "OPEN") && {
@@ -1745,18 +1508,6 @@ async function resume(a, e) {
 const terminal = (a, e) =>
   act("agent-terminal", { agent: a.agent, id: a.id }, "at:" + a.id, e);
 
-// Swaps the open menu's items in place: the agent popover's drill-down.
-async function drill(items, e, session = null) {
-  if (!menu) return;
-  menuCur = null;
-  menu = { ...menu, session, items: trimSeps(items.filter(Boolean)) };
-  await tick();
-  placeMenu();
-  if (e?.detail === 0) {
-    menuEl?.querySelector("button:not(:disabled, .x)")?.focus();
-  }
-}
-
 const tagOf = (w, a) =>
   sessionTag(
     w.agents.findIndex((x) => sKey(x) === sKey(a)),
@@ -1821,7 +1572,7 @@ function sessionActions(w, s) {
     { label: `Open in ${a.label}`, kbd: "↩", fn: (e) => resume(a, e) },
     {
       label: "Resume in terminal",
-      kbd: kbdOf("session-terminal"),
+      cmd: "session-terminal",
       sub: clip(a.command, 56),
       tip: a.command,
       fn: (e) => terminal(a, e),
@@ -1829,13 +1580,13 @@ function sessionActions(w, s) {
     "-",
     {
       label: "Copy session ID",
-      kbd: kbdOf("session-copy-id"),
+      cmd: "session-copy-id",
       sub: a.id,
       fn: (e) => copy(e, a.id, "ctx"),
     },
     {
       label: "Copy resume link",
-      kbd: kbdOf("session-copy-link"),
+      cmd: "session-copy-link",
       sub: clip(a.url, 56),
       fn: (e) => copy(e, full(a).url, "ctx", "resume link"),
     },
@@ -1852,17 +1603,17 @@ function agentItems(w) {
     {
       agent: a,
       label: `Resume ${a.label} session`,
-      kbd: w === selWt && kbdOf("agent-resume"),
+      cmd: w === selWt && "agent-resume",
       sub: clip(a.title || shortId(a.id)),
       tip: agentTip(a),
       fn: (e) => resume(a, e),
     },
     {
       label: rest.length ? "Agent sessions…" : "Session actions…",
-      kbd: w === selWt && kbdOf("agent-sessions"),
+      cmd: w === selWt && "agent-sessions",
       keep: true,
       fn: (e) =>
-        !menu
+        !menu.shown
           ? clickCell(w, "agent")
           : rest.length
           ? drill(sessionItems(w), e)
@@ -1927,7 +1678,7 @@ function fileItems(f, mode) {
   return [
     {
       label: "Open terminal here",
-      kbd: cur && kbdOf("open-terminal"),
+      cmd: cur && "open-terminal",
       fn: (e) =>
         act(
           "terminal",
@@ -1938,18 +1689,18 @@ function fileItems(f, mode) {
     },
     {
       label: "Reveal in Finder",
-      kbd: cur && kbdOf("reveal"),
+      cmd: cur && "reveal",
       fn: (e) => act("reveal", { wt: sel, path: f.path }, "reveal:" + sel, e),
     },
     "-",
     {
       label: "Copy path (relative)",
-      kbd: file === f.path && kbdOf("copy-path"),
+      cmd: file === f.path && "copy-path",
       fn: (e) => copy(e, f.path, f.path + ":r"),
     },
     {
       label: "Copy path (absolute)",
-      kbd: file === f.path && kbdOf("copy-path-abs"),
+      cmd: file === f.path && "copy-path-abs",
       fn: (e) => copy(e, sel + "/" + f.path, f.path + ":a"),
     },
     "-",
@@ -1970,7 +1721,7 @@ function fileItems(f, mode) {
     { label: "Rename", fn: (e) => startRename(f, e) },
     {
       label: "Move to Trash",
-      kbd: cur && kbdOf("trash"),
+      cmd: cur && "trash",
       danger: true,
       fn: (e) => discardArm({ path: f.path, del: true }, e),
     },
@@ -1983,61 +1734,6 @@ async function createWt(r) {
   if (await act("wt-create", { repo: r.name, slug: s }, "new:" + r.name)) {
     creating = null;
     slug = "";
-  }
-}
-
-async function applyTheme(name, save = true) {
-  const st = document.documentElement.style;
-  let resolved = { vars: {}, dark: null };
-  if (name !== "default") {
-    busy.theme = true;
-    try {
-      const r = await fetch(`/api/theme?name=${encodeURIComponent(name)}`);
-      if (!r.ok) return errBanner(await r.text());
-      resolved = resolveTheme(parseThemeText(await r.text()));
-    } catch (e) {
-      return errBanner(`theme failed to load: ${e.message ?? e}`);
-    } finally {
-      delete busy.theme;
-    }
-  }
-  for (const p of [...st].filter((p) => p.startsWith("--"))) {
-    st.removeProperty(p);
-  }
-  st.removeProperty("color-scheme");
-  for (const [k, v] of Object.entries(resolved.vars)) st.setProperty(k, v);
-  if (resolved.dark !== null) {
-    st.setProperty("color-scheme", resolved.dark ? "dark" : "light");
-  }
-  setFavicon(resolved.vars);
-  try {
-    localStorage.setItem("forest-theme", JSON.stringify(resolved));
-  } catch {}
-  prefs.theme = name;
-  if (save) saveLayout();
-}
-
-async function importTheme(e) {
-  const f = e.target.files[0];
-  e.target.value = "";
-  if (!f) return;
-  const text = await f.text();
-  try {
-    resolveTheme(parseThemeText(text));
-  } catch (err) {
-    return errBanner(`not a VS Code color theme: ${err.message ?? err}`);
-  }
-  const name = f.name.replace(/\.jsonc?$/i, "");
-  if (await act("theme-import", { name, json: text }, "theme")) {
-    themes = await (await fetch("/api/themes")).json();
-    applyTheme(name);
-  }
-}
-
-async function importVsTheme(hit) {
-  if (await act("theme-import", { path: hit.path }, "theme")) {
-    themes = await (await fetch("/api/themes")).json();
-    applyTheme(hit.name);
   }
 }
 
@@ -2092,18 +1788,10 @@ const focusedWt = () => {
   return path && allWts.find((w) => w.path === path && !w.isPrimary);
 };
 
-// Opens a row's agent menu or PR card from its cell, as a click would.
-async function clickCell(w, col) {
-  await scrollRow(w.path);
-  document.querySelector(
-    `.wt[data-path="${CSS.escape(w.path)}"] [data-col="${col}"] :is(a, button)`,
-  )?.click();
-}
-
 // Runs a t / c / l action on the popover's session, then closes the popover.
 function onSession(fn) {
   const a = menuSession();
-  menuEl?.hidePopover();
+  menu.el?.hidePopover();
   fn(a);
 }
 const COMMANDS = [
@@ -2124,7 +1812,7 @@ const COMMANDS = [
     id: "settings",
     label: "Settings",
     keys: "cmd+comma",
-    run: () => settingsDlg.toggle(),
+    run: () => ui.refs.settings.toggle(),
   },
   {
     id: "next-wt",
@@ -2160,7 +1848,7 @@ const COMMANDS = [
     section: "Worktrees",
     keys: "alt+cmd+r",
     when: () =>
-      liveWt() && !selWt.isPrimary && !busy["ar:" + selWt.path] &&
+      liveWt() && !selWt.isPrimary && !ui.busy["ar:" + selWt.path] &&
       (selWt.autoRebase || selWt.pr?.state !== "MERGED"),
     run: (e) => toggleAutoRebase(selWt, e),
   },
@@ -2388,6 +2076,7 @@ $effect(() => {
 const asPalette = (items, detail) =>
   items.filter((i) => i && i !== "-").map((i) => ({
     ...i,
+    kbd: i.kbd || (i.cmd && kbdOf(i.cmd)),
     group: "action",
     detail,
   }));
@@ -2489,7 +2178,7 @@ const paletteItems = $derived.by(() => {
     ...COMMANDS.filter((c) => c.id !== "palette" && (!c.when || c.when()))
       .map((c) => cmd(c.label, c.run, kbdOf(c.id))),
     {
-      ...cmd("Theme…", () => settingsDlg.open()),
+      ...cmd("Theme…", () => ui.refs.settings.open()),
       sub: () =>
         ["default", ...themes].map((name) => cmd(name, () => applyTheme(name))),
     },
@@ -2559,14 +2248,14 @@ async function confirmDiscard() {
             aria-label={unread ? `Notifications, ${unread} unread` : "Notifications"}>
       <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
       {#if unread}<span class="n">{unread > 99 ? "99+" : unread}</span>{/if}</button>
-    <button class="circ" title="Settings {kbdOf('settings') ?? ''}" aria-label="Settings" onclick={() => settingsDlg.open()}>
+    <button class="circ" title="Settings {kbdOf('settings') ?? ''}" aria-label="Settings" onclick={() => ui.refs.settings.open()}>
       <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg></button>
   </div>
 
-  {#if banner}
-    <div class="banner t-band" data-tone={banner.kind}>
-      <span>{banner.text}</span><span class="sp"></span>
-      {#each banner.actions as a (a.label)}
+  {#if ui.banner}
+    <div class="banner t-band" data-tone={ui.banner.kind}>
+      <span>{ui.banner.text}</span><span class="sp"></span>
+      {#each ui.banner.actions as a (a.label)}
         <button class="btn" class:p={a.primary} onclick={a.fn}>{a.label}</button>
       {/each}
     </div>
@@ -2758,7 +2447,7 @@ async function confirmDiscard() {
           <!-- svelte-ignore a11y_autofocus -->
           <input class="filter" autofocus placeholder="Branch or slug" bind:value={slug}
                  onkeydown={(e) => { if (e.key === "Enter") createWt(r); if (e.key === "Escape") creating = null; }}>
-          <button class="btn" class:wait={busy["new:" + r.name]} disabled={busy["new:" + r.name]}
+          <button class="btn" class:wait={ui.busy["new:" + r.name]} disabled={ui.busy["new:" + r.name]}
                   onclick={() => createWt(r)}>Create</button>
         </div>
       {/if}
@@ -3041,7 +2730,7 @@ async function confirmDiscard() {
         <b>Source</b>
       {/if}
       <span class="sp"></span>
-      {#if diskAt && now - diskAt < 60_000}
+      {#if diskAt && ui.now - diskAt < 60_000}
         <span class="meta" title={new Date(diskAt).toLocaleTimeString()}>Updated {ago(diskAt)}</span>
       {/if}
       {#if diffDirty}
@@ -3049,7 +2738,7 @@ async function confirmDiscard() {
         <button class="btn ib p" title="Save" aria-label="Save" onclick={() => diffRef?.save()}>
           <Icon d={ICON.save} /></button>
         <button class="btn ib" title="Discard editor changes, reload from disk" aria-label="Discard"
-                onclick={() => { banner = null; diffRef?.reloadTheirs(); }}>
+                onclick={() => { ui.banner = null; diffRef?.reloadTheirs(); }}>
           <Icon d={ICON.undo} /></button>
       {/if}
       {#if mode === "text" && !srcBinary}
@@ -3122,40 +2811,10 @@ async function confirmDiscard() {
   </div>
   </div>
   {/if}
-  <div class="ctx" popover="manual" bind:this={menuEl}
-       ontoggle={(e) => e.newState === "closed" && closeMenu()}>
-    {#each menu?.items ?? [] as it, i (i)}
-      {#if it === "-"}
-        <hr>
-      {:else if it.head}
-        <div class="grp">{it.head}{#if i === 0 && menu.closable}<button class="circ x" title="Close (Esc)"
-          aria-label="Close" onclick={hideMenu}><Icon d={ICON.x} /></button>{/if}</div>
-      {:else}
-        {#snippet item()}
-          <button class:dg={it.danger} disabled={it.disabled} title={it.tip}
-                  onclick={(e) => runItem(it, e)}
-                  data-i={i}
-                  onpointerenter={() => (menuCur = it)}
-                  oncontextmenu={(e) => { if (it.more) { e.preventDefault(); it.more(e); } }}
-                  >{#if it.agent}<span class="ag"
-                  style="--ag: var(--{it.agent.tone})">{it.agent.glyph}</span>{/if}{it.label}{#if
-                  it.tag}<span class="mtag" class:lead={it.tag === "created"}>{it.tag}</span>{/if}{#if it.kbd}<kbd>{it.kbd}</kbd>{/if}{#if it.sub}<small>{it.sub}</small>{/if}</button>
-        {/snippet}
-        {#if it.more}
-          <div class="split">
-            {@render item()}
-            <button class="more" tabindex="-1" title="Session actions"
-                    aria-label="Session actions" onclick={(e) => it.more(e)}>›</button>
-          </div>
-        {:else}
-          {@render item()}
-        {/if}
-      {/if}
-    {/each}
-  </div>
+  <Menu {kbdOf} {keymap} />
   <div class="ctx card" popover="manual" role="dialog" aria-label="Pull request"
-       bind:this={cardEl}>
-    {#if card?.kind === "ticket" && cardWt?.ticket?.info}
+       bind:this={card.el}>
+    {#if card.shown?.kind === "ticket" && cardWt?.ticket?.info}
       {@const t = cardWt.ticket}
       {@const ti = t.info}
       <div class="top">
@@ -3171,7 +2830,7 @@ async function confirmDiscard() {
       {#if ti.actions?.length}
         <section class="practs">
           {#each ti.actions as to (to)}
-            <button class="btn" class:wait={busy["tk:" + cardWt.path]?.to === to} disabled={busy["tk:" + cardWt.path]}
+            <button class="btn" class:wait={ui.busy["tk:" + cardWt.path]?.to === to} disabled={ui.busy["tk:" + cardWt.path]}
                     onclick={(e) => act("ticket", { wt: cardWt.path, to }, "tk:" + cardWt.path, e)}>Mark {to.replace(/_/g, " ")}</button>
           {/each}
         </section>
@@ -3179,7 +2838,7 @@ async function confirmDiscard() {
       {#if cardWt.autoClose || cardWt.pr?.state === "OPEN"}
         <section>
           <label class="r">
-            <input type="checkbox" class="cbxin" checked={!!cardWt.autoClose} disabled={busy["ac:" + cardWt.path]}
+            <input type="checkbox" class="cbxin" checked={!!cardWt.autoClose} disabled={ui.busy["ac:" + cardWt.path]}
                    onchange={(e) => toggleAutoClose(cardWt, e)}>
             <span class="cbx" class:on={!!cardWt.autoClose}></span>Close {t.key} on merge
           </label>
@@ -3216,18 +2875,18 @@ async function confirmDiscard() {
       </div>
       {@const acts = prActions(w)}
       {#if acts.length}
-        {@const ask = asking?.path === w.path &&
-          acts.find((a) => a.key === asking.key)}
+        {@const ask = card.asking?.path === w.path &&
+          acts.find((a) => a.key === card.asking.key)}
         <section class="practs">
           {#if ask}
             <span class="q">{ask.confirm}</span>
-            <button class="btn {ask.cls}" class:wait={ask.wait} disabled={busy["ps:" + w.path]}
+            <button class="btn {ask.cls}" class:wait={ask.wait} disabled={ui.busy["ps:" + w.path]}
                     onclick={(e) => runAction(ask, w, e)}>{ask.label}</button>
-            <button class="btn" onclick={() => (asking = null)}>Cancel</button>
+            <button class="btn" onclick={() => (card.asking = null)}>Cancel</button>
           {:else}
             {#each acts as a (a.key)}
               <button class="btn {a.cls}" class:wait={a.wait}
-                      disabled={busy["ps:" + w.path] || busy["ub:" + w.path]}
+                      disabled={ui.busy["ps:" + w.path] || ui.busy["ub:" + w.path]}
                       onclick={(e) => runAction(a, w, e)}>{a.label}</button>
             {/each}
           {/if}
@@ -3248,17 +2907,17 @@ async function confirmDiscard() {
           <div class="r" data-tone={behind ? "warn" : "off"}>
             <span>{behind ? `↓${behind} behind` : "Up to date with"} {p.baseRefName}</span>
             {#if behind > 0 && !p.queue}
-              <button class="btn" class:wait={busy["ub:" + w.path]} disabled={busy["ub:" + w.path]}
+              <button class="btn" class:wait={ui.busy["ub:" + w.path]} disabled={ui.busy["ub:" + w.path]}
                       onclick={(e) => updateBranch(w, e)}>Update branch</button>
             {/if}
           </div>
           <label class="r">
-            <input type="checkbox" class="cbxin" checked={p.autoMerge} disabled={busy["am:" + w.path]}
+            <input type="checkbox" class="cbxin" checked={p.autoMerge} disabled={ui.busy["am:" + w.path]}
                    onchange={(e) => toggleAutoMerge(w, e)}>
             <span class="cbx" class:on={p.autoMerge}></span>Auto-merge (squash)
           </label>
           <label class="r">
-            <input type="checkbox" class="cbxin" checked={!!w.autoRebase} disabled={busy["ar:" + w.path]}
+            <input type="checkbox" class="cbxin" checked={!!w.autoRebase} disabled={ui.busy["ar:" + w.path]}
                    onchange={(e) => toggleAutoRebase(w, e)}>
             <span class="cbx" class:on={!!w.autoRebase}></span>Auto-rebase
           </label>
@@ -3267,7 +2926,7 @@ async function confirmDiscard() {
           {/if}
           {#if w.ticket?.info}
             <label class="r">
-              <input type="checkbox" class="cbxin" checked={!!w.autoClose} disabled={busy["ac:" + w.path]}
+              <input type="checkbox" class="cbxin" checked={!!w.autoClose} disabled={ui.busy["ac:" + w.path]}
                      onchange={(e) => toggleAutoClose(w, e)}>
               <span class="cbx" class:on={!!w.autoClose}></span>Close {w.ticket.key} on merge
             </label>
@@ -3396,9 +3055,9 @@ async function confirmDiscard() {
       }}>Opened {clip(opened.title || "session", 40)} in {full(opened).label}
         <span class="dim">· click to copy resume command</span></button>
     {/if}
-    {#if toast}
-      <div class="toast" onclick={() => (toast = "")} role="presentation">
-        copied <span class="mono">{toast}</span> to clipboard
+    {#if ui.toast}
+      <div class="toast" onclick={() => (ui.toast = "")} role="presentation">
+        copied <span class="mono">{ui.toast}</span> to clipboard
       </div>
     {/if}
   </div>
@@ -3423,8 +3082,7 @@ async function confirmDiscard() {
 <Shortcuts commands={COMMANDS} {keymap} onbind={bindKey}
   bind:open={shortcutsOpen} />
 
-<Settings bind:this={settingsDlg} {busy} {themes} {repos} {applyTheme}
-  {importTheme} {importVsTheme} {kbdOf}
+<Settings bind:this={ui.refs.settings} {repos} {kbdOf}
   onshortcuts={() => (shortcutsOpen = true)} />
 
 <style>
@@ -3458,12 +3116,6 @@ async function confirmDiscard() {
 }
 .card .ago + .x {
   margin-left: 0;
-}
-.ctx .grp:has(.x) {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding-top: 0.25rem;
 }
 .bell {
   position: relative;
