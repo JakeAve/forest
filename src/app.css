@@ -581,17 +581,6 @@ input.ren {
 .selbar b.pre {
   white-space: pre;
 }
-input.filter.open {
-  flex: 1;
-  font-family: var(--mono);
-  anchor-name: --open-box;
-  border-radius: 0.75rem;
-  transition: border-radius 0.12s;
-}
-input.filter.open.grown {
-  border-radius: 0.75rem 0.75rem 0 0;
-  border-bottom-color: var(--line);
-}
 input.filter:focus {
   border-color: var(--acc);
 }
