@@ -140,3 +140,10 @@ export async function importVsTheme(hit) {
     applyTheme(hit.name);
   }
 }
+
+export function renameField(el) {
+  el.focus();
+  const start = el.value.lastIndexOf("/") + 1;
+  const dot = el.value.lastIndexOf(".");
+  el.setSelectionRange(start, dot > start ? dot : el.value.length);
+}
