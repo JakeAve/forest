@@ -2,7 +2,7 @@ import { assertEquals } from "@std/assert";
 
 const MAX_LINES = 700;
 // Lower each entry as code moves out; delete it once the file is under the cap.
-const RATCHET: Record<string, number> = { "App.svelte": 3006 };
+const RATCHET: Record<string, number> = { "App.svelte": 2508 };
 
 // A layered module may import only modules in lower layers. Unknown modules are
 // unlayered and unchecked.
@@ -12,7 +12,8 @@ const LAYERS = [
   ["menu"],
   ["rows"],
   ["nav"],
-  ["agents", "wtActions"],
+  ["agents"],
+  ["wtActions"],
   ["commands"],
 ];
 const layerOf = (mod: string) => LAYERS.findIndex((l) => l.includes(mod));

@@ -11,8 +11,8 @@ paths: ["src/**/*.svelte", "src/**/*.svelte.js", "src/app.css"]
 - State read by more than one component lives in a `src/*.svelte.js` module as
   one exported class instance (`$state`/`$derived` fields) plus plain functions;
   no props drilling, no context. State one component uses stays in it. Modules
-  import downward only: prefs ← ui ← menu ← rows ← nav ← agents/wtActions ←
-  commands ← components (`ui_test.ts` enforces it). No `$effect` in modules.
+  import downward only: prefs ← ui ← menu ← rows ← nav ← agents ← wtActions
+  ← commands ← components (`ui_test.ts` enforces it). No `$effect` in modules.
 - `.svelte` and `.svelte.js` files hold no logic with edge cases: tests can't
   import them. Formatting, parsing, ranking and layout math go in `parse.ts`,
   `src/filter.js`, `src/theme.js` or `src/keys.js` with a test.

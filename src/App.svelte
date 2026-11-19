@@ -13,7 +13,6 @@ import Notify from "./Notify.svelte";
 import { matchPath, pathText, rank, rankBy, wtScore } from "./filter.js";
 import {
   ancestorDirs,
-  branchUrl,
   bucket,
   bucketSummary,
   colsMin,
@@ -50,7 +49,6 @@ import {
   isX,
   loadLayout,
   loadSettings,
-  MODES,
   moveCol,
   paneSize,
   prefs,
@@ -77,7 +75,6 @@ import {
   ui,
 } from "./ui.svelte.js";
 import {
-  askInCard,
   hideMenu,
   menu,
   menuKey,
@@ -100,7 +97,30 @@ import {
   toggleRepo,
 } from "./rows.svelte.js";
 import {
-  agentItems,
+  confirmDiscard,
+  discardArm,
+  dropPath,
+  fileItems,
+  land,
+  loadFiles,
+  loadOpenDirs,
+  nav,
+  onFs,
+  onReady,
+  onRows,
+  op,
+  openAt,
+  openPath,
+  pick,
+  renameKey,
+  reveal,
+  selectWt,
+  setBase,
+  startRename,
+  toggleDir,
+  urlQuery,
+} from "./nav.svelte.js";
+import {
   agents,
   badgeTip,
   full,
@@ -112,18 +132,14 @@ import {
 } from "./agents.svelte.js";
 import {
   allItems,
-  killItem,
-  prActions,
   procItems,
   procPreview,
   procTip,
-  push,
   rebase,
   repoItems,
   rowBusy,
-  toggleAutoClose,
-  toggleAutoMerge,
   toggleAutoRebase,
+  wtItems,
 } from "./wtActions.js";
 
 loadSettings();
@@ -137,18 +153,6 @@ $effect(() => {
 
 const MODE_LABEL = { text: "Text", preview: "Preview", hex: "Hex" };
 
-let sel = $state(null);
-let files = $state([]);
-let filesOf = $state(null);
-let file = $state(null);
-let base = $state("branch");
-let explore = $state(false);
-let loose = $state(false);
-let tree = $state([]);
-let treeDirs = $state([]);
-let treeIgnored = $state([]);
-let loadedDirs = $state({});
-let treeOf = $state(null);
 let openEl = $state();
 let editingPath = $state(false);
 let completions = $state([]);
@@ -156,74 +160,37 @@ let completeHi = $state(-1);
 let growEl = $state();
 /** The inline new-entry row: the folder it sits in, its text, a refusal. */
 let drafting = $state(null);
-let renaming = $state(null);
-let headRename = $state(false);
-let selDir = $state(null);
-let openDirs = $state({});
 let showDiff = $state(false);
-let srcBinary = $state(false);
 let previewSrc = $state("");
 let previewReady = $state(false);
 let srcBodyEl = $state();
 let rawView = null;
-let fq = $state("");
 let lq = $state("");
 let findEl = $state();
 let wtFilterEl = $state();
 let fileFilterEl = $state();
 let found = $state({ i: 0, n: 0 });
 let diffRef = $state();
-let diffDirty = $state(false);
-let diffTick = $state(0);
 // Dismissing hides this text; a different failure shows again.
 let prOffHidden = $state("");
-let discarding = $state(null);
-let fresh = $state({}); // rel path -> when it last changed on disk, for the row flash
 let srcInfo = $state(null);
 let diskAt = $state(0); // when the open file last changed on disk
 let b1El = $state(), b2El = $state();
-let pendingLine = $state(0);
 let notify = $state();
-let restored = false;
-const initialParams = new URLSearchParams(location.search);
-let restoring = $state(initialParams.has("path") || initialParams.has("wt"));
-let markBooted;
-const booted = new Promise((r) => (markBooted = r));
 loadThemes();
 loadAgents();
 
-const selWt = $derived(
-  rows.repos.flatMap((r) => r.worktrees).find((w) => w.path === sel),
-);
-const selFile = $derived(files.find((f) => f.path === file));
-const isHtml = $derived(/\.html?$/i.test(file ?? ""));
-const isMd = $derived(/\.(md|markdown)$/i.test(file ?? ""));
-const isSvg = $derived(/\.svg$/i.test(file ?? ""));
-const isPdf = $derived(/\.pdf$/i.test(file ?? ""));
-const mediaType = $derived(
-  /\.(png|jpe?g|gif|webp|avif|ico|bmp)$/i.test(file ?? "")
-    ? "img"
-    : /\.(mp4|webm|mov|m4v|ogv)$/i.test(file ?? "")
-    ? "video"
-    : /\.(mp3|wav|ogg|oga|m4a|aac|flac|opus)$/i.test(file ?? "")
-    ? "audio"
-    : isPdf
-    ? "pdf"
-    : null,
-);
-const kind = $derived(
-  mediaType ? "media" : isHtml || isMd || isSvg ? "markup" : "text",
-);
-const mode = $derived(prefs.modes[kind]);
-const modeList = $derived(
-  kind === "text" && srcBinary ? ["hex"] : MODES[kind],
-);
-const rawSrc = $derived(rawUrl(sel ?? "", file ?? ""));
 $effect(() => {
-  void sel, void file;
+  void nav.sel;
+  drafting = null;
+});
+
+const rawSrc = $derived(rawUrl(nav.sel ?? "", nav.file ?? ""));
+$effect(() => {
+  void nav.sel, void nav.file;
   diskAt = 0;
   srcInfo = null;
-  srcBinary = false;
+  nav.srcBinary = false;
   previewSrc = "";
   previewReady = false;
   rawView = null;
@@ -265,16 +232,16 @@ ${MD_CSS}</style>${marked.parse(src, { async: false })}`;
 }
 
 function setMode(m) {
-  if (m === mode) return;
-  if (mode === "text") {
+  if (m === nav.mode) return;
+  if (nav.mode === "text") {
     rawView = { top: srcBodyEl.scrollTop, head: diffRef?.cursor() ?? 0 };
   }
-  prefs.modes[kind] = m;
+  prefs.modes[nav.kind] = m;
   saveLayout();
 }
 
 function restoreRawView() {
-  if (mode !== "text" || !rawView) return;
+  if (nav.mode !== "text" || !rawView) return;
   const { top, head } = rawView;
   rawView = null;
   diffRef?.setCursor(head);
@@ -292,20 +259,24 @@ function restoreRawView() {
 }
 
 $effect(() => {
-  if (!(mode === "preview" && (isHtml || isMd) && sel && file)) {
+  if (
+    !(nav.mode === "preview" && (nav.isHtml || nav.isMd) && nav.sel && nav.file)
+  ) {
     return void (previewReady = false);
   }
-  void diffTick, void prefs.theme;
-  const q = `wt=${encodeURIComponent(sel)}&path=${encodeURIComponent(file)}`;
-  fetch(`/api/file?${q}&base=${base}`).then((r) => r.json()).then((d) => {
+  void nav.diffTick, void prefs.theme;
+  const q = `wt=${encodeURIComponent(nav.sel)}&path=${
+    encodeURIComponent(nav.file)
+  }`;
+  fetch(`/api/file?${q}&base=${nav.base}`).then((r) => r.json()).then((d) => {
     const raw = d.work ?? d.base ?? "";
-    const next = isMd ? mdDoc(raw) : raw;
+    const next = nav.isMd ? mdDoc(raw) : raw;
     if (next !== previewSrc) previewReady = false;
     previewSrc = next;
   });
 });
 
-const shownFiles = $derived(files.filter((f) => matchPath(fq, f.path)));
+const shownFiles = $derived(nav.files.filter((f) => matchPath(nav.fq, f.path)));
 const stagedFiles = $derived(shownFiles.filter((f) => f.staged));
 const unstagedFiles = $derived(shownFiles.filter((f) => f.unstaged));
 const committedFiles = $derived(
@@ -314,16 +285,16 @@ const committedFiles = $derived(
 const sectioned = $derived(
   stagedFiles.length > 0 || committedFiles.length > 0,
 );
-const byPath = $derived(new Map(files.map((f) => [f.path, f])));
-const changedDirs = $derived(ancestorDirs(files.map((f) => f.path)));
+const byPath = $derived(new Map(nav.files.map((f) => [f.path, f])));
+const changedDirs = $derived(ancestorDirs(nav.files.map((f) => f.path)));
 const treeMatches = $derived(
-  fq ? rank(fq, tree, Infinity, pathText) : [],
+  nav.fq ? rank(nav.fq, nav.tree, Infinity, pathText) : [],
 );
 // ponytail: filter results capped at 500 rows; virtualize if that's ever too few
 const treeShown = $derived(
-  fq
+  nav.fq
     ? treeMatches.slice(0, 500).map((p) => ({ path: p, depth: 0, dir: false }))
-    : treeRows(tree, openDirs, treeDirs),
+    : treeRows(nav.tree, nav.openDirs, nav.treeDirs),
 );
 // the draft row goes first among its folder's children
 const treeView = $derived.by(() => {
@@ -349,40 +320,12 @@ $effect(() => {
   const es = new EventSource("/api/events");
   es.onopen = () => notify?.refresh();
   es.addEventListener("notify", (e) => notify?.push(JSON.parse(e.data)));
-  es.addEventListener("fs", (e) => {
-    const { wt, paths } = JSON.parse(e.data);
-    if (wt !== sel) return;
-    fresh = Object.fromEntries(paths.map((p) => [p, Date.now()]));
-    if (explore) loadTree();
-    else loadFiles();
-    if (file && paths.includes(file)) diffTick++;
-  });
+  es.addEventListener("fs", (e) => onFs(JSON.parse(e.data)));
   es.addEventListener("status", (e) => {
     rows.boot = JSON.parse(e.data);
-    if (rows.boot.phase !== "ready") return;
-    markBooted();
-    if (loose && sel) fetch(`/api/open?path=${encodeURIComponent(sel)}`);
+    if (rows.boot.phase === "ready") onReady();
   });
-  es.onmessage = (e) => {
-    const next = JSON.parse(e.data);
-    const prev = applyRows(next);
-    if (!restored) {
-      restored = true;
-      restoreUrl();
-    }
-    if (
-      sel && !loose &&
-      !next.flatMap((r) => r.worktrees).some((w) => w.path === sel)
-    ) {
-      sel = null;
-      file = null;
-      files = [];
-    } else if (sel && rows.touched[sel] && prev.get(sel) !== undefined) {
-      loadFiles();
-      if (explore) loadTree();
-      diffTick++;
-    }
-  };
+  es.onmessage = (e) => onRows(applyRows(JSON.parse(e.data)));
   return () => es.close();
 });
 
@@ -395,58 +338,9 @@ $effect(() => {
   return () => clearInterval(tick);
 });
 
-async function restoreUrl() {
-  const line = Math.max(0, Math.floor(Number(initialParams.get("line")) || 0));
-  const path = initialParams.get("path");
-  if (path) {
-    try {
-      await booted;
-      await openPath(path);
-      const f = initialParams.get("file");
-      if (f && loose) {
-        file = f;
-        reveal(f);
-        pendingLine = line;
-        scrollRow(f);
-      }
-    } finally {
-      restoring = false;
-    }
-    return;
-  }
-  restoring = false;
-  const wt = initialParams.get("wt");
-  if (
-    !wt || !rows.repos.flatMap((r) => r.worktrees).some((w) => w.path === wt)
-  ) {
-    return;
-  }
-  base = initialParams.get("base") === "head" ? "head" : "branch";
-  explore = initialParams.get("tree") === "1";
-  sel = wt;
-  file = initialParams.get("file") || null;
-  if (explore) {
-    reveal(file);
-    loadTree().then(() => scrollRow(file));
-  }
-  pendingLine = line;
-  loadFiles();
-}
-
 $effect(() => {
-  if (restoring) return;
-  const q = new URLSearchParams();
-  if (sel && loose) {
-    q.set("path", sel);
-    if (file) q.set("file", file);
-    if (pendingLine) q.set("line", pendingLine);
-  } else if (sel) {
-    q.set("wt", sel);
-    if (file) q.set("file", file);
-    q.set("base", base);
-    if (explore) q.set("tree", "1");
-    if (pendingLine) q.set("line", pendingLine);
-  }
+  if (nav.restoring) return;
+  const q = urlQuery();
   history.replaceState(
     null,
     "",
@@ -454,89 +348,23 @@ $effect(() => {
   );
 });
 
-async function loadFiles() {
-  const wt = sel;
-  if (loose) {
-    files = [];
-    filesOf = wt;
-    return;
-  }
-  const res = await fetch(
-    `/api/files?wt=${encodeURIComponent(wt)}&base=${base}`,
-  );
-  const data = await res.json();
-  if (sel !== wt) return;
-  files = data.files;
-  filesOf = wt;
-  if (!explore && !files.some((f) => f.path === file)) {
-    file = files[0]?.path ?? null;
-  }
-}
-
-async function loadTree() {
-  const wt = sel;
-  const t = await (await fetch(`/api/tree?wt=${encodeURIComponent(wt)}`))
-    .json();
-  if (sel !== wt) return;
-  tree = t.files;
-  treeDirs = t.dirs;
-  treeIgnored = t.ignored;
-  loadedDirs = {};
-  treeOf = wt;
-  await loadOpenDirs();
-}
-
-async function loadOpenDirs() {
-  for (;;) {
-    const todo = treeDirs.filter((d) => openDirs[d] && !loadedDirs[d]);
-    if (!todo.length) return;
-    await Promise.all(todo.map(loadDir));
-  }
-}
-
-async function loadDir(dir) {
-  const wt = sel;
-  loadedDirs[dir] = true;
-  const q = `wt=${encodeURIComponent(wt)}&dir=${encodeURIComponent(dir)}`;
-  const t = await (await fetch(`/api/tree?${q}`)).json().catch(() => ({}));
-  if (sel !== wt || !t.files) return;
-  tree = [...new Set([...tree, ...t.files])];
-  treeDirs = [...new Set([...treeDirs, ...t.dirs])];
-}
-
-function reveal(path) {
-  for (const d of ancestorDirs(path ? [path] : [])) openDirs[d] = true;
-}
-
-async function openPath(text) {
-  const from = sel ? `&from=${encodeURIComponent(sel)}` : "";
-  const res = await fetch(`/api/open?path=${encodeURIComponent(text)}${from}`);
-  if (!res.ok) {
-    errBanner(await res.text());
-    return false;
-  }
-  if (ui.banner?.kind === "bad") ui.banner = null;
-  await openAt(await res.json());
-  return true;
-}
-
 async function editPath() {
   editingPath = true;
   await tick();
-  openEl.value = sel ?? "";
+  openEl.value = nav.sel ?? "";
   openEl.focus();
   openEl.select();
   completeOpen();
 }
 
 function startNew() {
-  const dir = selDir ??
-    (file?.includes("/") ? file.replace(/\/[^/]*$/, "") : "");
-  fq = "";
+  const dir = nav.selDir ??
+    (nav.file?.includes("/") ? nav.file.replace(/\/[^/]*$/, "") : "");
+  nav.fq = "";
   setBase("all");
   if (dir) {
     reveal(dir + "/");
-    if (treeOf === sel) loadOpenDirs();
+    if (nav.treeOf === nav.sel) loadOpenDirs();
   }
   drafting = { dir, name: "", err: null };
 }
@@ -565,24 +393,15 @@ async function draftKey(e) {
   const isDir = path.endsWith("/");
   const clean = path.replace(/\/+$/, "");
   drafting = null;
-  if (isDir) treeDirs = [...new Set([...treeDirs, clean])];
-  else tree = [...new Set([...tree, clean])];
-  const err = await post("new", { wt: sel, path });
+  if (isDir) nav.treeDirs = [...new Set([...nav.treeDirs, clean])];
+  else nav.tree = [...new Set([...nav.tree, clean])];
+  const err = await post("new", { wt: nav.sel, path });
   if (err) {
     dropPath(clean);
     drafting = { dir, name, err };
     return;
   }
   land(clean, isDir);
-}
-
-function startRename(f, e, head = false) {
-  e?.stopPropagation();
-  if (diffDirty && (file === f.path || file?.startsWith(f.path + "/"))) {
-    return errBanner("Unsaved edits — save or undo them before renaming.");
-  }
-  if (head) headRename = true;
-  else renaming = f.path;
 }
 
 function renameField(el) {
@@ -592,51 +411,11 @@ function renameField(el) {
   el.setSelectionRange(start, dot > start ? dot : el.value.length);
 }
 
-async function renameKey(e, from, base = from.replace(/[^/]*$/, "")) {
-  e.stopPropagation();
-  if (e.key === "Escape") return (renaming = headRename = null);
-  if (e.key !== "Enter") return;
-  const name = e.target.value.replace(/^\/+/, "");
-  const to = base + name;
-  renaming = headRename = null;
-  if (!name.trim() || to === from) return;
-  const dir = treeDirs.includes(from) ||
-    tree.some((q) => q.startsWith(from + "/"));
-  if (!await act("rename", { wt: sel, from, to }, "rename")) return;
-  dropPath(from);
-  if (explore) await loadTree();
-  land(to, dir);
-}
-
-function land(path, dir) {
-  if (dir) {
-    // ponytail: git can't list an empty dir, so it shows only until the next
-    // tree load; it sticks once a file lands in it
-    treeDirs = [...new Set([...treeDirs, path])];
-    reveal(path);
-    openDirs[path] = true;
-    selDir = path;
-  } else {
-    tree = [...new Set([...tree, path])];
-    pick({ path });
-  }
-  scrollRow(path);
-  loadFiles();
-}
-
-function dropPath(p) {
-  const gone = (q) => q === p || q.startsWith(p + "/");
-  tree = tree.filter((q) => !gone(q));
-  treeDirs = treeDirs.filter((q) => !gone(q));
-  if (file && gone(file)) file = null;
-  if (selDir && gone(selDir)) selDir = null;
-}
-
 let completeTimer;
 function completeOpen() {
   clearTimeout(completeTimer);
   completeTimer = setTimeout(async () => {
-    const from = sel ? `&from=${encodeURIComponent(sel)}` : "";
+    const from = nav.sel ? `&from=${encodeURIComponent(nav.sel)}` : "";
     const r = await fetch(
       `/api/complete?path=${encodeURIComponent(openEl.value)}${from}`,
     );
@@ -689,87 +468,9 @@ async function openBoxKey(e) {
   if (await openPath(openEl.value.trim())) editingPath = false;
 }
 
-async function openAt(r) {
-  const same = sel === r.wt;
-  loose = r.loose;
-  explore = true;
-  if (!same) {
-    selDir = null;
-    tree = [];
-    treeDirs = [];
-    treeIgnored = [];
-    loadedDirs = {};
-    treeOf = null;
-    openDirs = {};
-  }
-  sel = r.wt;
-  if (r.kind === "file") {
-    file = r.rel;
-    pendingLine = r.line;
-    reveal(r.rel);
-  } else {
-    if (r.rel) {
-      reveal(r.rel);
-      openDirs[r.rel] = true;
-    }
-    if (!same) {
-      file = null;
-      pendingLine = 0;
-    }
-  }
-  loadFiles();
-  await loadTree();
-  if (r.rel) await scrollRow(r.rel);
-}
-
 $effect(() => {
-  if (!fq) scrollRow(untrack(() => file));
+  if (!nav.fq) scrollRow(untrack(() => nav.file));
 });
-
-function selectWt(path) {
-  loose = false;
-  pendingLine = 0;
-  sel = path;
-  file = null;
-  selDir = null;
-  drafting = null;
-  tree = [];
-  treeDirs = [];
-  treeIgnored = [];
-  treeOf = null;
-  loadedDirs = {};
-  openDirs = {};
-  loadFiles();
-  if (explore) loadTree();
-}
-
-function pick(f) {
-  pendingLine = 0;
-  selDir = null;
-  file = f.path;
-  if (explore) reveal(f.path);
-}
-
-function toggleDir(path) {
-  selDir = path;
-  if (openDirs[path]) return delete openDirs[path];
-  openDirs[path] = true;
-  if (treeDirs.includes(path) && !loadedDirs[path]) loadOpenDirs();
-}
-
-function setBase(b) {
-  if (b === "all") {
-    if (explore) return;
-    explore = true;
-    if (sel) loadTree().then(() => scrollRow(file));
-    return;
-  }
-  if (base === b && !explore) return;
-  explore = false;
-  pendingLine = 0;
-  base = b;
-  if (sel) loadFiles();
-}
 
 function drag(e, n, el) {
   e.preventDefault();
@@ -922,7 +623,7 @@ const colItems = (key) => [
 function conflictBanner() {
   ui.banner = {
     kind: "warn",
-    text: `${file} changed on disk while you have unsaved edits.`,
+    text: `${nav.file} changed on disk while you have unsaved edits.`,
     actions: [
       {
         label: "Reload from disk",
@@ -935,234 +636,38 @@ function conflictBanner() {
     ],
   };
 }
-async function op(ep, body, e) {
-  await act(ep, { wt: sel, ...body }, ep, e);
-  loadFiles();
-  diffTick++;
-}
-
-function wtItems(w, solo = false) {
-  const t = !solo && rows.checked[w.path] && rows.checkedWts.length > 1
-    ? rows.checkedWts
-    : [w];
-  const many = t.length > 1;
-  const pin = t.every((x) => prefs.pinned[x.path]);
-  const branches = t.map((x) => x.branch).join("\n");
-  const paths = t.map((x) => x.path).join("\n");
-  return [
-    !many && { label: "Open", fn: () => selectWt(w.path) },
-    !many && {
-      label: "Open terminal here",
-      cmd: w === selWt && !selDir && !file && "open-terminal",
-      fn: (e) => act("terminal", { wt: w.path }, "term:" + w.path, e),
-    },
-    !many && "-",
-    ...(many ? [] : agentItems(w, w === selWt)),
-    {
-      label: many ? `Copy ${t.length} branch names` : "Copy branch name",
-      fn: (e) =>
-        copy(e, branches, "ctx", many ? `${t.length} branch names` : w.branch),
-    },
-    !many && renamed(w) && {
-      label: "Copy remote branch name",
-      fn: (e) => copy(e, w.remote, "ctx"),
-    },
-    {
-      label: many ? `Copy ${t.length} paths` : "Copy path",
-      fn: (e) => copy(e, paths, "ctx", many ? `${t.length} paths` : w.path),
-    },
-    !many && {
-      label: "Copy path (relative)",
-      fn: (e) => copy(e, relWt(repoOf(w), w), "ctx"),
-    },
-    "-",
-    !many && branchUrl(repoOf(w), w) && {
-      label: "Open remote branch",
-      fn: () => open(branchUrl(repoOf(w), w), "_blank", "noreferrer"),
-    },
-    !many && w.pr && {
-      label: `View pull request #${w.pr.number}`,
-      fn: () => open(w.pr.url, "_blank", "noreferrer"),
-    },
-    !many && w.ticket && {
-      label: `Open ticket ${w.ticket.key}`,
-      fn: () => open(w.ticket.url, "_blank", "noreferrer"),
-    },
-    !many && w.ticket && {
-      label: "Copy ticket link",
-      cmd: w === selWt && "copy-ticket",
-      fn: (e) => copy(e, w.ticket.url, "ctx"),
-    },
-    !many && repoOf(w)?.webUrl && (!w.remote || w.ahead > 0) && {
-      label: w.remote ? `Push (↑${w.ahead})` : "Push branch to remote",
-      fn: (e) => push(w, e),
-    },
-    !many && repoOf(w)?.webUrl && !w.isPrimary && !w.pr && {
-      label: "Compare & open pull request",
-      fn: async (e) => {
-        if (
-          !w.remote && !(await push(w, e))
-        ) {
-          return;
-        }
-        open(
-          `${repoOf(w).webUrl}/compare/${
-            (w.remote ?? w.branch).split("/").map(encodeURIComponent).join("/")
-          }?expand=1`,
-          "_blank",
-          "noreferrer",
-        );
-      },
-    },
-    !many && repoOf(w)?.webUrl && !w.isPrimary && !w.pr && {
-      label: "Open pull request",
-      fn: (e) =>
-        act(
-          "pr-create",
-          { wt: w.path, remote: w.remote, branch: w.branch },
-          "pc:" + w.path,
-          e,
-        ),
-    },
-    "-",
-    {
-      label: `${pin ? "Unpin" : "Pin"}${many ? ` ${t.length}` : ""}`,
-      fn: () => {
-        for (const x of t) {
-          if (pin) delete prefs.pinned[x.path];
-          else prefs.pinned[x.path] = true;
-        }
-        saveLayout();
-      },
-    },
-    !many && w.pr?.state === "OPEN" && {
-      label: w.pr.autoMerge ? "Disable auto-merge" : "Enable auto-merge",
-      fn: (e) => toggleAutoMerge(w, e),
-    },
-    !many && !w.isPrimary && (w.autoRebase || w.pr?.state !== "MERGED") && {
-      label: w.autoRebase ? "Disable auto-rebase" : "Enable auto-rebase",
-      cmd: w === selWt && "auto-rebase",
-      fn: (e) => toggleAutoRebase(w, e),
-    },
-    !many && w.ticket?.info && (w.autoClose || w.pr?.state === "OPEN") && {
-      label: w.autoClose
-        ? "Don't close ticket on merge"
-        : "Close ticket on merge",
-      fn: (e) => toggleAutoClose(w, e),
-    },
-    ...(many ? [] : prActions(w).map((a) => ({
-      label: a.confirm ? `${a.menu}…` : a.menu,
-      danger: a.cls === "dg",
-      fn: (e) => a.confirm ? askInCard(w, a, e) : a.go(e),
-    }))),
-    !many && {
-      label: w.isPrimary ? "Pull" : "Fetch + rebase",
-      fn: (e) => rebase(w, e),
-    },
-    !many && w.procs?.length > 0 && "-",
-    ...(!many ? (w.procs ?? []).map(killItem) : []),
-    !w.isPrimary && "-",
-    !w.isPrimary && {
-      label: many ? `Remove ${t.length} worktrees…` : "Remove worktree…",
-      danger: true,
-      fn: () => {
-        rows.confirmSel = false;
-        rows.confirming = t.filter((x) =>
-          !x.isPrimary && (x === w || match(repoOf(x), x))
-        );
-      },
-    },
-  ];
-}
-
-function fileItems(f, mode) {
-  const dir = f.dir ? f.path : f.path.split("/").slice(0, -1).join("/");
-  const cur = selDir ? selDir === f.path : file === f.path;
-  return [
-    {
-      label: "Open terminal here",
-      cmd: cur && "open-terminal",
-      fn: (e) =>
-        act(
-          "terminal",
-          { wt: sel, path: dir || undefined },
-          "term:" + sel,
-          e,
-        ),
-    },
-    {
-      label: "Reveal in Finder",
-      cmd: cur && "reveal",
-      fn: (e) => act("reveal", { wt: sel, path: f.path }, "reveal:" + sel, e),
-    },
-    "-",
-    {
-      label: "Copy path (relative)",
-      cmd: file === f.path && "copy-path",
-      fn: (e) => copy(e, f.path, f.path + ":r"),
-    },
-    {
-      label: "Copy path (absolute)",
-      cmd: file === f.path && "copy-path-abs",
-      fn: (e) => copy(e, sel + "/" + f.path, f.path + ":a"),
-    },
-    "-",
-    mode === "staged" && {
-      label: "Unstage",
-      fn: (e) => op("unstage", { path: f.path }, e),
-    },
-    mode === "unstaged" && {
-      label: "Stage",
-      fn: (e) => op("stage", { path: f.path }, e),
-    },
-    mode === "unstaged" && {
-      label: "Discard changes",
-      danger: true,
-      fn: (e) => discardArm(f, e),
-    },
-    "-",
-    { label: "Rename", fn: (e) => startRename(f, e) },
-    {
-      label: "Move to Trash",
-      cmd: cur && "trash",
-      danger: true,
-      fn: (e) => discardArm({ path: f.path, del: true }, e),
-    },
-  ];
-}
-
 let paletteOpen = $state(false);
 let grepQ = $state("");
 let grepHits = $state([]);
 
 async function grep(v) {
   grepQ = v;
-  const wt = sel;
+  const wt = nav.sel;
   const hits = v
     ? await fetch(
       `/api/grep?wt=${encodeURIComponent(wt)}&q=${encodeURIComponent(v)}`,
     ).then((r) => r.json())
     : [];
-  if (grepQ === v && sel === wt) grepHits = hits;
+  if (grepQ === v && nav.sel === wt) grepHits = hits;
 }
 let palTree = $state({ of: null, files: [], dirs: [] });
 
 const desktop = () => prefs.settings?.desktop;
-const hasFile = () => sel && file;
+const hasFile = () => nav.sel && nav.file;
 const termDir = () =>
-  selDir || file?.split("/").slice(0, -1).join("/") || undefined;
+  nav.selDir || nav.file?.split("/").slice(0, -1).join("/") || undefined;
 function goWt(w) {
   selectWt(w.path);
   scrollRow(w.path);
 }
 function stepWt(d) {
-  const i = rows.navWts.findIndex((w) => w.path === sel);
+  const i = rows.navWts.findIndex((w) => w.path === nav.sel);
   goWt(
     rows
       .navWts[Math.max(0, Math.min(rows.navWts.length - 1, i < 0 ? 0 : i + d))],
   );
 }
-const liveWt = () => !loose && selWt;
+const liveWt = () => !nav.loose && nav.selWt;
 const focusedWt = () => {
   const el = document.activeElement;
   const path = el?.matches(".wt, .wt .cbx") && el.closest(".wt").dataset.path;
@@ -1229,9 +734,9 @@ const COMMANDS = [
     section: "Worktrees",
     keys: "alt+cmd+r",
     when: () =>
-      liveWt() && !selWt.isPrimary && !ui.busy["ar:" + selWt.path] &&
-      (selWt.autoRebase || selWt.pr?.state !== "MERGED"),
-    run: (e) => toggleAutoRebase(selWt, e),
+      liveWt() && !nav.selWt.isPrimary && !ui.busy["ar:" + nav.selWt.path] &&
+      (nav.selWt.autoRebase || nav.selWt.pr?.state !== "MERGED"),
+    run: (e) => toggleAutoRebase(nav.selWt, e),
   },
   {
     id: "toggle-select",
@@ -1249,17 +754,23 @@ const COMMANDS = [
     label: "Open terminal here",
     section: "Worktrees",
     keys: "ctrl+backquote",
-    when: () => sel,
-    run: (e) => act("terminal", { wt: sel, path: termDir() }, "term:" + sel, e),
+    when: () => nav.sel,
+    run: (e) =>
+      act("terminal", { wt: nav.sel, path: termDir() }, "term:" + nav.sel, e),
   },
   {
     id: "reveal",
     label: "Reveal in Finder",
     section: "Files",
     keys: "alt+shift+cmd+r",
-    when: () => sel && (selDir || file),
+    when: () => nav.sel && (nav.selDir || nav.file),
     run: (e) =>
-      act("reveal", { wt: sel, path: selDir || file }, "reveal:" + sel, e),
+      act(
+        "reveal",
+        { wt: nav.sel, path: nav.selDir || nav.file },
+        "reveal:" + nav.sel,
+        e,
+      ),
   },
   {
     id: "trash",
@@ -1268,11 +779,11 @@ const COMMANDS = [
     keys: "cmd+backspace",
     // ⌘⌫ deletes a line while typing, so never steal it from a field or the editor
     when: () =>
-      sel && (selDir || file) &&
+      nav.sel && (nav.selDir || nav.file) &&
       !document.activeElement?.closest(
         "input, textarea, select, [contenteditable]",
       ),
-    run: () => discardArm({ path: selDir || file, del: true }),
+    run: () => discardArm({ path: nav.selDir || nav.file, del: true }),
   },
   {
     id: "copy-ticket",
@@ -1288,7 +799,7 @@ const COMMANDS = [
     section: "Agent sessions",
     keys: "a",
     when: () => liveWt()?.agents?.length,
-    run: () => clickCell(selWt, "agent"),
+    run: () => clickCell(nav.selWt, "agent"),
   },
   {
     id: "pr-card",
@@ -1296,7 +807,7 @@ const COMMANDS = [
     section: "Worktrees",
     keys: "p",
     when: () => liveWt()?.pr,
-    run: () => clickCell(selWt, "pr"),
+    run: () => clickCell(nav.selWt, "pr"),
   },
   {
     id: "agent-resume",
@@ -1308,8 +819,8 @@ const COMMANDS = [
     keys: "alt+cmd+a",
     when: () => liveWt()?.agents?.length,
     run: (e) => {
-      loadDetails(selWt);
-      resume(selWt.agents[0], e);
+      loadDetails(nav.selWt);
+      resume(nav.selWt.agents[0], e);
     },
   },
   {
@@ -1350,9 +861,12 @@ const COMMANDS = [
     label: "Cycle text, preview and hex",
     section: "View",
     keys: "alt+cmd+v",
-    when: () => hasFile() && modeList.length > 1 && !diffDirty,
+    when: () => hasFile() && nav.modeList.length > 1 && !nav.diffDirty,
     run: () =>
-      setMode(modeList[(modeList.indexOf(mode) + 1) % modeList.length]),
+      setMode(
+        nav
+          .modeList[(nav.modeList.indexOf(nav.mode) + 1) % nav.modeList.length],
+      ),
   },
   {
     id: "filter-branches",
@@ -1373,7 +887,7 @@ const COMMANDS = [
     label: "Find in file",
     section: "View",
     keys: "cmd+f",
-    when: () => hasFile() && mode === "text" && !srcBinary,
+    when: () => hasFile() && nav.mode === "text" && !nav.srcBinary,
     run: () => findEl?.select(),
   },
   {
@@ -1382,7 +896,7 @@ const COMMANDS = [
     section: "Files",
     keys: "alt+shift+cmd+c",
     when: hasFile,
-    run: (e) => copy(e, file, "kbd"),
+    run: (e) => copy(e, nav.file, "kbd"),
   },
   {
     id: "copy-path-abs",
@@ -1390,7 +904,7 @@ const COMMANDS = [
     section: "Files",
     keys: "alt+cmd+c",
     when: hasFile,
-    run: (e) => copy(e, `${sel}/${file}`, "kbd"),
+    run: (e) => copy(e, `${nav.sel}/${nav.file}`, "kbd"),
   },
   {
     id: "zoom-in",
@@ -1446,11 +960,11 @@ function bindKey(id, k) {
 }
 
 $effect(() => {
-  const wt = sel;
-  if (!paletteOpen || !wt || treeOf === wt || loose) return;
+  const wt = nav.sel;
+  if (!paletteOpen || !wt || nav.treeOf === wt || nav.loose) return;
   fetch(`/api/tree?wt=${encodeURIComponent(wt)}`).then((r) => r.json())
     .then((t) => {
-      if (sel === wt) palTree = { of: wt, files: t.files, dirs: t.dirs };
+      if (nav.sel === wt) palTree = { of: wt, files: t.files, dirs: t.dirs };
     });
 });
 
@@ -1464,9 +978,9 @@ const asPalette = (items, detail) =>
 
 const paletteItems = $derived.by(() => {
   if (!paletteOpen) return [];
-  const t = treeOf === sel || loose
-    ? { files: tree, dirs: treeDirs }
-    : palTree.of === sel
+  const t = nav.treeOf === nav.sel || nav.loose
+    ? { files: nav.tree, dirs: nav.treeDirs }
+    : palTree.of === nav.sel
     ? palTree
     : { files: [], dirs: [] };
   const pathItems = (kind, paths) =>
@@ -1476,7 +990,8 @@ const paletteItems = $derived.by(() => {
         group: kind === "dir" ? "folder" : "file",
         label: name,
         detail: dir || undefined,
-        fn: () => openAt({ wt: sel, loose, kind, rel: p, line: 0 }),
+        fn: () =>
+          openAt({ wt: nav.sel, loose: nav.loose, kind, rel: p, line: 0 }),
       };
     });
   const cmd = (label, fn, kbd) => ({ group: "command", label, fn, kbd });
@@ -1500,12 +1015,12 @@ const paletteItems = $derived.by(() => {
       !!prefs.pinned[b.path] - !!prefs.pinned[a.path] ||
       b.lastActivity - a.lastActivity
     ).map(wtItem),
-    ...(selWt && !loose
-      ? asPalette(wtItems(selWt, true), selWt.branch)
+    ...(nav.selWt && !nav.loose
+      ? asPalette(wtItems(nav.selWt, true), nav.selWt.branch)
         .filter((i) => !COMMANDS.some((c) => c.label === i.label))
       : []),
     ...LAYOUTS.map(([p, name]) => cmd(`${name} layout`, () => setPreset(p))),
-    ...(loose ? [] : [
+    ...(nav.loose ? [] : [
       cmd("Since branch point", () => setBase("branch")),
       cmd("Uncommitted", () => setBase("head")),
       cmd("All files", () => setBase("all")),
@@ -1522,13 +1037,18 @@ const paletteItems = $derived.by(() => {
       sub: () =>
         rankBy(rows.shownWts, 50, (w) => wtScore(rows.q, w)).map(wtItem),
     },
-    ...(sel
+    ...(nav.sel
       ? [{
         ...cmd("Filter files…"),
-        query: () => fq,
-        onquery: (v) => (fq = v),
+        query: () => nav.fq,
+        onquery: (v) => (nav.fq = v),
         sub: () =>
-          rank(fq, explore ? tree : files.map((f) => f.path), 50, pathText)
+          rank(
+            nav.fq,
+            nav.explore ? nav.tree : nav.files.map((f) => f.path),
+            50,
+            pathText,
+          )
             .map((p) => ({
               group: "file",
               label: splitPath(p)[1],
@@ -1546,8 +1066,8 @@ const paletteItems = $derived.by(() => {
             detail: `${h.path}:${h.line}`,
             fn: () =>
               openAt({
-                wt: sel,
-                loose,
+                wt: nav.sel,
+                loose: nav.loose,
                 kind: "file",
                 rel: h.path,
                 line: h.line,
@@ -1584,24 +1104,6 @@ const paletteItems = $derived.by(() => {
     ...pathItems("file", t.files),
   ];
 });
-
-function discardArm(f, e) {
-  e?.stopPropagation();
-  discarding = f;
-}
-
-async function confirmDiscard() {
-  const f = discarding;
-  discarding = null;
-  if (!f.del) {
-    return op("discard", { path: f.path, untracked: f.status === "U" });
-  }
-  dropPath(f.path);
-  if (!await act("delete", { wt: sel, path: f.path }, "delete") && explore) {
-    loadTree();
-  }
-  loadFiles();
-}
 </script>
 
 <svelte:window
@@ -1628,7 +1130,7 @@ async function confirmDiscard() {
           <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d={d}/></svg></button>
       {/each}
     </div>
-    <Notify bind:this={notify} {selectWt} />
+    <Notify bind:this={notify} />
     <button class="circ" title="Settings {kbdOf('settings') ?? ''}" aria-label="Settings" onclick={() => ui.refs.settings.open()}>
       <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg></button>
   </div>
@@ -1844,7 +1346,7 @@ async function confirmDiscard() {
   {/snippet}
   {#snippet wtRow(w, showRepo)}
     {#key rows.touched[w.path]}
-      <div class="wt" class:sel={sel === w.path} class:touch={rows.touched[w.path]} class:cached={repoOf(w)?.cached}
+      <div class="wt" class:sel={nav.sel === w.path} class:touch={rows.touched[w.path]} class:cached={repoOf(w)?.cached}
            class:done={bucket(w) === "done"} style:grid-template-columns={colGrid}
            role="button" tabindex="0" data-path={w.path}
            onclick={(e) => w.isPrimary || !(e.metaKey || e.shiftKey) ? selectWt(w.path)
@@ -1918,7 +1420,7 @@ async function confirmDiscard() {
        onkeydown={(e) => gutterKey(e, 1, b1El)}></div>
 
   <div class="band files" class:maxed={prefs.max === 2} bind:this={b2El}>
-    <div class="bhead"><b>{explore ? "Files" : "Changed files"}</b>
+    <div class="bhead"><b>{nav.explore ? "Files" : "Changed files"}</b>
       {#if editingPath}
         <input class="filter open" class:grown={completions.length} placeholder="Open path…"
                bind:this={openEl} role="combobox" aria-controls="open-complete"
@@ -1934,53 +1436,53 @@ async function confirmDiscard() {
           {/each}
         </div>
       {:else}
-        {@const where = loose ? sel : selWt ? `${selWt.repo} · ${selWt.branch}` : null}
+        {@const where = nav.loose ? nav.sel : nav.selWt ? `${nav.selWt.repo} · ${nav.selWt.branch}` : null}
         <button class="meta pth" title="{where ? `${where} · ` : ""}open a path… {kbdOf('open-path') ?? ''}" onclick={editPath}
-                oncontextmenu={(e) => sel && openMenu(e, [
+                oncontextmenu={(e) => nav.sel && openMenu(e, [
                   {
                     label: "Copy path (relative)",
-                    fn: (e) => copy(e, selWt ? relWt(repoOf(selWt), selWt) : sel, "ctx"),
+                    fn: (e) => copy(e, nav.selWt ? relWt(repoOf(nav.selWt), nav.selWt) : nav.sel, "ctx"),
                   },
-                  { label: "Copy path (absolute)", fn: (e) => copy(e, sel, "ctx") },
+                  { label: "Copy path (absolute)", fn: (e) => copy(e, nav.sel, "ctx") },
                 ])}>{where ?? `Open path… ${kbdOf("open-path") ?? ""}`}</button>
       {/if}
-      {#if sel}
+      {#if nav.sel}
         <button class="btn max" title="New file or folder" aria-label="New file or folder"
                 onmousedown={(e) => e.preventDefault()} onclick={startNew}><Icon d={ICON.plus} /></button>
       {/if}
-      <FilterInput bind:this={fileFilterEl} bind:value={fq} label="Filter files"
+      <FilterInput bind:this={fileFilterEl} bind:value={nav.fq} label="Filter files"
                    kbd={kbdOf("filter-files")} />
-      {#if !loose}<div class="seg">
-        <button class:on={!explore && base === "branch"} onclick={() => setBase("branch")}>Since branch point</button>
-        <button class:on={!explore && base === "head"} onclick={() => setBase("head")}>Uncommitted</button>
-        <button class:on={explore} onclick={() => setBase("all")}>All files</button>
+      {#if !nav.loose}<div class="seg">
+        <button class:on={!nav.explore && nav.base === "branch"} onclick={() => setBase("branch")}>Since branch point</button>
+        <button class:on={!nav.explore && nav.base === "head"} onclick={() => setBase("head")}>Uncommitted</button>
+        <button class:on={nav.explore} onclick={() => setBase("all")}>All files</button>
       </div>{/if}
       {@render maxBtn(2)}
     </div>
-    {#if discarding}
+    {#if nav.discarding}
       <div class="bhead selbar confirm">
-        <b class="pre">{discarding.del
-            ? `Move ${discarding.path} to Trash?`
-            : discardPrompt(discarding.path, discarding.status === "U")}</b>
+        <b class="pre">{nav.discarding.del
+            ? `Move ${nav.discarding.path} to Trash?`
+            : discardPrompt(nav.discarding.path, nav.discarding.status === "U")}</b>
         <span class="sp"></span>
         <button class="btn dg" onclick={confirmDiscard} use:focusOn
-                onkeydown={(e) => e.key === "Escape" && (discarding = null)}>
-          {discarding.del ? "Move to Trash" : discarding.status === "U" ? "Delete" : "Discard"}</button>
-        <button class="btn" onclick={() => (discarding = null)}>Cancel</button>
+                onkeydown={(e) => e.key === "Escape" && (nav.discarding = null)}>
+          {nav.discarding.del ? "Move to Trash" : nav.discarding.status === "U" ? "Delete" : "Discard"}</button>
+        <button class="btn" onclick={() => (nav.discarding = null)}>Cancel</button>
       </div>
     {/if}
     <div class="body">
       {#snippet rowName(path, name)}
-        {#if renaming === path}
+        {#if nav.renaming === path}
           <input class="ren" value={name} use:renameField
-                 onkeydown={(e) => renameKey(e, path)} onblur={() => (renaming = null)}
+                 onkeydown={(e) => renameKey(e, path)} onblur={() => (nav.renaming = null)}
                  onclick={(e) => e.stopPropagation()}>
         {:else}{name}{/if}
       {/snippet}
       {#snippet fileRow(f, mode)}
         {@const [dir, name] = splitPath(f.path)}
-        {#key fresh[f.path]}
-        <div class="f" class:touch={fresh[f.path]} class:sel={file === f.path} role="button" tabindex="0"
+        {#key nav.fresh[f.path]}
+        <div class="f" class:touch={nav.fresh[f.path]} class:sel={nav.file === f.path} role="button" tabindex="0"
              onclick={() => pick(f)}
              onkeydown={(e) => e.key === "Enter" ? pick(f) : menuKey(e, fileItems(f, mode))}
              oncontextmenu={(e) => openMenu(e, fileItems(f, mode))}>
@@ -2021,16 +1523,16 @@ async function confirmDiscard() {
         </div>
       {/snippet}
       {#snippet treeRow(r)}
-        {@const [dir, name] = fq ? splitPath(r.path) : ["", r.path.split("/").pop()]}
+        {@const [dir, name] = nav.fq ? splitPath(r.path) : ["", r.path.split("/").pop()]}
         {@const f = byPath.get(r.path)}
-        {#key fresh[r.path]}
-        <div class="f tr" class:touch={fresh[r.path]} class:sel={r.dir ? selDir === r.path : !selDir && file === r.path} class:ign={isIgnoredPath(r.path, treeIgnored)} role="button" tabindex="0" data-path={r.path}
+        {#key nav.fresh[r.path]}
+        <div class="f tr" class:touch={nav.fresh[r.path]} class:sel={r.dir ? nav.selDir === r.path : !nav.selDir && nav.file === r.path} class:ign={isIgnoredPath(r.path, nav.treeIgnored)} role="button" tabindex="0" data-path={r.path}
              style:padding-left="{0.625 + r.depth * 0.875}rem"
              onclick={() => r.dir ? toggleDir(r.path) : pick(r)}
              onkeydown={(e) => e.key === "Enter" ? (r.dir ? toggleDir(r.path) : pick(r)) : menuKey(e, fileItems(r))}
              oncontextmenu={(e) => openMenu(e, fileItems(r))}>
-          <span class="car">{r.dir ? (openDirs[r.path] ? "▼" : "▶") : ""}</span>
-          <span class="p" title={r.path}><span class="dir">{dir}</span>{@render rowName(r.path, name)}{r.dir && renaming !== r.path ? "/" : ""}</span>
+          <span class="car">{r.dir ? (nav.openDirs[r.path] ? "▼" : "▶") : ""}</span>
+          <span class="p" title={r.path}><span class="dir">{dir}</span>{@render rowName(r.path, name)}{r.dir && nav.renaming !== r.path ? "/" : ""}</span>
           {#if f}
             <span class="st {f.status}">{f.status === "U" ? "?" : f.status}</span>
           {:else if r.dir && changedDirs.has(r.path)}
@@ -2041,27 +1543,27 @@ async function confirmDiscard() {
         </div>
         {/key}
       {/snippet}
-      {#if !sel}
-        {#if restoring}{@render loadingRow()}{:else}<div class="empty">Select a worktree</div>{/if}
-      {:else if explore}
-        {#if treeOf !== sel}
+      {#if !nav.sel}
+        {#if nav.restoring}{@render loadingRow()}{:else}<div class="empty">Select a worktree</div>{/if}
+      {:else if nav.explore}
+        {#if nav.treeOf !== nav.sel}
           {@render loadingRow()}
-        {:else if loose && !tree.length && !drafting}
+        {:else if nav.loose && !nav.tree.length && !drafting}
           <div class="empty">Empty folder</div>
-        {:else if fq && !treeMatches.length}
+        {:else if nav.fq && !treeMatches.length}
           <div class="empty">No matches</div>
         {:else}
           {#each treeView as r (r.path)}{#if r.draft}{@render draftRow(r)}{:else}{@render treeRow(r)}{/if}{/each}
           {#if treeMatches.length > treeShown.length}
             <div class="empty">{treeMatches.length - treeShown.length} more, narrow the filter</div>
           {/if}
-          {#if loose && tree.length >= TREE_CAP}
+          {#if nav.loose && nav.tree.length >= TREE_CAP}
             <div class="empty">Showing the first {TREE_CAP} files, live updates off · narrow the path</div>
           {/if}
         {/if}
-      {:else if filesOf !== sel}
+      {:else if nav.filesOf !== nav.sel}
         {@render loadingRow()}
-      {:else if !files.length}
+      {:else if !nav.files.length}
         <div class="empty">No changes</div>
       {:else if !shownFiles.length}
         <div class="empty">No matches</div>
@@ -2093,12 +1595,12 @@ async function confirmDiscard() {
 
   <div class="band sourceband" class:maxed={prefs.max === 3}>
     <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div class="bhead" oncontextmenu={(e) => file && openMenu(e, fileItems({ path: file }))}>
-      {#if headRename}
-        <input class="ren" value={file} use:renameField
-               onkeydown={(e) => renameKey(e, file, "")} onblur={() => (headRename = false)}>
-      {:else if file}
-        <button class="nm" title="Rename" onclick={(e) => startRename({ path: file }, e, true)}>{file}</button>
+    <div class="bhead" oncontextmenu={(e) => nav.file && openMenu(e, fileItems({ path: nav.file }))}>
+      {#if nav.headRename}
+        <input class="ren" value={nav.file} use:renameField
+               onkeydown={(e) => renameKey(e, nav.file, "")} onblur={() => (nav.headRename = false)}>
+      {:else if nav.file}
+        <button class="nm" title="Rename" onclick={(e) => startRename({ path: nav.file }, e, true)}>{nav.file}</button>
         {#if srcInfo}
           <span class="meta mono finfo" title={srcInfo.size === null ? null : `${fmtCount(srcInfo.size)} bytes`}>
             {[
@@ -2114,7 +1616,7 @@ async function confirmDiscard() {
       {#if diskAt && ui.now - diskAt < 60_000}
         <span class="meta" title={new Date(diskAt).toLocaleTimeString()}>Updated {ago(diskAt)}</span>
       {/if}
-      {#if diffDirty}
+      {#if nav.diffDirty}
         <span class="unsaved" data-tone="warn">● Unsaved ⌘S</span>
         <button class="btn ib p" title="Save" aria-label="Save" onclick={() => diffRef?.save()}>
           <Icon d={ICON.save} /></button>
@@ -2122,7 +1624,7 @@ async function confirmDiscard() {
                 onclick={() => { ui.banner = null; diffRef?.reloadTheirs(); }}>
           <Icon d={ICON.undo} /></button>
       {/if}
-      {#if mode === "text" && !srcBinary}
+      {#if nav.mode === "text" && !nav.srcBinary}
         <FilterInput bind:this={findEl} bind:value={lq} label="Find" kbd={kbdOf("find")}
                      onenter={(back) => diffRef?.findStep(back ? -1 : 1)}
                      count="{found.i}/{found.n}"
@@ -2132,58 +1634,58 @@ async function confirmDiscard() {
           <span class="cbx" class:on={prefs.wrap}></span>Wrap
         </label>
       {/if}
-      {#if explore && selFile}
+      {#if nav.explore && nav.selFile}
         <div class="seg">
-          <button class:on={!showDiff} disabled={mode !== "text"} onclick={() => (showDiff = false)}>View</button>
-          <button class:on={showDiff} disabled={mode !== "text"} onclick={() => (showDiff = true)}>Diff</button>
+          <button class:on={!showDiff} disabled={nav.mode !== "text"} onclick={() => (showDiff = false)}>View</button>
+          <button class:on={showDiff} disabled={nav.mode !== "text"} onclick={() => (showDiff = true)}>Diff</button>
         </div>
       {/if}
-      {#if file && modeList.length > 1}
+      {#if nav.file && nav.modeList.length > 1}
         <div class="seg" title={kbdOf("cycle-mode")}>
-          {#each modeList as m (m)}
-            <button class:on={m === mode} aria-pressed={m === mode} disabled={diffDirty}
-                    title={diffDirty ? "Save or discard edits first" : null}
+          {#each nav.modeList as m (m)}
+            <button class:on={m === nav.mode} aria-pressed={m === nav.mode} disabled={nav.diffDirty}
+                    title={nav.diffDirty ? "Save or discard edits first" : null}
                     onclick={() => setMode(m)}>{MODE_LABEL[m]}</button>
           {/each}
         </div>
       {/if}
-      {#if selFile}<span class="meta mono">+{selFile.added} −{selFile.removed}</span>{/if}
+      {#if nav.selFile}<span class="meta mono">+{nav.selFile.added} −{nav.selFile.removed}</span>{/if}
       {@render maxBtn(3)}
     </div>
     <div class="body" bind:this={srcBodyEl}>
-      {#if mode === "hex" && sel && file}
-        {#key file}<Hex src="{rawSrc}&t={diffTick}" />{/key}
-      {:else if mode === "preview" && (mediaType === "img" || isSvg) && sel && file}
-        <img class="media" src="{rawSrc}&t={diffTick}" alt={file}>
-      {:else if mode === "preview" && mediaType === "video" && sel && file}
+      {#if nav.mode === "hex" && nav.sel && nav.file}
+        {#key nav.file}<Hex src="{rawSrc}&t={nav.diffTick}" />{/key}
+      {:else if nav.mode === "preview" && (nav.mediaType === "img" || nav.isSvg) && nav.sel && nav.file}
+        <img class="media" src="{rawSrc}&t={nav.diffTick}" alt={nav.file}>
+      {:else if nav.mode === "preview" && nav.mediaType === "video" && nav.sel && nav.file}
         <!-- svelte-ignore a11y_media_has_caption -->
         <video class="media" src={rawSrc} controls muted></video>
-      {:else if mode === "preview" && mediaType === "audio" && sel && file}
+      {:else if nav.mode === "preview" && nav.mediaType === "audio" && nav.sel && nav.file}
         <audio class="audio" src={rawSrc} controls></audio>
-      {:else if mode === "preview" && mediaType === "pdf" && sel && file}
-        <iframe class="preview ready" title="Preview of {file}" src="{rawSrc}&t={diffTick}"></iframe>
-      {:else if mode === "preview" && previewSrc}
+      {:else if nav.mode === "preview" && nav.mediaType === "pdf" && nav.sel && nav.file}
+        <iframe class="preview ready" title="Preview of {nav.file}" src="{rawSrc}&t={nav.diffTick}"></iframe>
+      {:else if nav.mode === "preview" && previewSrc}
         {#if !previewReady}{@render loadingRow()}{/if}
         {#key previewSrc}
-          <iframe class="preview" class:md={isMd} class:ready={previewReady} title="Preview of {file}"
+          <iframe class="preview" class:md={nav.isMd} class:ready={previewReady} title="Preview of {nav.file}"
                   sandbox="allow-scripts" srcdoc={previewSrc}
                   onload={() => (previewReady = true)}></iframe>
         {/key}
-      {:else if sel && file && prefs.settings}
-        <Source bind:this={diffRef} wt={sel} path={file} {base} tick={diffTick} line={pendingLine}
+      {:else if nav.sel && nav.file && prefs.settings}
+        <Source bind:this={diffRef} wt={nav.sel} path={nav.file} base={nav.base} tick={nav.diffTick} line={nav.pendingLine}
               collapse={{ margin: prefs.settings.collapseMargin, minSize: prefs.settings.collapseMinSize }}
-              single={explore && !(selFile && showDiff)}
+              single={nav.explore && !(nav.selFile && showDiff)}
               split={prefs.split} onsplit={(s) => { prefs.split = s; saveLayout(); }} wrap={prefs.wrap} find={lq} onfind={(f) => (found = f)}
-              onstate={(d) => (diffDirty = d)}
+              onstate={(d) => (nav.diffDirty = d)}
               onconflict={conflictBanner}
               onupdated={() => (diskAt = Date.now())}
               onerror={errBanner}
               oncopy={showToast}
               onsaved={loadFiles}
               onready={restoreRawView}
-              onbinary={(b) => (srcBinary = b)}
+              onbinary={(b) => (nav.srcBinary = b)}
               oninfo={(i) => (srcInfo = i)} />
-      {:else if restoring}
+      {:else if nav.restoring}
         {@render loadingRow()}
       {:else}
         <div class="empty">Select a file</div>
