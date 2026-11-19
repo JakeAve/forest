@@ -343,6 +343,12 @@ body {
   width: 0.75rem;
   height: 0.75rem;
 }
+.acts .ico,
+.sechd .ico {
+  width: 0.625rem;
+  height: 0.625rem;
+  stroke-width: 2;
+}
 button.toast {
   font-family: var(--sans);
   text-align: left;

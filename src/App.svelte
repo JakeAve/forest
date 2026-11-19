@@ -5,6 +5,7 @@ import FilterInput from "./FilterInput.svelte";
 import Palette from "./Palette.svelte";
 import Shortcuts from "./Shortcuts.svelte";
 import Hex from "./Hex.svelte";
+import Icon from "./Icon.svelte";
 import {
   matchPath,
   matchWt,
@@ -14,25 +15,51 @@ import {
   wtScore,
 } from "./filter.js";
 import {
+  agoText,
   ancestorDirs,
+  branchUrl,
   bucket,
   bucketSummary,
   clampMenu,
+  clip,
+  colsMin,
+  colTemplate,
+  commonPrefix,
+  dirName,
   discardPrompt,
+  dur,
   fmtCount,
   fmtSize,
   isIgnoredPath,
   KINDS,
   orderWts,
+  prAb,
+  prOffSummary,
   prStatus,
   rawUrl,
+  relWt,
   removeSummary,
+  renamed,
   sessionTag,
+  shortId,
   snoozeKey,
+  splitPath,
   TREE_CAP,
   treeRows,
   trimSeps,
 } from "../parse.ts";
+import {
+  AC_ICON,
+  AM_ICON,
+  AR_ICON,
+  CHECK,
+  GLYPH,
+  ICON,
+  LAYOUTS,
+  TAG,
+  TICKET_ST,
+  VERDICT,
+} from "./icons.js";
 import { parseThemeText, resolveTheme, setFavicon } from "./theme.js";
 import { combo, label as keyLabel, resolve } from "./keys.js";
 import { marked } from "marked";
@@ -50,26 +77,6 @@ function zoomBy(d) {
 }
 
 const AXES = { stack: "yy", sidebar: "xy", columns: "xx", rail: "yx" };
-const ICON = {
-  save:
-    "M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zM17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7M7 3v4a1 1 0 0 0 1 1h7",
-  undo: "M9 14 4 9l5-5M4 9h10.5a5.5 5.5 0 0 1 0 11H11",
-  plus: "M5 12h14M12 5v14",
-  minus: "M5 12h14",
-  x: "M18 6 6 18M6 6l12 12",
-  copy:
-    "M10 8h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H10a2 2 0 0 1-2-2V10a2 2 0 0 1 2-2zM4 16a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2",
-  up: "m5 12 7-7 7 7M12 19V5",
-  down: "M12 5v14m7-7-7 7-7-7",
-  max: "M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7",
-  min: "M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7",
-};
-const LAYOUTS = [
-  ["stack", "Stack", "M4 4h16v5H4zM4 11h16v3H4zM4 16h16v4H4z"],
-  ["sidebar", "Sidebar", "M4 4h6v16H4zM12 4h8v6h-8zM12 12h8v8h-8z"],
-  ["columns", "Columns", "M3 4h5v16H3zM10 4h4v16h-4zM16 4h5v16h-5z"],
-  ["rail", "Rail", "M4 4h6v7H4zM4 13h6v7H4zM12 4h8v16h-8z"],
-];
 let preset = $state("stack");
 let panes = $state({
   stack: { b1: { h: "32%", c: false }, b2: { h: "24%", c: false } },
@@ -178,23 +185,8 @@ let diffDirty = $state(false);
 let diffTick = $state(0);
 let banner = $state(null);
 let prOffHidden = $state("");
-// gh failures (missing, signed out, no access) would otherwise just look like a
-// repo with no PRs. Dismissing hides this text; a different failure shows again.
-const prOff = $derived.by(() => {
-  const bad = repos.filter((r) => r.prError);
-  if (!bad.length) return null;
-  const all = bad.length === repos.filter((r) => r.webUrl).length;
-  const where = all
-    ? ""
-    : bad.length > 3
-    ? ` in ${bad.length} repos`
-    : ` in ${bad.map((r) => r.name).join(", ")}`;
-  const why = [...new Set(bad.map((r) => r.prError))].join("; ");
-  return {
-    text: `PR badges off${where}: ${why}`,
-    detail: bad.map((r) => `${r.name}: ${r.prError}`).join("\n"),
-  };
-});
+// Dismissing hides this text; a different failure shows again.
+const prOff = $derived(prOffSummary(repos));
 let discarding = $state(null);
 let touched = $state({});
 let fresh = $state({}); // rel path -> when it last changed on disk, for the row flash
@@ -376,19 +368,6 @@ const treeView = $derived.by(() => {
 });
 const totalWts = $derived(repos.reduce((n, r) => n + r.worktrees.length, 0));
 const filtering = $derived(q !== "" || dirtyOnly || runningOnly);
-
-const renamed = (w) => (w.remote && w.remote !== w.branch ? w.remote : null);
-const branchUrl = (w) =>
-  repoOf(w)?.webUrl && w.remote
-    ? `${repoOf(w).webUrl}/tree/${
-      w.remote.split("/").map(encodeURIComponent).join("/")
-    }`
-    : null;
-
-const dirName = (w) => {
-  const d = w.path.split("/").pop();
-  return !w.isPrimary && d !== w.branch.split("/").pop() ? d : null;
-};
 
 const sig = (w) => `${w.head}:${w.dirty}:${w.lastActivity}`;
 const match = (r, w) => matchWt({ q, dirtyOnly, runningOnly }, r?.name, w);
@@ -783,10 +762,7 @@ async function openBoxKey(e) {
   if (e.key === "Tab" && n) {
     e.preventDefault();
     if (completeHi >= 0) return pickCompletion(completions[completeHi]);
-    let common = completions[0];
-    for (const c of completions) {
-      while (!c.startsWith(common)) common = common.slice(0, -1);
-    }
+    const common = commonPrefix(completions);
     openEl.value = common.length > openEl.value.length
       ? common
       : completions[0];
@@ -981,27 +957,7 @@ function gutterKey(e, n, el) {
   saveLayout();
 }
 
-// while a PR is open, "behind" should mean behind its base branch, not behind
-// this worktree's own pushed remote (which is usually 0 once it's pushed).
-// GitHub's own count wins: the local base ref is only as fresh as the last
-// fetch, so a stale one reads "up to date" while the PR is already behind.
-function prAb(w) {
-  if (w.pr?.state !== "OPEN") return { ahead: w.ahead, behind: w.behind };
-  const c = w.pr.card;
-  return {
-    ahead: c?.ahead ?? w.aheadMain,
-    behind: c?.behind ?? w.behindMain,
-  };
-}
-
-function ago(ms) {
-  if (!ms) return "—";
-  const s = Math.max(0, (now - ms) / 1000);
-  if (s < 60) return "now";
-  if (s < 3600) return `${Math.floor(s / 60)}m`;
-  if (s < 86400) return `${Math.floor(s / 3600)}h`;
-  return `${Math.floor(s / 86400)}d`;
-}
+const ago = (ms) => agoText(now, ms);
 
 const COLUMNS = [
   {
@@ -1081,26 +1037,8 @@ const lead = $derived(
   ["title", "branch", "ticket"].map((k) => visibleCols.find((c) => c.key === k))
     .find(Boolean),
 );
-const colTemplate = $derived(
-  [
-    "calc(0.75rem + (2 - var(--depth, 0)) * var(--indent))",
-    ...visibleCols.map((c) =>
-      widths[c.key] ?? (c === lead ? "minmax(0, 1fr)" : c.width)
-    ),
-    ...(lead && !widths[lead.key] ? [] : ["minmax(0, 1fr)"]),
-  ].join(" "),
-);
-const colsMin = $derived(
-  `calc(${
-    [
-      "3.75rem",
-      `${(visibleCols.length + 1) * 0.5}rem`,
-      ...visibleCols.map((c) =>
-        widths[c.key] ?? (c === lead ? "12rem" : c.width)
-      ),
-    ].join(" + ")
-  })`,
-);
+const colGrid = $derived(colTemplate(visibleCols, lead, widths));
+const colMin = $derived(colsMin(visibleCols, lead, widths));
 let colsEl = $state();
 // a header gesture in flight: `size` drags a column edge, `move` drags a
 // column to a new slot. `x` is where the guide line is drawn.
@@ -1236,18 +1174,6 @@ const colItems = (key) => [
     fn: () => toggleCol(c.key),
   })),
 ];
-
-function splitPath(p) {
-  const i = p.lastIndexOf("/");
-  return i < 0 ? ["", p] : [p.slice(0, i + 1), p.slice(i + 1)];
-}
-
-const relWt = (r, w) =>
-  w.path === r.path
-    ? "."
-    : w.path.startsWith(r.path + "/")
-    ? w.path.slice(r.path.length + 1)
-    : w.path;
 
 let toast = $state("");
 let toastT;
@@ -1792,49 +1718,6 @@ $effect(() => {
   };
 });
 
-const CHECK = {
-  pass: ["✓", "ok"],
-  fail: ["✕", "bad"],
-  pending: ["", "warn"],
-};
-const TAG = { P0: "bad", P1: "bad", P2: "warn" };
-const TICKET_ST = {
-  todo: "off",
-  doing: "ok",
-  done: "done",
-  canceled: "off",
-};
-const VERDICT = {
-  APPROVED: ["✓ Approved", "ok"],
-  CHANGES_REQUESTED: ["! Changes requested", "bad"],
-  COMMENTED: ["Commented", "off"],
-};
-
-const AM_ICON =
-  '<path d="M1.896 4.559a6.25 6.25 0 0 1 8.839 0 .75.75 0 0 1-1.06 1.061 4.75 4.75 0 1 0 0 6.717L13.03 8.98l-1.553-1.554A.25.25 0 0 1 11.654 7h4.096a.25.25 0 0 1 .25.25v4.096a.25.25 0 0 1-.427.177l-1.482-1.482-3.356 3.356a6.25 6.25 0 0 1-8.839-8.838Z" fill="currentColor" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"/>';
-const AR_ICON =
-  '<path d="M1.705 8.005a.75.75 0 0 1 .834.656 5.5 5.5 0 0 0 9.592 2.97l-1.204-1.204a.25.25 0 0 1 .177-.427h3.646a.25.25 0 0 1 .25.25v3.646a.25.25 0 0 1-.427.177l-1.38-1.38A7.002 7.002 0 0 1 1.05 8.84a.75.75 0 0 1 .656-.834ZM8 2.5a5.487 5.487 0 0 0-4.131 1.869l1.204 1.204A.25.25 0 0 1 4.896 6H1.25A.25.25 0 0 1 1 5.75V2.104a.25.25 0 0 1 .427-.177l1.38 1.38A7.002 7.002 0 0 1 14.95 7.16a.75.75 0 0 1-1.49.178A5.5 5.5 0 0 0 8 2.5Z" fill="currentColor" stroke="currentColor" stroke-width="0.6" stroke-linejoin="round"/>';
-const AC_ICON =
-  '<path d="M11.28 6.78a.75.75 0 0 0-1.06-1.06L7.25 8.69 5.78 7.22a.75.75 0 0 0-1.06 1.06l2 2a.75.75 0 0 0 1.06 0l3.5-3.5ZM16 8A8 8 0 1 1 0 8a8 8 0 0 1 16 0Zm-1.5 0a6.5 6.5 0 1 0-13 0 6.5 6.5 0 0 0 13 0Z" fill="currentColor"/>';
-const GLYPH = {
-  conflict:
-    '<path d="M8.87 1.5a1 1 0 0 0-1.74 0L.75 12.5A1 1 0 0 0 1.62 14h12.76a1 1 0 0 0 .87-1.5ZM7 6h2v3.5H7Zm1 6.25a1.1 1.1 0 1 1 0-2.2 1.1 1.1 0 0 1 0 2.2Z" fill="currentColor" fill-rule="evenodd"/>',
-  fail:
-    '<path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/>',
-  changes:
-    '<path d="M8 2.5v6.5M8 13v.01" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round"/>',
-  behind:
-    '<path d="M8 2v11.5M3.5 9l4.5 4.5L12.5 9" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>',
-};
-
-function dur(ms) {
-  if (ms == null || ms < 0) return "–";
-  const s = Math.round(ms / 1000);
-  if (s < 60) return `${s}s`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m ${String(s % 60).padStart(2, "0")}s`;
-  return `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, "0")}m`;
-}
 const runFor = (c) =>
   !c.startedAt
     ? c.bucket === "pending" ? "queued" : "–"
@@ -1877,9 +1760,9 @@ function wtItems(w, solo = false) {
       fn: (e) => copy(e, relWt(repoOf(w), w), "ctx"),
     },
     "-",
-    !many && branchUrl(w) && {
+    !many && branchUrl(repoOf(w), w) && {
       label: "Open remote branch",
-      fn: () => open(branchUrl(w), "_blank", "noreferrer"),
+      fn: () => open(branchUrl(repoOf(w), w), "_blank", "noreferrer"),
     },
     !many && w.pr && {
       label: `View pull request #${w.pr.number}`,
@@ -2026,11 +1909,6 @@ const fmtAt = (ms) =>
     hour: "numeric",
     minute: "2-digit",
   });
-
-// uuid v7 ids (Codex) start with a timestamp, so their tail tells them apart.
-const shortId = (id) => (id[14] === "7" ? id.slice(-8) : id.slice(0, 8));
-
-const clip = (t = "", n = 48) => (t.length > n ? t.slice(0, n - 1) + "…" : t);
 
 async function resume(a, e) {
   if (
@@ -2868,14 +2746,6 @@ async function confirmDiscard() {
   onkeydown={runKey}
 />
 
-{#snippet ico(d)}<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
-  <path {d} />
-</svg>{/snippet}
-{#snippet closeX(fn)}
-  <button class="circ x" title="Close (Esc)" aria-label="Close"
-  onclick={fn}>{@render ico(ICON.x)}</button>
-{/snippet}
-
 <div class="app" class:desktop={settings?.desktop}>
   <div class="tbar">
     <svg class="mark" width="18" height="18" viewBox="0 0 24 24" fill="none" role="img" aria-label="forest">
@@ -2917,7 +2787,7 @@ async function confirmDiscard() {
     <div class="banner t-band" data-tone="warn" role="status" title={prOff.detail}>
       <span>{prOff.text}</span><span class="sp"></span>
       <button class="btn ib" title="Dismiss" aria-label="Dismiss"
-              onclick={() => (prOffHidden = prOff.text)}>{@render ico(ICON.x)}</button>
+              onclick={() => (prOffHidden = prOff.text)}><Icon d={ICON.x} /></button>
     </div>
   {/if}
 
@@ -2926,7 +2796,7 @@ async function confirmDiscard() {
   {#snippet maxBtn(n)}
     <button class="btn max" class:on={max === n} title={max === n ? "Restore panes" : "Full screen"}
             aria-label={max === n ? "Restore panes" : "Full screen"}
-            onclick={() => toggleMax(n)}>{@render ico(max === n ? ICON.min : ICON.max)}</button>
+            onclick={() => toggleMax(n)}><Icon d={max === n ? ICON.min : ICON.max} /></button>
   {/snippet}
   <div class="panes {preset}" class:max style:--b1={paneSize(1)} style:--b2={paneSize(2)}>
   <div class="band wts" class:maxed={max === 1} class:selecting bind:this={b1El}>
@@ -3019,14 +2889,14 @@ async function confirmDiscard() {
             onclick={() => {
               checked = {};
               confirming = null;
-            }}>{@render ico(ICON.x)}</button
+            }}><Icon d={ICON.x} /></button
           >
         {/if}
       </div>
     {/if}
-    <div class="body"><div class="list" style:min-width={colsMin}>
+    <div class="body"><div class="list" style:min-width={colMin}>
       <!-- svelte-ignore a11y_no_static_element_interactions, a11y_no_noninteractive_tabindex -->
-      <div class="cols" style:grid-template-columns={colTemplate} tabindex="0" bind:this={colsEl}
+      <div class="cols" style:grid-template-columns={colGrid} tabindex="0" bind:this={colsEl}
            onkeydown={(e) => menuKey(e, colItems())}
            oncontextmenu={(e) => openMenu(e, colItems(e.target.closest?.("[data-col]")?.dataset.col))}>
         <span></span>
@@ -3091,7 +2961,7 @@ async function confirmDiscard() {
           {#if r.cached}<span class="ct late" title="Last known state; refreshing"><span class="spin"></span> cached</span>{/if}
           <span class="sp"></span>
           <button class="circ plus" title="New worktree" aria-label="New worktree"
-                  onclick={(e) => { e.stopPropagation(); creating = creating === r.name ? null : r.name; slug = ""; }}>{@render ico(ICON.plus)}</button>
+                  onclick={(e) => { e.stopPropagation(); creating = creating === r.name ? null : r.name; slug = ""; }}><Icon d={ICON.plus} /></button>
         {/if}
       </div>
       {#if r && creating === r.name}
@@ -3116,7 +2986,7 @@ async function confirmDiscard() {
   {#snippet wtRow(w, showRepo)}
     {#key touched[w.path]}
       <div class="wt" class:sel={sel === w.path} class:touch={touched[w.path]} class:cached={repoOf(w)?.cached}
-           class:done={bucket(w) === "done"} style:grid-template-columns={colTemplate}
+           class:done={bucket(w) === "done"} style:grid-template-columns={colGrid}
            role="button" tabindex="0" data-path={w.path}
            onclick={(e) => w.isPrimary || !(e.metaKey || e.shiftKey) ? selectWt(w.path)
              : e.metaKey ? toggleCheck(w, e) : checkRange(w)}
@@ -3217,7 +3087,7 @@ async function confirmDiscard() {
       {/if}
       {#if sel}
         <button class="btn max" title="New file or folder" aria-label="New file or folder"
-                onmousedown={(e) => e.preventDefault()} onclick={startNew}>{@render ico(ICON.plus)}</button>
+                onmousedown={(e) => e.preventDefault()} onclick={startNew}><Icon d={ICON.plus} /></button>
       {/if}
       <FilterInput bind:this={fileFilterEl} bind:value={fq} label="Filter files"
                    kbd={kbdOf("filter-files")} />
@@ -3268,11 +3138,11 @@ async function confirmDiscard() {
           <span class="p"><span class="dir">{dir}</span>{@render rowName(f.path, name)}</span>
           <span class="acts">
             {#if mode === "staged"}
-              <button title="Unstage" aria-label="Unstage" onclick={(e) => op("unstage", { path: f.path }, e)}>{@render ico(ICON.minus)}</button>
+              <button title="Unstage" aria-label="Unstage" onclick={(e) => op("unstage", { path: f.path }, e)}><Icon d={ICON.minus} /></button>
             {:else if mode === "unstaged"}
-              <button title="Stage" aria-label="Stage" onclick={(e) => op("stage", { path: f.path }, e)}>{@render ico(ICON.plus)}</button>
+              <button title="Stage" aria-label="Stage" onclick={(e) => op("stage", { path: f.path }, e)}><Icon d={ICON.plus} /></button>
               <button class="dg" title="Discard changes" aria-label="Discard changes"
-                      onclick={(e) => discardArm(f, e)}>{@render ico(ICON.undo)}</button>
+                      onclick={(e) => discardArm(f, e)}><Icon d={ICON.undo} /></button>
             {/if}
           </span>
           <span class="n"><span class="pl">+{f.added}</span><span class="mi">−{f.removed}</span></span>
@@ -3339,12 +3209,12 @@ async function confirmDiscard() {
       {:else if sectioned}
         {#if stagedFiles.length}
           <div class="sechd"><b>Staged</b>{stagedFiles.length}<span class="sp"></span>
-            <button title="Unstage all" aria-label="Unstage all" onclick={(e) => op("unstage", { path: "." }, e)}>{@render ico(ICON.minus)}</button></div>
+            <button title="Unstage all" aria-label="Unstage all" onclick={(e) => op("unstage", { path: "." }, e)}><Icon d={ICON.minus} /></button></div>
           {#each stagedFiles as f (f.path)}{@render fileRow(f, "staged")}{/each}
         {/if}
         {#if unstagedFiles.length}
           <div class="sechd"><b>Unstaged</b>{unstagedFiles.length}<span class="sp"></span>
-            <button title="Stage all" aria-label="Stage all" onclick={(e) => op("stage", { path: "." }, e)}>{@render ico(ICON.plus)}</button></div>
+            <button title="Stage all" aria-label="Stage all" onclick={(e) => op("stage", { path: "." }, e)}><Icon d={ICON.plus} /></button></div>
           {#each unstagedFiles as f (f.path)}{@render fileRow(f, "unstaged")}{/each}
         {/if}
         {#if committedFiles.length}
@@ -3388,10 +3258,10 @@ async function confirmDiscard() {
       {#if diffDirty}
         <span class="unsaved" data-tone="warn">● Unsaved ⌘S</span>
         <button class="btn ib p" title="Save" aria-label="Save" onclick={() => diffRef?.save()}>
-          {@render ico(ICON.save)}</button>
+          <Icon d={ICON.save} /></button>
         <button class="btn ib" title="Discard editor changes, reload from disk" aria-label="Discard"
                 onclick={() => { banner = null; diffRef?.reloadTheirs(); }}>
-          {@render ico(ICON.undo)}</button>
+          <Icon d={ICON.undo} /></button>
       {/if}
       {#if mode === "text" && !srcBinary}
         <FilterInput bind:this={findEl} bind:value={lq} label="Find" kbd={kbdOf("find")}
@@ -3469,7 +3339,8 @@ async function confirmDiscard() {
       {#if it === "-"}
         <hr>
       {:else if it.head}
-        <div class="grp">{it.head}{#if i === 0 && menu.closable}{@render closeX(hideMenu)}{/if}</div>
+        <div class="grp">{it.head}{#if i === 0 && menu.closable}<button class="circ x" title="Close (Esc)"
+          aria-label="Close" onclick={hideMenu}><Icon d={ICON.x} /></button>{/if}</div>
       {:else}
         {#snippet item()}
           <button class:dg={it.danger} disabled={it.disabled} title={it.tip}
@@ -3503,7 +3374,8 @@ async function confirmDiscard() {
           <a class="port" href={t.url} target="_blank" rel="noreferrer">{t.key} ↗</a>
           {#if ti.status}<span class="st t-edge" data-tone={TICKET_ST[ti.category] ?? "ask"}>{ti.status}</span>{/if}
           {#if ti.assignee}<span class="ago">{ti.assignee}</span>{/if}
-          {@render closeX(hideCard)}
+          <button class="circ x" title="Close (Esc)" aria-label="Close"
+                  onclick={hideCard}><Icon d={ICON.x} /></button>
         </div>
         <div class="ttl">{ti.title}</div>
       </div>
@@ -3530,7 +3402,7 @@ async function confirmDiscard() {
       <section class="foot">
         <a class="btn" href={t.url} target="_blank" rel="noreferrer">Open ticket ↗</a>
         <button class="btn ib" title="Copy link" aria-label="Copy link"
-                onclick={(e) => copy(e, t.url, "tklink:" + t.url)}>{@render ico(ICON.copy)}</button>
+                onclick={(e) => copy(e, t.url, "tklink:" + t.url)}><Icon d={ICON.copy} /></button>
       </section>
     {:else if cardWt?.pr}
       {@const w = cardWt}
@@ -3542,7 +3414,8 @@ async function confirmDiscard() {
           <a class="pr t-solid" data-tone={s.tone} href={p.url} target="_blank" rel="noreferrer">#{p.number} ↗</a>
           <span class="st t-edge" data-tone={s.tone}>{s.label}</span>
           {#if c}<span class="dim t">by {c.author} · {ago(c.createdAt)}</span><span class="ago">updated {ago(c.updatedAt)}</span>{/if}
-          {@render closeX(hideCard)}
+          <button class="circ x" title="Close (Esc)" aria-label="Close"
+                  onclick={hideCard}><Icon d={ICON.x} /></button>
         </div>
         <div class="ttl">{p.title}</div>
         {#if c}
@@ -3716,7 +3589,7 @@ async function confirmDiscard() {
         <a class="btn" href={p.url} target="_blank" rel="noreferrer">Open on GitHub ↗</a>
         <a class="btn" href="{p.url}/files" target="_blank" rel="noreferrer">Files changed</a>
         <button class="btn ib" title="Copy link" aria-label="Copy link"
-                onclick={(e) => copy(e, p.url, "prlink:" + p.url)}>{@render ico(ICON.copy)}</button>
+                onclick={(e) => copy(e, p.url, "prlink:" + p.url)}><Icon d={ICON.copy} /></button>
       </section>
     {/if}
   </div>
@@ -3763,7 +3636,8 @@ async function confirmDiscard() {
 
 <dialog class="settings" bind:this={dlg}>
   <div class="shead"><b>Settings</b><span class="sp"></span>
-    {@render closeX(() => dlg.close())}</div>
+    <button class="circ x" title="Close (Esc)" aria-label="Close"
+            onclick={() => dlg.close()}><Icon d={ICON.x} /></button></div>
 
   <h3 class="sec">Theme</h3>
   <div class="row">
@@ -3812,9 +3686,9 @@ async function confirmDiscard() {
         <span class="cbx" class:on></span>{c.label}
       </label>
       {#if on}
-        <button class="btn ib" title="Move up" aria-label="Move up" disabled={i === 0} onclick={() => moveCol(c.key, i - 1)}>{@render ico(ICON.up)}</button>
+        <button class="btn ib" title="Move up" aria-label="Move up" disabled={i === 0} onclick={() => moveCol(c.key, i - 1)}><Icon d={ICON.up} /></button>
         <button class="btn ib" title="Move down" aria-label="Move down" disabled={i === visibleCols.length - 1}
-                onclick={() => moveCol(c.key, i + 1)}>{@render ico(ICON.down)}</button>
+                onclick={() => moveCol(c.key, i + 1)}><Icon d={ICON.down} /></button>
       {/if}
     </div>
   {/each}
@@ -3836,7 +3710,7 @@ async function confirmDiscard() {
     <datalist id="repo-names">
       {#each repos as r (r.name)}<option value={r.name}></option>{/each}
     </datalist>
-    <button class="btn ib" title="Add" aria-label="Add" disabled={!newRepo.trim()} onclick={addLauncher}>{@render ico(ICON.plus)}</button>
+    <button class="btn ib" title="Add" aria-label="Add" disabled={!newRepo.trim()} onclick={addLauncher}><Icon d={ICON.plus} /></button>
   </div>
   <div class="hint">
     Shell command run in the repo to make a worktree, instead of plain
@@ -3856,7 +3730,7 @@ async function confirmDiscard() {
   <div class="row">
     <input class="lname" list="repo-names" placeholder="Repo name, or *"
            bind:value={newTicketRepo} onkeydown={(e) => e.key === "Enter" && addTicket()}>
-    <button class="btn ib" title="Add" aria-label="Add" disabled={!newTicketRepo.trim()} onclick={addTicket}>{@render ico(ICON.plus)}</button>
+    <button class="btn ib" title="Add" aria-label="Add" disabled={!newTicketRepo.trim()} onclick={addTicket}><Icon d={ICON.plus} /></button>
   </div>
   <div class="hint">
     URL for the ticket key found in a branch name, PR title or last commit
@@ -3883,7 +3757,7 @@ async function confirmDiscard() {
     <div class="row">
       <span class="kind mono">{p}</span>
       <button class="btn ib" title="Unmute" aria-label="Unmute"
-              onclick={() => (settings.notifyMuted.splice(i, 1), saveSettings())}>{@render ico(ICON.x)}</button>
+              onclick={() => (settings.notifyMuted.splice(i, 1), saveSettings())}><Icon d={ICON.x} /></button>
     </div>
   {:else}
     <div class="hint">Nothing muted. Mute a worktree or repo from an inbox row.</div>
@@ -3930,12 +3804,6 @@ async function confirmDiscard() {
   background: var(--bg3);
   color: var(--dim);
   font: 0.6875rem var(--mono);
-}
-.acts .ico,
-.sechd .ico {
-  width: 0.625rem;
-  height: 0.625rem;
-  stroke-width: 2;
 }
 .card .ago + .x {
   margin-left: 0;
