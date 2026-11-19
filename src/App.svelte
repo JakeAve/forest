@@ -1600,7 +1600,7 @@ const paletteItems = $derived.by(() => {
     sub: () => asPalette(wtItems(w, true), w.branch),
   });
   return [
-    ...[...allWts].sort((a, b) =>
+    ...[...rows.allWts].sort((a, b) =>
       !!prefs.pinned[b.path] - !!prefs.pinned[a.path] ||
       b.lastActivity - a.lastActivity
     ).map(wtItem),
@@ -1666,9 +1666,11 @@ const paletteItems = $derived.by(() => {
     {
       ...cmd("Theme…", () => ui.refs.settings.open()),
       sub: () =>
-        ["default", ...themes].map((name) => cmd(name, () => applyTheme(name))),
+        ["default", ...ui.themes].map((name) =>
+          cmd(name, () => applyTheme(name))
+        ),
     },
-    ...repos.map((r) => ({
+    ...rows.repos.map((r) => ({
       group: "repo",
       label: r.name,
       detail: r.path,
