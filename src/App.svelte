@@ -8,29 +8,27 @@ import Hex from "./Hex.svelte";
 import Icon from "./Icon.svelte";
 import Settings from "./Settings.svelte";
 import Menu from "./Menu.svelte";
+import Card from "./Card.svelte";
+import Notify from "./Notify.svelte";
 import { matchPath, pathText, rank, rankBy, wtScore } from "./filter.js";
 import {
   ancestorDirs,
   branchUrl,
   bucket,
   bucketSummary,
-  clip,
   colsMin,
   colTemplate,
   commonPrefix,
   dirName,
   discardPrompt,
-  dur,
   fmtCount,
   fmtSize,
   isIgnoredPath,
-  KINDS,
   prAb,
   prStatus,
   rawUrl,
   relWt,
   renamed,
-  snoozeKey,
   splitPath,
   TREE_CAP,
   treeRows,
@@ -39,13 +37,10 @@ import {
   AC_ICON,
   AM_ICON,
   AR_ICON,
-  CHECK,
   GLYPH,
   ICON,
   LAYOUTS,
-  TAG,
   TICKET_ST,
-  VERDICT,
 } from "./icons.js";
 import { combo, label as keyLabel, resolve } from "./keys.js";
 import { marked } from "marked";
@@ -63,7 +58,6 @@ import {
   resize,
   saveLayout,
   saveSettings,
-  setDeliver,
   setPreset,
   toggleCol,
   toggleMax,
@@ -84,17 +78,12 @@ import {
 } from "./ui.svelte.js";
 import {
   askInCard,
-  card,
-  hideCard,
   hideMenu,
   menu,
   menuKey,
   menuSession,
-  noteOutside,
   openCard,
   openMenu,
-  placeCard,
-  runAction,
 } from "./menu.svelte.js";
 import {
   applyRows,
@@ -135,7 +124,6 @@ import {
   toggleAutoClose,
   toggleAutoMerge,
   toggleAutoRebase,
-  updateBranch,
 } from "./wtActions.js";
 
 loadSettings();
@@ -195,9 +183,7 @@ let srcInfo = $state(null);
 let diskAt = $state(0); // when the open file last changed on disk
 let b1El = $state(), b2El = $state();
 let pendingLine = $state(0);
-const cardWt = $derived(
-  card.shown && rows.allWts.find((w) => w.path === card.shown.path),
-);
+let notify = $state();
 let restored = false;
 const initialParams = new URLSearchParams(location.search);
 let restoring = $state(initialParams.has("path") || initialParams.has("wt"));
@@ -361,15 +347,8 @@ $effect(() => () => document.removeEventListener("visibilitychange", onVis));
 $effect(() => {
   if (hidden) return;
   const es = new EventSource("/api/events");
-  es.onopen = () =>
-    fetch("/api/notify").then((r) => r.json()).then((l) => (inbox = l));
-  es.addEventListener("notify", (e) => {
-    const ev = JSON.parse(e.data);
-    if (inbox.some((x) => x.id === ev.id)) return;
-    inbox = [ev, ...inbox];
-    const d = prefs.settings?.notify[ev.kind];
-    if (d === "app" || d === "both") addToast(ev);
-  });
+  es.onopen = () => notify?.refresh();
+  es.addEventListener("notify", (e) => notify?.push(JSON.parse(e.data)));
   es.addEventListener("fs", (e) => {
     const { wt, paths } = JSON.parse(e.data);
     if (wt !== sel) return;
@@ -940,64 +919,6 @@ const colItems = (key) => [
   })),
 ];
 
-let inbox = $state([]);
-let inboxEl = $state();
-let toasts = $state([]);
-const unread = $derived(inbox.filter((e) => !e.readAt).length);
-
-function addToast(ev) {
-  toasts = [ev, ...toasts];
-  setTimeout(
-    () => (toasts = toasts.filter((t) => t.id !== ev.id)),
-    prefs.settings?.toastMs ?? 7000,
-  );
-}
-
-const notifyPost = (what, body) =>
-  fetch(`/api/notify/${what}`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
-
-function onInbox(e) {
-  if (e.newState !== "open" || !unread) return;
-  notifyPost("read", { all: true });
-  const t = Date.now();
-  for (const ev of inbox) ev.readAt ??= t;
-}
-
-function openEv(ev) {
-  toasts = toasts.filter((t) => t.id !== ev.id);
-  inboxEl?.hidePopover();
-  if (ev.wt && rows.allWts.some((w) => w.path === ev.wt)) selectWt(ev.wt);
-  else if (ev.url) open(ev.url, "_blank", "noreferrer");
-}
-
-function mute(path) {
-  if (!prefs.settings.notifyMuted.includes(path)) {
-    prefs.settings.notifyMuted.push(path);
-  }
-  saveSettings();
-}
-
-const evItems = (ev) => [
-  { label: "Open", fn: () => openEv(ev) },
-  { label: "Snooze", fn: () => notifyPost("snooze", { key: snoozeKey(ev) }) },
-  "-",
-  ev.wt && { label: "Mute worktree", fn: () => mute(ev.wt) },
-  { label: "Mute repo", fn: () => mute(ev.repo) },
-  {
-    label: `Mute "${KINDS[ev.kind]?.label ?? ev.kind}"`,
-    fn: () => setDeliver(ev.kind, "off"),
-  },
-];
-
-function notifySettings() {
-  inboxEl?.hidePopover();
-  ui.refs.settings.open("notify");
-}
-
 function conflictBanner() {
   ui.banner = {
     kind: "warn",
@@ -1019,31 +940,6 @@ async function op(ep, body, e) {
   loadFiles();
   diffTick++;
 }
-
-$effect(() => {
-  if (!card.shown) return;
-  const outside = (ev) => {
-    if (card.el?.contains(ev.target)) return;
-    if (ev.type === "pointerdown") noteOutside(ev);
-    hideCard();
-  };
-  const onKey = (ev) => ev.key === "Escape" && hideCard();
-  addEventListener("pointerdown", outside, true);
-  addEventListener("keydown", onKey, true);
-  addEventListener("scroll", outside, true);
-  return () => {
-    removeEventListener("pointerdown", outside, true);
-    removeEventListener("keydown", onKey, true);
-    removeEventListener("scroll", outside, true);
-  };
-});
-
-const runFor = (c) =>
-  !c.startedAt
-    ? c.bucket === "pending" ? "queued" : "–"
-    : c.bucket === "pending"
-    ? `${dur(ui.now - c.startedAt)}…`
-    : dur((c.completedAt ?? c.startedAt) - c.startedAt);
 
 function wtItems(w, solo = false) {
   const t = !solo && rows.checked[w.path] && rows.checkedWts.length > 1
@@ -1730,10 +1626,7 @@ async function confirmDiscard() {
           <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d={d}/></svg></button>
       {/each}
     </div>
-    <button class="circ bell" popovertarget="inbox" title="Notifications"
-            aria-label={unread ? `Notifications, ${unread} unread` : "Notifications"}>
-      <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
-      {#if unread}<span class="n">{unread > 99 ? "99+" : unread}</span>{/if}</button>
+    <Notify bind:this={notify} {selectWt} />
     <button class="circ" title="Settings {kbdOf('settings') ?? ''}" aria-label="Settings" onclick={() => ui.refs.settings.open()}>
       <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg></button>
   </div>
@@ -2298,270 +2191,7 @@ async function confirmDiscard() {
   </div>
   {/if}
   <Menu {kbdOf} {keymap} />
-  <div class="ctx card" popover="manual" role="dialog" aria-label="Pull request"
-       bind:this={card.el}>
-    {#if card.shown?.kind === "ticket" && cardWt?.ticket?.info}
-      {@const t = cardWt.ticket}
-      {@const ti = t.info}
-      <div class="top">
-        <div class="r">
-          <a class="port" href={t.url} target="_blank" rel="noreferrer">{t.key} ↗</a>
-          {#if ti.status}<span class="st t-edge" data-tone={TICKET_ST[ti.category] ?? "ask"}>{ti.status}</span>{/if}
-          {#if ti.assignee}<span class="ago">{ti.assignee}</span>{/if}
-          <button class="circ x" title="Close (Esc)" aria-label="Close"
-                  onclick={hideCard}><Icon d={ICON.x} /></button>
-        </div>
-        <div class="ttl">{ti.title}</div>
-      </div>
-      {#if ti.actions?.length}
-        <section class="practs">
-          {#each ti.actions as to (to)}
-            <button class="btn" class:wait={ui.busy["tk:" + cardWt.path]?.to === to} disabled={ui.busy["tk:" + cardWt.path]}
-                    onclick={(e) => act("ticket", { wt: cardWt.path, to }, "tk:" + cardWt.path, e)}>Mark {to.replace(/_/g, " ")}</button>
-          {/each}
-        </section>
-      {/if}
-      {#if cardWt.autoClose || cardWt.pr?.state === "OPEN"}
-        <section>
-          <label class="r">
-            <input type="checkbox" class="cbxin" checked={!!cardWt.autoClose} disabled={ui.busy["ac:" + cardWt.path]}
-                   onchange={(e) => toggleAutoClose(cardWt, e)}>
-            <span class="cbx" class:on={!!cardWt.autoClose}></span>Close {t.key} on merge
-          </label>
-          {#if cardWt.autoClose?.error}
-            <div class="r" data-tone="bad">{cardWt.autoClose.error}</div>
-          {/if}
-        </section>
-      {/if}
-      <section class="foot">
-        <a class="btn" href={t.url} target="_blank" rel="noreferrer">Open ticket ↗</a>
-        <button class="btn ib" title="Copy link" aria-label="Copy link"
-                onclick={(e) => copy(e, t.url, "tklink:" + t.url)}><Icon d={ICON.copy} /></button>
-      </section>
-    {:else if cardWt?.pr}
-      {@const w = cardWt}
-      {@const p = w.pr}
-      {@const c = p.card}
-      {@const s = prStatus(p)}
-      <div class="top">
-        <div class="r">
-          <a class="pr t-solid" data-tone={s.tone} href={p.url} target="_blank" rel="noreferrer">#{p.number} ↗</a>
-          <span class="st t-edge" data-tone={s.tone}>{s.label}</span>
-          {#if c}<span class="dim t">by {c.author} · {ago(c.createdAt)}</span><span class="ago">updated {ago(c.updatedAt)}</span>{/if}
-          <button class="circ x" title="Close (Esc)" aria-label="Close"
-                  onclick={hideCard}><Icon d={ICON.x} /></button>
-        </div>
-        <div class="ttl">{p.title}</div>
-        {#if c}
-          <div class="r sm">
-            <span class="dim t">{p.baseRefName} ← {c.headRefName}</span>
-            <span class="ago"><span class="pl">+{c.additions}</span> <span class="mi">−{c.deletions}</span> · {c.changedFiles} files</span>
-          </div>
-        {/if}
-      </div>
-      {@const acts = prActions(w)}
-      {#if acts.length}
-        {@const ask = card.asking?.path === w.path &&
-          acts.find((a) => a.key === card.asking.key)}
-        <section class="practs">
-          {#if ask}
-            <span class="q">{ask.confirm}</span>
-            <button class="btn {ask.cls}" class:wait={ask.wait} disabled={ui.busy["ps:" + w.path]}
-                    onclick={(e) => runAction(ask, w, e)}>{ask.label}</button>
-            <button class="btn" onclick={() => (card.asking = null)}>Cancel</button>
-          {:else}
-            {#each acts as a (a.key)}
-              <button class="btn {a.cls}" class:wait={a.wait}
-                      disabled={ui.busy["ps:" + w.path] || ui.busy["ub:" + w.path]}
-                      onclick={(e) => runAction(a, w, e)}>{a.label}</button>
-            {/each}
-          {/if}
-        </section>
-      {/if}
-      {#if p.state === "OPEN"}
-        {@const behind = prAb(w).behind}
-        <section>
-          <div class="hd"><span>Merge</span></div>
-          {#if p.mergeable === "CONFLICTING"}
-            <div class="r" data-tone="bad">Conflicts with {p.baseRefName}</div>
-          {:else}
-            <div class="r dim">No conflicts</div>
-          {/if}
-          {#if p.queue}
-            <div class="r" data-tone="ok">In merge queue · position {p.queue.position}, {p.queue.state.toLowerCase().replace("_", " ")}</div>
-          {/if}
-          <div class="r" data-tone={behind ? "warn" : "off"}>
-            <span>{behind ? `↓${behind} behind` : "Up to date with"} {p.baseRefName}</span>
-            {#if behind > 0 && !p.queue}
-              <button class="btn" class:wait={ui.busy["ub:" + w.path]} disabled={ui.busy["ub:" + w.path]}
-                      onclick={(e) => updateBranch(w, e)}>Update branch</button>
-            {/if}
-          </div>
-          <label class="r">
-            <input type="checkbox" class="cbxin" checked={p.autoMerge} disabled={ui.busy["am:" + w.path]}
-                   onchange={(e) => toggleAutoMerge(w, e)}>
-            <span class="cbx" class:on={p.autoMerge}></span>Auto-merge (squash)
-          </label>
-          <label class="r">
-            <input type="checkbox" class="cbxin" checked={!!w.autoRebase} disabled={ui.busy["ar:" + w.path]}
-                   onchange={(e) => toggleAutoRebase(w, e)}>
-            <span class="cbx" class:on={!!w.autoRebase}></span>Auto-rebase
-          </label>
-          {#if w.autoRebase?.error}
-            <div class="r" data-tone="bad">{w.autoRebase.error}</div>
-          {/if}
-          {#if w.ticket?.info}
-            <label class="r">
-              <input type="checkbox" class="cbxin" checked={!!w.autoClose} disabled={ui.busy["ac:" + w.path]}
-                     onchange={(e) => toggleAutoClose(w, e)}>
-              <span class="cbx" class:on={!!w.autoClose}></span>Close {w.ticket.key} on merge
-            </label>
-          {/if}
-        </section>
-      {/if}
-      {#if c}
-        {#if c.reviews.length || c.awaiting.length}
-          <section>
-            <div class="hd"><span>Reviews</span></div>
-            {#each c.reviews as rv (rv.login)}
-              <a class="r lk" href={rv.url} target="_blank" rel="noreferrer">
-                <span class="t">{rv.login}</span>
-                <span data-tone={VERDICT[rv.state]?.[1]}>{VERDICT[rv.state]?.[0]}</span>
-                <span class="ago">{ago(rv.at)}</span><span class="go">↗</span>
-              </a>
-            {/each}
-            {#if c.awaiting.length}
-              <details ontoggle={placeCard}>
-                <summary class="hd">{c.awaiting.length} awaiting review</summary>
-                {#each c.awaiting as login (login)}
-                  <div class="r dim">{login}</div>
-                {/each}
-              </details>
-            {/if}
-          </section>
-        {/if}
-        {#if c.threads.length}
-          {@const open = c.threads.filter((t) => !t.resolved)}
-          {@const done = c.threads.filter((t) => t.resolved)}
-          <section>
-            <div class="hd"><span>Code threads</span>
-              <span><span data-tone={open.length ? "warn" : undefined}>{open.length} unresolved</span> of {c.threads.length}</span></div>
-            {#each open as t (t.url)}
-              <details class="th" ontoggle={placeCard}>
-                <summary title="Click to expand or collapse">
-                  <span class="r0">
-                    <span>{t.login}</span>
-                    <span class="mono dim t">{t.path}{t.line ? `:${t.line}` : ""}</span>
-                    {#if t.tag}<span class="tag" data-tone={TAG[t.tag] ?? "off"}>{t.tag}</span>{/if}
-                    <span class="ago">{ago(t.at)}</span>
-                    <a class="go" href={t.url} target="_blank" rel="noreferrer" title="Open on GitHub">↗</a>
-                  </span>
-                  <span class="txt">{t.body}</span>
-                  <span class="meta">{t.replies ? `${t.replies} repl${t.replies === 1 ? "y" : "ies"} · last by ${t.lastBy}` : "No replies"}</span>
-                </summary>
-              </details>
-            {/each}
-            {#if done.length}
-              <details ontoggle={placeCard}>
-                <summary class="hd">{done.length} resolved</summary>
-                {#each done as t (t.url)}
-                  <a class="r lk" href={t.url} target="_blank" rel="noreferrer">
-                    <span>{t.login}</span>
-                    <span class="mono dim t">{t.path}{t.line ? `:${t.line}` : ""}</span>
-                    <span class="ago">{ago(t.at)}</span><span class="go">↗</span>
-                  </a>
-                {/each}
-              </details>
-            {/if}
-          </section>
-        {/if}
-        {#if c.comments.length}
-          <section>
-            <details ontoggle={placeCard}>
-              <summary class="hd"><span>Comments</span><span>{c.comments.length}</span></summary>
-              {#each c.comments as cm (cm.url)}
-                <a class="th flat" href={cm.url} target="_blank" rel="noreferrer">
-                  <span class="r0"><span>{cm.login}</span>{#if cm.review}<span class="dim">review</span>{/if}
-                    <span class="ago">{ago(cm.at)}</span><span class="go">↗</span></span>
-                  <span class="txt dim">{cm.body}</span>
-                </a>
-              {/each}
-            </details>
-          </section>
-        {/if}
-        {#if c.checks.length}
-          {@const req = c.checks.filter((k) => k.required)}
-          {@const opt = c.checks.filter((k) => !k.required)}
-          {#snippet checkRow(k)}
-            <a class="r lk chk {k.bucket}" href={k.url} target="_blank" rel="noreferrer">
-              <span class="g" data-tone={CHECK[k.bucket]?.[1] ?? "off"}>{#if k.bucket === "pending"}<span class="spin"></span>{:else}{CHECK[k.bucket]?.[0] ?? "○"}{/if}</span>
-              <span class="t">{k.name}</span>
-              <span class="dur" data-tone={k.bucket === "pending" ? "warn" : undefined}>{runFor(k)}</span>
-              <span class="fin">{k.bucket === "pending" ? "–" : ago(k.completedAt)}</span>
-              <span class="go">↗</span>
-            </a>
-          {/snippet}
-          <section>
-            <div class="hd"><span>{req.length ? "Required checks" : "Checks"}</span>
-              <span class="cols"><span class="dur">ran for</span><span class="fin">finished</span><span class="go"></span></span></div>
-            {#each req.length ? req : opt as k, i (k.url + i)}
-              {@render checkRow(k)}
-            {/each}
-            {#if req.length && opt.length}
-              {@const bad = opt.filter((k) => k.bucket === "fail").length}
-              <details ontoggle={placeCard}>
-                <summary class="hd"><span>{opt.length} optional checks{#if bad} · <span data-tone="bad">{bad} failing</span>{/if}</span></summary>
-                {#each opt as k, i (k.url + i)}
-                  {@render checkRow(k)}
-                {/each}
-              </details>
-            {/if}
-          </section>
-        {/if}
-      {/if}
-      <section class="foot">
-        <a class="btn" href={p.url} target="_blank" rel="noreferrer">Open on GitHub ↗</a>
-        <a class="btn" href="{p.url}/files" target="_blank" rel="noreferrer">Files changed</a>
-        <button class="btn ib" title="Copy link" aria-label="Copy link"
-                onclick={(e) => copy(e, p.url, "prlink:" + p.url)}><Icon d={ICON.copy} /></button>
-      </section>
-    {/if}
-  </div>
-  <div class="toasts">
-    {#each toasts.slice(0, 3) as ev (ev.id)}
-      <button class="toast" onclick={() => openEv(ev)}>{ev.title} <span class="dim">{ev.body}</span></button>
-    {/each}
-    {#if toasts.length > 3}
-      <button class="toast" onclick={() => inboxEl.showPopover()}>+{toasts.length - 3} more</button>
-    {/if}
-    {#if agents.opened}
-      <button class="toast" onclick={(e) => {
-        copy(e, full(agents.opened).command, "ctx", "resume command");
-        agents.opened = null;
-      }}>Opened {clip(agents.opened.title || "session", 40)} in {full(agents.opened).label}
-        <span class="dim">· click to copy resume command</span></button>
-    {/if}
-    {#if ui.toast}
-      <div class="toast" onclick={() => (ui.toast = "")} role="presentation">
-        copied <span class="mono">{ui.toast}</span> to clipboard
-      </div>
-    {/if}
-  </div>
-</div>
-<div id="inbox" class="ctx inbox" popover bind:this={inboxEl}
-  ontoggle={onInbox}>
-  {#each inbox as ev (ev.id)}
-    <div class="ev" oncontextmenu={(e) => openMenu(e, evItems(ev))} role="presentation">
-      <button class="go" onclick={() => openEv(ev)}>
-        <span class="t">{ev.title}</span><span class="ago">{ago(ev.at)}</span>
-        <span class="b">{ev.body}</span></button>
-      <button class="more" title="Snooze or mute" aria-label="Snooze or mute"
-              onclick={(e) => openMenu(e, evItems(ev))}>⋯</button>
-    </div>
-  {:else}
-    <div class="empty">Nothing yet — every kind starts off
-      <button class="btn" onclick={notifySettings}>Choose kinds…</button></div>
-  {/each}
+  <Card />
 </div>
 
 <Palette items={paletteItems} bind:open={paletteOpen} />
@@ -2599,75 +2229,6 @@ async function confirmDiscard() {
   background: var(--bg3);
   color: var(--dim);
   font: 0.6875rem var(--mono);
-}
-.card .ago + .x {
-  margin-left: 0;
-}
-.bell {
-  position: relative;
-}
-.bell .n {
-  position: absolute;
-  top: -0.25rem;
-  right: -0.375rem;
-  min-width: 1rem;
-  padding: 0 0.25rem;
-  border-radius: 999px;
-  background: var(--acc);
-  color: var(--bg);
-  font: 600 0.625rem/1rem var(--sans);
-}
-.ctx.inbox {
-  inset: 3rem 0.5rem auto auto;
-  width: min(26rem, calc(100vw - 1rem));
-  max-height: calc(100vh - 4rem);
-  overflow-y: auto;
-}
-.inbox .ev {
-  display: flex;
-  align-items: start;
-  border-radius: 0.375rem;
-}
-.inbox .ev:hover {
-  background: var(--hov);
-}
-.inbox .ev button.go {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 0 0.5rem;
-  white-space: normal;
-}
-.inbox .ev button.go:hover,
-.inbox .ev button.more:hover {
-  background: none;
-  color: var(--fg);
-}
-.inbox .ev .b {
-  grid-column: 1 / -1;
-  color: var(--dim);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.inbox .ev .ago {
-  color: var(--dimmer);
-}
-.inbox .ev button.more {
-  width: auto;
-  color: var(--dim);
-}
-.inbox .empty .btn {
-  margin-top: 0.5rem;
-}
-.toasts {
-  position: fixed;
-  bottom: 0.75rem;
-  right: 0.75rem;
-  z-index: 20;
-  display: flex;
-  flex-direction: column;
-  align-items: end;
-  gap: 0.375rem;
 }
 .app {
   display: flex;
@@ -3429,250 +2990,6 @@ async function confirmDiscard() {
 .repo:hover .plus,
 .repo:focus-within .plus {
   visibility: visible;
-}
-.card {
-  width: 27rem;
-  max-width: calc(100vw - 1rem);
-  max-height: min(40rem, calc(100vh - 1rem));
-  overflow-y: auto;
-  padding: 0 0 0.25rem;
-  font: 0.75rem var(--sans);
-  color: var(--fg);
-}
-.card .top {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  background: var(--bg2);
-  padding: 0.625rem 0.75rem 0.5rem;
-}
-.card .r,
-.card .r0 {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  min-width: 0;
-}
-.card section .r {
-  padding: 0.1875rem 0.375rem;
-  border-radius: 0.375rem;
-}
-.card .ttl {
-  font-size: 0.8125rem;
-  line-height: 1.35;
-  margin: 0.25rem 0 0.375rem;
-}
-.card .sm {
-  font: 0.6875rem var(--mono);
-}
-.card .st {
-  padding: 0 0.4375rem;
-  font-size: 0.6875rem;
-}
-.card .st,
-.card .top .pr {
-  flex-shrink: 0;
-  white-space: nowrap;
-}
-.card section {
-  border-top: 1px solid var(--line);
-  padding: 0.5rem 0.375rem;
-}
-.card .hd {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 0.5rem;
-  color: var(--dim);
-  font-size: 0.6875rem;
-  padding: 0 0.375rem;
-  margin-bottom: 0.25rem;
-}
-.card summary.hd {
-  justify-content: flex-start;
-}
-.card summary.hd > span + span {
-  margin-left: auto;
-}
-.card summary {
-  list-style: none;
-  cursor: pointer;
-  margin: 0.25rem 0 0;
-}
-.card summary::-webkit-details-marker {
-  display: none;
-}
-.card summary::before {
-  content: "▶";
-  display: inline-block;
-  font-size: 0.5625rem;
-  margin-right: 0.3125rem;
-}
-.card details[open] > summary::before {
-  transform: rotate(90deg);
-}
-.card summary:hover {
-  color: var(--fg);
-}
-.card a.lk,
-.card a.th {
-  color: inherit;
-  text-decoration: none;
-}
-.card a.lk:hover,
-.card a.th:hover {
-  background: var(--hl);
-}
-.card .go {
-  width: 0.625rem;
-  color: var(--dim);
-  font-size: 0.6875rem;
-  visibility: hidden;
-}
-.card a:hover .go {
-  visibility: visible;
-}
-.card .th {
-  display: flex;
-  flex-direction: column;
-  background: var(--bg);
-  border: 1px solid var(--line);
-  border-radius: 0.5rem;
-  padding: 0.375rem 0.5rem;
-  margin: 0 0.375rem 0.3125rem;
-}
-.card details.th > summary {
-  display: flex;
-  flex-direction: column;
-  margin: 0;
-  color: inherit;
-}
-.card details.th > summary::before {
-  content: none;
-}
-.card details.th:hover {
-  background: var(--hl);
-}
-.card details.th .go {
-  text-decoration: none;
-}
-.card details.th:hover .go,
-.card details.th .go:focus-visible {
-  visibility: visible;
-}
-.card details.th[open] .txt {
-  display: block;
-  max-height: none;
-  white-space: pre-line;
-}
-.card .th.flat {
-  background: none;
-  border-color: transparent;
-  margin: 0;
-}
-.card .r0 > :first-child {
-  flex: none;
-  white-space: nowrap;
-}
-.card .th .txt {
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  max-height: 2.8em;
-  line-height: 1.4;
-  margin: 0.1875rem 0 0.125rem;
-}
-.card .th .meta {
-  display: block;
-  color: var(--dimmer);
-  font-size: 0.6875rem;
-}
-.card .tag {
-  font: 0.6875rem var(--mono);
-}
-.card .t {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.card .ago {
-  margin-left: auto;
-  color: var(--dimmer);
-  font: 0.6875rem var(--mono);
-  white-space: nowrap;
-}
-.card .cols {
-  display: flex;
-  gap: 0.5rem;
-}
-.card .dur,
-.card .fin {
-  flex: none;
-  text-align: right;
-  font: 0.6875rem var(--mono);
-  color: var(--dim);
-}
-.card .dur {
-  width: 4.25rem;
-  margin-left: auto;
-}
-.card .fin {
-  width: 3.25rem;
-  color: var(--dimmer);
-}
-.card .cols .dur,
-.card .cols .fin {
-  font-family: var(--sans);
-  color: var(--dim);
-}
-.card .dim {
-  color: var(--dim);
-}
-.card .mono {
-  font: 0.6875rem var(--mono);
-}
-.card label.r {
-  cursor: pointer;
-}
-.card .cbx {
-  flex: none;
-}
-.card .g {
-  width: 1em;
-  flex: none;
-  text-align: center;
-  font: 0.75rem var(--mono);
-}
-.card .foot {
-  display: flex;
-  gap: 0.375rem;
-  padding: 0.5rem 0.75rem 0.25rem;
-}
-.card .practs {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.375rem;
-  padding: 0.5rem 0.75rem;
-}
-.card .practs .q {
-  flex: 1;
-  font-size: 0.75rem;
-  color: var(--fg);
-}
-.card .btn.ok {
-  color: var(--addfg);
-  border-color: color-mix(in srgb, var(--acc) var(--ink), var(--line));
-  background: var(--add);
-}
-.card .btn.warn {
-  color: var(--warn);
-  border-color: color-mix(in srgb, var(--warn) var(--edge), var(--line));
-}
-.card .foot .btn {
-  text-decoration: none;
 }
 .newwt {
   display: flex;
