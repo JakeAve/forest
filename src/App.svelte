@@ -1,5 +1,4 @@
 <script>
-import { tick } from "svelte";
 import SourcePane from "./SourcePane.svelte";
 import FilesPane from "./FilesPane.svelte";
 import WorktreesPane from "./WorktreesPane.svelte";
@@ -10,10 +9,7 @@ import Settings from "./Settings.svelte";
 import Menu from "./Menu.svelte";
 import Card from "./Card.svelte";
 import Notify from "./Notify.svelte";
-import { pathText, rank, rankBy, wtScore } from "./filter.js";
-import { ancestorDirs, splitPath } from "../parse.ts";
 import { ICON, LAYOUTS } from "./icons.js";
-import { combo, label as keyLabel, resolve } from "./keys.js";
 import {
   collapse,
   isX,
@@ -23,42 +19,13 @@ import {
   prefs,
   resize,
   saveLayout,
-  saveSettings,
   setPreset,
-  toggleMax,
-  zoomBy,
 } from "./prefs.svelte.js";
-import {
-  act,
-  applyTheme,
-  clickCell,
-  copy,
-  loadThemes,
-  scrollRow,
-  ui,
-} from "./ui.svelte.js";
-import { menu, menuSession } from "./menu.svelte.js";
-import { applyRows, rows, toggleAll, toggleCheck } from "./rows.svelte.js";
-import {
-  discardArm,
-  nav,
-  onFs,
-  onReady,
-  onRows,
-  openAt,
-  pick,
-  selectWt,
-  setBase,
-  urlQuery,
-} from "./nav.svelte.js";
-import {
-  full,
-  loadAgents,
-  loadDetails,
-  resume,
-  terminal,
-} from "./agents.svelte.js";
-import { repoItems, toggleAutoRebase, wtItems } from "./wtActions.js";
+import { applyTheme, loadThemes, ui } from "./ui.svelte.js";
+import { applyRows, rows } from "./rows.svelte.js";
+import { nav, onFs, onReady, onRows, urlQuery } from "./nav.svelte.js";
+import { loadAgents } from "./agents.svelte.js";
+import { cmds, kbdOf, loadPalTree, runKey } from "./commands.svelte.js";
 
 loadSettings();
 loadLayout().then((t) => t && applyTheme(t, false));
@@ -145,474 +112,8 @@ function gutterKey(e, n, el) {
   saveLayout();
 }
 
-let paletteOpen = $state(false);
-let grepQ = $state("");
-let grepHits = $state([]);
-
-async function grep(v) {
-  grepQ = v;
-  const wt = nav.sel;
-  const hits = v
-    ? await fetch(
-      `/api/grep?wt=${encodeURIComponent(wt)}&q=${encodeURIComponent(v)}`,
-    ).then((r) => r.json())
-    : [];
-  if (grepQ === v && nav.sel === wt) grepHits = hits;
-}
-let palTree = $state({ of: null, files: [], dirs: [] });
-
-const desktop = () => prefs.settings?.desktop;
-const hasFile = () => nav.sel && nav.file;
-const termDir = () =>
-  nav.selDir || nav.file?.split("/").slice(0, -1).join("/") || undefined;
-function goWt(w) {
-  selectWt(w.path);
-  scrollRow(w.path);
-}
-function stepWt(d) {
-  const i = rows.navWts.findIndex((w) => w.path === nav.sel);
-  goWt(
-    rows
-      .navWts[Math.max(0, Math.min(rows.navWts.length - 1, i < 0 ? 0 : i + d))],
-  );
-}
-const liveWt = () => !nav.loose && nav.selWt;
-const focusedWt = () => {
-  const el = document.activeElement;
-  const path = el?.matches(".wt, .wt .cbx") && el.closest(".wt").dataset.path;
-  return path && rows.allWts.find((w) => w.path === path && !w.isPrimary);
-};
-
-// Runs a t / c / l action on the popover's session, then closes the popover.
-function onSession(fn) {
-  const a = menuSession();
-  menu.el?.hidePopover();
-  fn(a);
-}
-const COMMANDS = [
-  {
-    id: "palette",
-    label: "Command palette",
-    keys: "cmd+k, cmd+p",
-    run: () => (paletteOpen = !paletteOpen),
-  },
-  {
-    id: "shortcuts",
-    label: "Keyboard shortcuts",
-    keys: "shift+slash, cmd+slash",
-    run: () => (shortcutsOpen = !shortcutsOpen),
-  },
-  {
-    id: "open-path",
-    label: "Open path…",
-    keys: "cmd+o",
-    run: () => ui.refs.files?.editPath(),
-  },
-  {
-    id: "settings",
-    label: "Settings",
-    keys: "cmd+comma",
-    run: () => ui.refs.settings.toggle(),
-  },
-  {
-    id: "next-wt",
-    label: "Next worktree",
-    section: "Worktrees",
-    keys: "j",
-    when: () => rows.navWts.length,
-    run: () => stepWt(1),
-  },
-  {
-    id: "prev-wt",
-    label: "Previous worktree",
-    section: "Worktrees",
-    keys: "k",
-    when: () => rows.navWts.length,
-    run: () => stepWt(-1),
-  },
-  ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => ({
-    id: `pinned-${n}`,
-    label: `Pinned worktree ${n}`,
-    section: "Worktrees",
-    keys: `ctrl+${n}`,
-    when: () => rows.pinnedWts[n - 1],
-    run: () => goWt(rows.pinnedWts[n - 1]),
-  })),
-  {
-    id: "auto-rebase",
-    get label() {
-      return liveWt()?.autoRebase
-        ? "Disable auto-rebase"
-        : "Enable auto-rebase";
-    },
-    section: "Worktrees",
-    keys: "alt+cmd+r",
-    when: () =>
-      liveWt() && !nav.selWt.isPrimary && !ui.busy["ar:" + nav.selWt.path] &&
-      (nav.selWt.autoRebase || nav.selWt.pr?.state !== "MERGED"),
-    run: (e) => toggleAutoRebase(nav.selWt, e),
-  },
-  {
-    id: "toggle-select",
-    label: "Select worktree",
-    section: "Worktrees",
-    keys: "space",
-    when: () => !!focusedWt(),
-    run: (e) => {
-      const w = focusedWt();
-      if (w) toggleCheck(w, e);
-    },
-  },
-  {
-    id: "open-terminal",
-    label: "Open terminal here",
-    section: "Worktrees",
-    keys: "ctrl+backquote",
-    when: () => nav.sel,
-    run: (e) =>
-      act("terminal", { wt: nav.sel, path: termDir() }, "term:" + nav.sel, e),
-  },
-  {
-    id: "reveal",
-    label: "Reveal in Finder",
-    section: "Files",
-    keys: "alt+shift+cmd+r",
-    when: () => nav.sel && (nav.selDir || nav.file),
-    run: (e) =>
-      act(
-        "reveal",
-        { wt: nav.sel, path: nav.selDir || nav.file },
-        "reveal:" + nav.sel,
-        e,
-      ),
-  },
-  {
-    id: "trash",
-    label: "Move to Trash",
-    section: "Files",
-    keys: "cmd+backspace",
-    // ⌘⌫ deletes a line while typing, so never steal it from a field or the editor
-    when: () =>
-      nav.sel && (nav.selDir || nav.file) &&
-      !document.activeElement?.closest(
-        "input, textarea, select, [contenteditable]",
-      ),
-    run: () => discardArm({ path: nav.selDir || nav.file, del: true }),
-  },
-  {
-    id: "copy-ticket",
-    label: "Copy ticket link",
-    section: "Worktrees",
-    keys: "alt+cmd+t",
-    when: () => liveWt() && liveWt().ticket,
-    run: (e) => copy(e, liveWt().ticket.url, "kbd"),
-  },
-  {
-    id: "agent-sessions",
-    label: "Agent sessions…",
-    section: "Agent sessions",
-    keys: "a",
-    when: () => liveWt()?.agents?.length,
-    run: () => clickCell(nav.selWt, "agent"),
-  },
-  {
-    id: "pr-card",
-    label: "Pull request…",
-    section: "Worktrees",
-    keys: "p",
-    when: () => liveWt()?.pr,
-    run: () => clickCell(nav.selWt, "pr"),
-  },
-  {
-    id: "agent-resume",
-    get label() {
-      const a = liveWt()?.agents?.[0];
-      return `Resume ${a?.label ?? "agent"} session`;
-    },
-    section: "Agent sessions",
-    keys: "alt+cmd+a",
-    when: () => liveWt()?.agents?.length,
-    run: (e) => {
-      loadDetails(nav.selWt);
-      resume(nav.selWt.agents[0], e);
-    },
-  },
-  {
-    id: "session-terminal",
-    label: "Resume session in terminal",
-    section: "Agent sessions",
-    keys: "t",
-    when: menuSession,
-    run: (e) => onSession((a) => terminal(a, e)),
-  },
-  {
-    id: "session-copy-id",
-    label: "Copy session ID",
-    section: "Agent sessions",
-    keys: "c",
-    when: menuSession,
-    run: (e) => onSession((a) => copy(e, a.id, "kbd")),
-  },
-  {
-    id: "session-copy-link",
-    label: "Copy session resume link",
-    section: "Agent sessions",
-    keys: "l",
-    when: menuSession,
-    run: (e) => onSession((a) => copy(e, full(a).url, "kbd", "resume link")),
-  },
-  ...["Worktrees", "Files", "Source"].map((name, i) => ({
-    id: `max-${name.toLowerCase()}`,
-    get label() {
-      return `${prefs.max === i + 1 ? "Restore" : "Maximize"} ${name}`;
-    },
-    section: "View",
-    keys: `alt+cmd+${i + 1}`,
-    run: () => toggleMax(i + 1),
-  })),
-  {
-    id: "cycle-mode",
-    label: "Cycle text, preview and hex",
-    section: "View",
-    keys: "alt+cmd+v",
-    when: () => hasFile() && nav.modeList.length > 1 && !nav.diffDirty,
-    run: () => ui.refs.source?.cycleMode(),
-  },
-  {
-    id: "filter-branches",
-    label: "Focus branch filter",
-    section: "Worktrees",
-    keys: "alt+cmd+b",
-    run: () => focusFilter(1, () => ui.refs.wts?.focusFilter()),
-  },
-  {
-    id: "filter-files",
-    label: "Focus file filter",
-    section: "Files",
-    keys: "alt+cmd+f",
-    run: () => focusFilter(2, () => ui.refs.files?.focusFilter()),
-  },
-  {
-    id: "find",
-    label: "Find in file",
-    section: "View",
-    keys: "cmd+f",
-    when: () => hasFile() && nav.mode === "text" && !nav.srcBinary,
-    run: () => ui.refs.source?.focusFind(),
-  },
-  {
-    id: "copy-path",
-    label: "Copy path (relative)",
-    section: "Files",
-    keys: "alt+shift+cmd+c",
-    when: hasFile,
-    run: (e) => copy(e, nav.file, "kbd"),
-  },
-  {
-    id: "copy-path-abs",
-    label: "Copy path (absolute)",
-    section: "Files",
-    keys: "alt+cmd+c",
-    when: hasFile,
-    run: (e) => copy(e, `${nav.sel}/${nav.file}`, "kbd"),
-  },
-  {
-    id: "zoom-in",
-    label: "Zoom in",
-    section: "View",
-    keys: "cmd+equal, shift+cmd+equal, cmd+numpadadd",
-    when: desktop,
-    run: () => zoomBy(0.1),
-  },
-  {
-    id: "zoom-out",
-    label: "Zoom out",
-    section: "View",
-    keys: "cmd+minus, cmd+numpadsubtract",
-    when: desktop,
-    run: () => zoomBy(-0.1),
-  },
-  {
-    id: "zoom-reset",
-    label: "Reset zoom",
-    section: "View",
-    keys: "cmd+0, cmd+numpad0",
-    when: desktop,
-    run: () => zoomBy(0),
-  },
-];
-const keymap = $derived(resolve(COMMANDS, prefs.settings?.keys));
-const kbdOf = (id) => keymap.byId[id]?.[0] && keyLabel(keymap.byId[id][0]);
-
-async function focusFilter(n, focus) {
-  if (prefs.max && prefs.max !== n) prefs.max = null;
-  await tick();
-  focus();
-}
-
-function runKey(e) {
-  const k = !e.defaultPrevented && !e.isComposing && combo(e);
-  const c = k && COMMANDS.find((c) => c.id === keymap.byCombo.get(k));
-  if (!c || (c.when && !c.when())) return;
-  if (
-    !/ctrl|alt|cmd/.test(k) &&
-    e.target.closest?.("input, textarea, select, [contenteditable]")
-  ) return;
-  e.preventDefault();
-  c.run(e);
-}
-
-let shortcutsOpen = $state(false);
-function bindKey(id, k) {
-  const { [id]: _, ...rest } = prefs.settings.keys;
-  prefs.settings.keys = k ? { ...rest, [id]: k } : rest;
-  saveSettings();
-}
-
 $effect(() => {
-  const wt = nav.sel;
-  if (!paletteOpen || !wt || nav.treeOf === wt || nav.loose) return;
-  fetch(`/api/tree?wt=${encodeURIComponent(wt)}`).then((r) => r.json())
-    .then((t) => {
-      if (nav.sel === wt) palTree = { of: wt, files: t.files, dirs: t.dirs };
-    });
-});
-
-const asPalette = (items, detail) =>
-  items.filter((i) => i && i !== "-").map((i) => ({
-    ...i,
-    kbd: i.kbd || (i.cmd && kbdOf(i.cmd)),
-    group: "action",
-    detail,
-  }));
-
-const paletteItems = $derived.by(() => {
-  if (!paletteOpen) return [];
-  const t = nav.treeOf === nav.sel || nav.loose
-    ? { files: nav.tree, dirs: nav.treeDirs }
-    : palTree.of === nav.sel
-    ? palTree
-    : { files: [], dirs: [] };
-  const pathItems = (kind, paths) =>
-    paths.map((p) => {
-      const [dir, name] = splitPath(p);
-      return {
-        group: kind === "dir" ? "folder" : "file",
-        label: name,
-        detail: dir || undefined,
-        fn: () =>
-          openAt({ wt: nav.sel, loose: nav.loose, kind, rel: p, line: 0 }),
-      };
-    });
-  const cmd = (label, fn, kbd) => ({ group: "command", label, fn, kbd });
-  const wtItem = (w) => ({
-    group: "worktree",
-    label: w.branch,
-    detail: [
-      w.repo,
-      w.pr && `#${w.pr.number} ${w.pr.title}`,
-      w.procs?.map((p) => [p.command, ...p.ports.map((n) => `:${n}`)].join(" "))
-        .join(" · "),
-    ].filter(Boolean).join(" · "),
-    fn: () => {
-      selectWt(w.path);
-      scrollRow(w.path);
-    },
-    sub: () => asPalette(wtItems(w, true), w.branch),
-  });
-  return [
-    ...[...rows.allWts].sort((a, b) =>
-      !!prefs.pinned[b.path] - !!prefs.pinned[a.path] ||
-      b.lastActivity - a.lastActivity
-    ).map(wtItem),
-    ...(nav.selWt && !nav.loose
-      ? asPalette(wtItems(nav.selWt, true), nav.selWt.branch)
-        .filter((i) => !COMMANDS.some((c) => c.label === i.label))
-      : []),
-    ...LAYOUTS.map(([p, name]) => cmd(`${name} layout`, () => setPreset(p))),
-    ...(nav.loose ? [] : [
-      cmd("Since branch point", () => setBase("branch")),
-      cmd("Uncommitted", () => setBase("head")),
-      cmd("All files", () => setBase("all")),
-    ]),
-    cmd("Toggle wrap", () => {
-      prefs.wrap = !prefs.wrap;
-      saveLayout();
-    }),
-    cmd(`${rows.allClosed ? "Expand" : "Collapse"} all worktrees`, toggleAll),
-    {
-      ...cmd("Filter branches…"),
-      query: () => rows.q,
-      onquery: (v) => (rows.q = v),
-      sub: () =>
-        rankBy(rows.shownWts, 50, (w) => wtScore(rows.q, w)).map(wtItem),
-    },
-    ...(nav.sel
-      ? [{
-        ...cmd("Filter files…"),
-        query: () => nav.fq,
-        onquery: (v) => (nav.fq = v),
-        sub: () =>
-          rank(
-            nav.fq,
-            nav.explore ? nav.tree : nav.files.map((f) => f.path),
-            50,
-            pathText,
-          )
-            .map((p) => ({
-              group: "file",
-              label: splitPath(p)[1],
-              detail: splitPath(p)[0] || undefined,
-              fn: () => (pick({ path: p }), scrollRow(p)),
-            })),
-      }, {
-        ...cmd("Grep…"),
-        query: () => grepQ,
-        onquery: grep,
-        sub: () =>
-          grepHits.map((h) => ({
-            group: "match",
-            label: h.text,
-            detail: `${h.path}:${h.line}`,
-            fn: () =>
-              openAt({
-                wt: nav.sel,
-                loose: nav.loose,
-                kind: "file",
-                rel: h.path,
-                line: h.line,
-              }),
-          })),
-      }]
-      : []),
-    cmd("Dirty only", () => (rows.dirtyOnly = !rows.dirtyOnly)),
-    cmd("Running only", () => (rows.runningOnly = !rows.runningOnly)),
-    ...COMMANDS.filter((c) => c.id !== "palette" && (!c.when || c.when()))
-      .map((c) => cmd(c.label, c.run, kbdOf(c.id))),
-    {
-      ...cmd("Theme…", () => ui.refs.settings.open()),
-      sub: () =>
-        ["default", ...ui.themes].map((name) =>
-          cmd(name, () => applyTheme(name))
-        ),
-    },
-    ...rows.repos.map((r) => ({
-      group: "repo",
-      label: r.name,
-      detail: r.path,
-      fn: async () => {
-        prefs.closed.__all = false;
-        prefs.closed[r.name] = false;
-        saveLayout();
-        await tick();
-        document.querySelector(`[data-repo="${CSS.escape(r.name)}"]`)
-          ?.scrollIntoView({ block: "nearest" });
-      },
-      sub: () => asPalette(repoItems(r, r.worktrees), r.name),
-    })),
-    ...pathItems("dir", [...new Set([...ancestorDirs(t.files), ...t.dirs])]),
-    ...pathItems("file", t.files),
-  ];
+  if (cmds.paletteOpen) loadPalTree();
 });
 </script>
 
@@ -629,7 +130,7 @@ const paletteItems = $derived.by(() => {
     </svg>
     <span class="path">{prefs.settings?.root ?? ""}</span>
     <span class="sp"></span>
-    <button class="omni" onclick={() => (paletteOpen = true)}>
+    <button class="omni" onclick={() => (cmds.paletteOpen = true)}>
       <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/></svg>
       Search worktrees, files, commands{#if kbdOf("palette")}<kbd>{kbdOf("palette")}</kbd>{/if}</button>
     <span class="sp"></span>
@@ -665,7 +166,7 @@ const paletteItems = $derived.by(() => {
   {#if prefs.ready}
   <div class="panes {prefs.preset}" class:max={prefs.max} style:--b1={paneSize(1)} style:--b2={paneSize(2)}>
   <div class="band wts" class:maxed={prefs.max === 1} bind:this={b1El}>
-    <WorktreesPane bind:this={ui.refs.wts} {kbdOf} />
+    <WorktreesPane bind:this={ui.refs.wts} />
   </div>
 
   <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
@@ -675,7 +176,7 @@ const paletteItems = $derived.by(() => {
        onkeydown={(e) => gutterKey(e, 1, b1El)}></div>
 
   <div class="band files" class:maxed={prefs.max === 2} bind:this={b2El}>
-    <FilesPane bind:this={ui.refs.files} {kbdOf} />
+    <FilesPane bind:this={ui.refs.files} />
   </div>
   <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
   <div class="gutter g2" class:x={isX(2)} role="separator" tabindex="0"
@@ -684,20 +185,19 @@ const paletteItems = $derived.by(() => {
        onkeydown={(e) => gutterKey(e, 2, b2El)}></div>
 
   <div class="band sourceband" class:maxed={prefs.max === 3}>
-    <SourcePane bind:this={ui.refs.source} {kbdOf} />
+    <SourcePane bind:this={ui.refs.source} />
   </div>
   </div>
   {/if}
-  <Menu {kbdOf} {keymap} />
+  <Menu />
   <Card />
 </div>
 
-<Palette items={paletteItems} bind:open={paletteOpen} />
-<Shortcuts commands={COMMANDS} {keymap} onbind={bindKey}
-  bind:open={shortcutsOpen} />
+<Palette items={cmds.paletteItems} bind:open={cmds.paletteOpen} />
+<Shortcuts bind:open={cmds.shortcutsOpen} />
 
-<Settings bind:this={ui.refs.settings} {kbdOf}
-  onshortcuts={() => (shortcutsOpen = true)} />
+<Settings bind:this={ui.refs.settings}
+  onshortcuts={() => (cmds.shortcutsOpen = true)} />
 
 <style>
 .omni {

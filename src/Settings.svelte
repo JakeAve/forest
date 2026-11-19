@@ -13,9 +13,9 @@ import {
 } from "./prefs.svelte.js";
 import { applyTheme, importTheme, importVsTheme, ui } from "./ui.svelte.js";
 import { rows } from "./rows.svelte.js";
+import { kbdOf } from "./commands.svelte.js";
 
-// Until the commands store exists, App passes what it will own.
-let { kbdOf, onshortcuts } = $props();
+let { onshortcuts } = $props();
 
 let dlg = $state();
 let fileEl = $state();

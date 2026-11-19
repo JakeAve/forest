@@ -1,17 +1,18 @@
 <script>
 import { rank } from "./filter.js";
 import { combo, label } from "./keys.js";
+import { bindKey, cmds, COMMANDS } from "./commands.svelte.js";
 
-let { commands, keymap, onbind, open = $bindable(false) } = $props();
+let { open = $bindable(false) } = $props();
 let dlg, input;
 let q = $state("");
 let recording = $state(null);
 
-const shown = $derived(q ? rank(q, commands, 999, (c) => c.label) : commands);
+const shown = $derived(q ? rank(q, COMMANDS, 999, (c) => c.label) : COMMANDS);
 const sections = $derived(
   Object.entries(Object.groupBy(shown, (c) => c.section ?? "General")),
 );
-const keysOf = (id) => [...new Set(keymap.byId[id].map(label))];
+const keysOf = (id) => [...new Set(cmds.keymap.byId[id].map(label))];
 
 $effect(() => {
   if (open && !dlg.open) {
@@ -27,7 +28,7 @@ function record(e) {
   e.preventDefault();
   const k = combo(e);
   if (!k) return;
-  if (k !== "escape") onbind(recording, k === "backspace" ? null : k);
+  if (k !== "escape") bindKey(recording, k === "backspace" ? null : k);
   recording = null;
   input.focus();
 }
@@ -37,9 +38,9 @@ function record(e) {
   <input bind:this={input} bind:value={q} placeholder="Filter shortcuts…"
     spellcheck="false" autocomplete="off">
   <div class="list">
-    {#each sections as [name, cmds] (name)}
+    {#each sections as [name, list] (name)}
       <div class="sec">{name}</div>
-      {#each cmds as c (c.id)}
+      {#each list as c (c.id)}
         <button class:on={recording === c.id}
                 onclick={() => (recording = recording === c.id ? null : c.id)}>
           <span class="l">{c.label}</span>
