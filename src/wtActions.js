@@ -1,7 +1,17 @@
-import { clip, prAb, prStatus } from "../parse.ts";
+import { branchUrl, clip, prAb, prStatus, relWt, renamed } from "../parse.ts";
+import { prefs, saveLayout } from "./prefs.svelte.js";
 import { act, ago, copy, ui } from "./ui.svelte.js";
-import { drill } from "./menu.svelte.js";
-import { isOpen, rows, toggleAll, toggleRepo } from "./rows.svelte.js";
+import { askInCard, drill } from "./menu.svelte.js";
+import {
+  isOpen,
+  match,
+  repoOf,
+  rows,
+  toggleAll,
+  toggleRepo,
+} from "./rows.svelte.js";
+import { nav, selectWt } from "./nav.svelte.js";
+import { agentItems } from "./agents.svelte.js";
 
 export const rowBusy = (w) =>
   Object.keys(ui.busy).some((k) => k.endsWith(":" + w.path)) ||
@@ -213,3 +223,137 @@ export const allItems = () => [
     },
   },
 ];
+
+export function wtItems(w, solo = false) {
+  const t = !solo && rows.checked[w.path] && rows.checkedWts.length > 1
+    ? rows.checkedWts
+    : [w];
+  const many = t.length > 1;
+  const pin = t.every((x) => prefs.pinned[x.path]);
+  const branches = t.map((x) => x.branch).join("\n");
+  const paths = t.map((x) => x.path).join("\n");
+  return [
+    !many && { label: "Open", fn: () => selectWt(w.path) },
+    !many && {
+      label: "Open terminal here",
+      cmd: w === nav.selWt && !nav.selDir && !nav.file && "open-terminal",
+      fn: (e) => act("terminal", { wt: w.path }, "term:" + w.path, e),
+    },
+    !many && "-",
+    ...(many ? [] : agentItems(w)),
+    {
+      label: many ? `Copy ${t.length} branch names` : "Copy branch name",
+      fn: (e) =>
+        copy(e, branches, "ctx", many ? `${t.length} branch names` : w.branch),
+    },
+    !many && renamed(w) && {
+      label: "Copy remote branch name",
+      fn: (e) => copy(e, w.remote, "ctx"),
+    },
+    {
+      label: many ? `Copy ${t.length} paths` : "Copy path",
+      fn: (e) => copy(e, paths, "ctx", many ? `${t.length} paths` : w.path),
+    },
+    !many && {
+      label: "Copy path (relative)",
+      fn: (e) => copy(e, relWt(repoOf(w), w), "ctx"),
+    },
+    "-",
+    !many && branchUrl(repoOf(w), w) && {
+      label: "Open remote branch",
+      fn: () => open(branchUrl(repoOf(w), w), "_blank", "noreferrer"),
+    },
+    !many && w.pr && {
+      label: `View pull request #${w.pr.number}`,
+      fn: () => open(w.pr.url, "_blank", "noreferrer"),
+    },
+    !many && w.ticket && {
+      label: `Open ticket ${w.ticket.key}`,
+      fn: () => open(w.ticket.url, "_blank", "noreferrer"),
+    },
+    !many && w.ticket && {
+      label: "Copy ticket link",
+      cmd: w === nav.selWt && "copy-ticket",
+      fn: (e) => copy(e, w.ticket.url, "ctx"),
+    },
+    !many && repoOf(w)?.webUrl && (!w.remote || w.ahead > 0) && {
+      label: w.remote ? `Push (↑${w.ahead})` : "Push branch to remote",
+      fn: (e) => push(w, e),
+    },
+    !many && repoOf(w)?.webUrl && !w.isPrimary && !w.pr && {
+      label: "Compare & open pull request",
+      fn: async (e) => {
+        if (
+          !w.remote && !(await push(w, e))
+        ) {
+          return;
+        }
+        open(
+          `${repoOf(w).webUrl}/compare/${
+            (w.remote ?? w.branch).split("/").map(encodeURIComponent).join("/")
+          }?expand=1`,
+          "_blank",
+          "noreferrer",
+        );
+      },
+    },
+    !many && repoOf(w)?.webUrl && !w.isPrimary && !w.pr && {
+      label: "Open pull request",
+      fn: (e) =>
+        act(
+          "pr-create",
+          { wt: w.path, remote: w.remote, branch: w.branch },
+          "pc:" + w.path,
+          e,
+        ),
+    },
+    "-",
+    {
+      label: `${pin ? "Unpin" : "Pin"}${many ? ` ${t.length}` : ""}`,
+      fn: () => {
+        for (const x of t) {
+          if (pin) delete prefs.pinned[x.path];
+          else prefs.pinned[x.path] = true;
+        }
+        saveLayout();
+      },
+    },
+    !many && w.pr?.state === "OPEN" && {
+      label: w.pr.autoMerge ? "Disable auto-merge" : "Enable auto-merge",
+      fn: (e) => toggleAutoMerge(w, e),
+    },
+    !many && !w.isPrimary && (w.autoRebase || w.pr?.state !== "MERGED") && {
+      label: w.autoRebase ? "Disable auto-rebase" : "Enable auto-rebase",
+      cmd: w === nav.selWt && "auto-rebase",
+      fn: (e) => toggleAutoRebase(w, e),
+    },
+    !many && w.ticket?.info && (w.autoClose || w.pr?.state === "OPEN") && {
+      label: w.autoClose
+        ? "Don't close ticket on merge"
+        : "Close ticket on merge",
+      fn: (e) => toggleAutoClose(w, e),
+    },
+    ...(many ? [] : prActions(w).map((a) => ({
+      label: a.confirm ? `${a.menu}…` : a.menu,
+      danger: a.cls === "dg",
+      fn: (e) => a.confirm ? askInCard(w, a, e) : a.go(e),
+    }))),
+    !many && {
+      label: w.isPrimary ? "Pull" : "Fetch + rebase",
+      fn: (e) => rebase(w, e),
+    },
+    !many && w.procs?.length > 0 && "-",
+    ...(!many ? (w.procs ?? []).map(killItem) : []),
+    !w.isPrimary && "-",
+    !w.isPrimary && {
+      label: many ? `Remove ${t.length} worktrees…` : "Remove worktree…",
+      danger: true,
+      fn: () => {
+        rows.confirmSel = false;
+        rows.confirming = t.filter((x) =>
+          !x.isPrimary && (x === w || match(repoOf(x), x))
+        );
+      },
+    },
+  ];
+}

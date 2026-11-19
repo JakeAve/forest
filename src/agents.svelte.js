@@ -2,6 +2,7 @@ import { clip, sessionTag, shortId } from "../parse.ts";
 import { prefs } from "./prefs.svelte.js";
 import { act, ago, clickCell, copy } from "./ui.svelte.js";
 import { drill, menu } from "./menu.svelte.js";
+import { nav } from "./nav.svelte.js";
 
 class Agents {
   // Per-agent label, glyph and tone come from the server, so the UI names no
@@ -166,8 +167,9 @@ export function sessionActions(w, s) {
   ];
 }
 
-/** `cur`: w is the selected worktree, so its items show their shortcuts. */
-export function agentItems(w, cur) {
+export function agentItems(w) {
+  // the selected worktree's items show their shortcuts
+  const cur = w === nav.selWt;
   if (w.isPrimary && !w.agents?.length) return [];
   const [first, ...rest] = w.agents ?? [];
   if (!first) return [{ label: "No agent session found", disabled: true }, "-"];

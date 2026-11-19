@@ -4,9 +4,8 @@ import { prefs, saveSettings, setDeliver } from "./prefs.svelte.js";
 import { ago, copy, ui } from "./ui.svelte.js";
 import { openMenu } from "./menu.svelte.js";
 import { rows } from "./rows.svelte.js";
+import { selectWt } from "./nav.svelte.js";
 import { agents, full } from "./agents.svelte.js";
-
-let { selectWt } = $props();
 
 let inbox = $state([]);
 let inboxEl = $state();
