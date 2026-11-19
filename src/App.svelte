@@ -6,6 +6,7 @@ import Palette from "./Palette.svelte";
 import Shortcuts from "./Shortcuts.svelte";
 import Hex from "./Hex.svelte";
 import Icon from "./Icon.svelte";
+import Settings from "./Settings.svelte";
 import {
   matchPath,
   matchWt,
@@ -63,82 +64,41 @@ import {
 import { parseThemeText, resolveTheme, setFavicon } from "./theme.js";
 import { combo, label as keyLabel, resolve } from "./keys.js";
 import { marked } from "marked";
+import {
+  collapse,
+  COLUMNS,
+  isX,
+  loadLayout,
+  loadSettings,
+  MODES,
+  moveCol,
+  paneSize,
+  prefs,
+  resetWidths,
+  resize,
+  saveLayout,
+  saveSettings,
+  setDeliver,
+  setPreset,
+  toggleCol,
+  toggleMax,
+  zoomBy,
+} from "./prefs.svelte.js";
 
-let settings = $state(null);
-fetch("/api/settings").then((r) => r.json()).then((s) => (settings = s));
+loadSettings();
+loadLayout().then((t) => t && applyTheme(t, false));
 
-let zoom = $state(1);
 $effect(() => {
-  document.documentElement.style.fontSize = zoom === 1 ? "" : `${zoom * 100}%`;
+  document.documentElement.style.fontSize = prefs.zoom === 1
+    ? ""
+    : `${prefs.zoom * 100}%`;
 });
-function zoomBy(d) {
-  zoom = d ? Math.round(Math.min(2, Math.max(0.6, zoom + d)) * 10) / 10 : 1;
-  saveLayout();
-}
 
-const AXES = { stack: "yy", sidebar: "xy", columns: "xx", rail: "yx" };
-let preset = $state("stack");
-let panes = $state({
-  stack: { b1: { h: "32%", c: false }, b2: { h: "24%", c: false } },
-  sidebar: { b1: { h: "30%", c: false }, b2: { h: "40%", c: false } },
-  columns: { b1: { h: "25%", c: false }, b2: { h: "30%", c: false } },
-  rail: { b1: { h: "40%", c: false }, b2: { h: "34%", c: false } },
-});
-let split = $state(50);
-let max = $state(null);
-let wrap = $state(false);
-const MODES = {
-  text: ["text", "hex"],
-  markup: ["text", "preview", "hex"],
-  media: ["preview", "hex"],
-};
 const MODE_LABEL = { text: "Text", preview: "Preview", hex: "Hex" };
-let modes = $state({ text: "text", markup: "text", media: "preview" });
-let closed = $state({});
-let widths = $state({});
-let pinned = $state({});
 let checked = $state({});
-let ready = $state(false);
 // boot progress from the server's `status` SSE event; the repo list streams in
 // during the first sweep, so this says what is still coming.
 let boot = $state({ phase: "repos", done: 0, total: 0 });
-fetch("/api/layout").then((r) => r.json()).then((l) => {
-  if (l.panes) panes = { ...panes, ...l.panes };
-  else if (l.b1) panes.stack = { b1: l.b1, b2: l.b2 ?? panes.stack.b2 };
-  if (l.preset in AXES) preset = l.preset;
-  if (l.split) split = l.split;
-  if (l.wrap) wrap = true;
-  for (const k in MODES) {
-    if (MODES[k].includes(l.modes?.[k])) modes[k] = l.modes[k];
-  }
-  if (l.closed) closed = l.closed;
-  if (l.widths) widths = l.widths;
-  if (l.pinned) pinned = l.pinned;
-  if (l.zoom) zoom = l.zoom;
-  if (l.theme) applyTheme(l.theme, false);
-}).finally(() => (ready = true));
-
-let saveT;
-function saveLayout() {
-  clearTimeout(saveT);
-  saveT = setTimeout(() =>
-    fetch("/api/layout", {
-      method: "PUT",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        preset,
-        panes,
-        split,
-        wrap,
-        modes,
-        closed,
-        widths,
-        pinned,
-        theme,
-        zoom,
-      }),
-    }), 500);
-}
 
 let repos = $state([]);
 let sel = $state(null);
@@ -195,12 +155,7 @@ let diskAt = $state(0); // when the open file last changed on disk
 let now = $state(Date.now());
 let b1El = $state(), b2El = $state();
 let themes = $state([]);
-let vsThemes = $state([]);
-let theme = $state("default");
-let fileEl = $state();
-let dlg = $state();
-let newRepo = $state("");
-let newTicketRepo = $state("");
+let settingsDlg = $state();
 let creating = $state(null);
 let slug = $state("");
 let busy = $state({});
@@ -244,7 +199,7 @@ const mediaType = $derived(
 const kind = $derived(
   mediaType ? "media" : isHtml || isMd || isSvg ? "markup" : "text",
 );
-const mode = $derived(modes[kind]);
+const mode = $derived(prefs.modes[kind]);
 const modeList = $derived(
   kind === "text" && srcBinary ? ["hex"] : MODES[kind],
 );
@@ -299,7 +254,7 @@ function setMode(m) {
   if (mode === "text") {
     rawView = { top: srcBodyEl.scrollTop, head: diffRef?.cursor() ?? 0 };
   }
-  modes[kind] = m;
+  prefs.modes[kind] = m;
   saveLayout();
 }
 
@@ -325,7 +280,7 @@ $effect(() => {
   if (!(mode === "preview" && (isHtml || isMd) && sel && file)) {
     return void (previewReady = false);
   }
-  void diffTick, void theme;
+  void diffTick, void prefs.theme;
   const q = `wt=${encodeURIComponent(sel)}&path=${encodeURIComponent(file)}`;
   fetch(`/api/file?${q}&base=${base}`).then((r) => r.json()).then((d) => {
     const raw = d.work ?? d.base ?? "";
@@ -375,7 +330,7 @@ const match = (r, w) => matchWt({ q, dirtyOnly, runningOnly }, r?.name, w);
 const allWts = $derived(repos.flatMap((r) => r.worktrees));
 const repoOf = (w) => repos.find((r) => r.name === w.repo);
 const shownWts = $derived(allWts.filter((w) => match(repoOf(w), w)));
-const pinnedWts = $derived(shownWts.filter((w) => pinned[w.path]));
+const pinnedWts = $derived(shownWts.filter((w) => prefs.pinned[w.path]));
 const checkedWts = $derived(allWts.filter((w) => checked[w.path]));
 const selecting = $derived(checkedWts.length > 0);
 const hiddenChecked = $derived(
@@ -387,11 +342,11 @@ const allShownChecked = $derived(
 );
 const someShownChecked = $derived(selectable.some((w) => checked[w.path]));
 const recentWts = $derived(
-  shownWts.filter((w) => !pinned[w.path])
+  shownWts.filter((w) => !prefs.pinned[w.path])
     .sort((a, b) => b.lastActivity - a.lastActivity)
-    .slice(0, settings?.recentCount ?? 10),
+    .slice(0, prefs.settings?.recentCount ?? 10),
 );
-const isClosed = (k) => closed[k] ?? k === "__all";
+const isClosed = (k) => prefs.closed[k] ?? k === "__all";
 const isOpen = (k) => filtering || !isClosed(k);
 const allClosed = $derived(isClosed("__all"));
 const repoWts = $derived.by(() => {
@@ -423,7 +378,7 @@ $effect(() => {
     const ev = JSON.parse(e.data);
     if (inbox.some((x) => x.id === ev.id)) return;
     inbox = [ev, ...inbox];
-    const d = settings?.notify[ev.kind];
+    const d = prefs.settings?.notify[ev.kind];
     if (d === "app" || d === "both") addToast(ev);
   });
   es.addEventListener("fs", (e) => {
@@ -477,8 +432,11 @@ $effect(() => {
 });
 
 $effect(() => {
-  if (!settings) return;
-  const tick = setInterval(() => (now = Date.now()), settings.agoRefreshMs);
+  if (!prefs.settings) return;
+  const tick = setInterval(
+    () => (now = Date.now()),
+    prefs.settings.agoRefreshMs,
+  );
   return () => clearInterval(tick);
 });
 
@@ -895,35 +853,13 @@ function toggleAll() {
 
 function toggleRepo(name) {
   if (filtering) return;
-  closed[name] = !isClosed(name);
-  saveLayout();
-}
-
-const isX = (n) => AXES[preset][n - 1] === "x";
-
-function resize(n, el, size) {
-  const band = panes[preset][`b${n}`];
-  const min = isX(n)
-    ? 14 * parseFloat(getComputedStyle(document.documentElement).fontSize)
-    : el.firstElementChild.offsetHeight;
-  band.h = Math.max(min, size) + "px";
-  band.c = false;
-}
-
-const paneSize = (n) =>
-  panes[preset][`b${n}`].c && !isX(n)
-    ? "var(--head)"
-    : panes[preset][`b${n}`].h;
-
-function setPreset(p) {
-  preset = p;
-  max = null;
+  prefs.closed[name] = !isClosed(name);
   saveLayout();
 }
 
 function drag(e, n, el) {
   e.preventDefault();
-  max = null;
+  prefs.max = null;
   const x = isX(n);
   const p0 = x ? e.clientX : e.clientY;
   const s0 = x ? el.offsetWidth : el.offsetHeight;
@@ -937,13 +873,6 @@ function drag(e, n, el) {
   addEventListener("mouseup", up);
 }
 
-function collapse(n) {
-  if (isX(n)) return;
-  max = null;
-  panes[preset][`b${n}`].c = !panes[preset][`b${n}`].c;
-  saveLayout();
-}
-
 function gutterKey(e, n, el) {
   if (e.key === "Enter") return collapse(n);
   const d =
@@ -952,93 +881,17 @@ function gutterKey(e, n, el) {
       : { ArrowUp: -20, ArrowDown: 20 })[e.key];
   if (!d) return;
   e.preventDefault();
-  max = null;
+  prefs.max = null;
   resize(n, el, (isX(n) ? el.offsetWidth : el.offsetHeight) + d);
   saveLayout();
 }
 
 const ago = (ms) => agoText(now, ms);
 
-const COLUMNS = [
-  {
-    key: "branch",
-    label: "Branch",
-    align: "left",
-    stretch: true,
-    width: "12rem",
-  },
-  {
-    key: "title",
-    label: "Title",
-    align: "left",
-    stretch: true,
-    width: "13rem",
-  },
-  {
-    key: "ticket",
-    label: "Ticket",
-    align: "left",
-    stretch: true,
-    width: "4.5rem",
-  },
-  {
-    key: "pr",
-    label: "Pull request",
-    align: "left",
-    stretch: false,
-    width: "8.5rem",
-  },
-  {
-    key: "changes",
-    label: "Changes",
-    align: "right",
-    stretch: false,
-    width: "3.25rem",
-  },
-  {
-    key: "sync",
-    label: "Sync",
-    align: "right",
-    stretch: false,
-    width: "3.5rem",
-  },
-  {
-    key: "ports",
-    label: "Running",
-    align: "left",
-    stretch: false,
-    width: "8rem",
-  },
-  {
-    key: "agent",
-    label: "Agent",
-    align: "left",
-    stretch: false,
-    width: "2.5rem",
-  },
-  {
-    key: "active",
-    label: "Active",
-    align: "right",
-    stretch: false,
-    width: "2.875rem",
-  },
-];
-const visibleCols = $derived(
-  [
-    ...new Set(
-      settings?.columns?.length
-        ? settings.columns
-        : COLUMNS.filter((c) => c.key !== "title").map((c) => c.key),
-    ),
-  ].map((k) => COLUMNS.find((c) => c.key === k)).filter(Boolean),
+const colGrid = $derived(
+  colTemplate(prefs.visibleCols, prefs.lead, prefs.widths),
 );
-const lead = $derived(
-  ["title", "branch", "ticket"].map((k) => visibleCols.find((c) => c.key === k))
-    .find(Boolean),
-);
-const colGrid = $derived(colTemplate(visibleCols, lead, widths));
-const colMin = $derived(colsMin(visibleCols, lead, widths));
+const colMin = $derived(colsMin(prefs.visibleCols, prefs.lead, prefs.widths));
 let colsEl = $state();
 // a header gesture in flight: `size` drags a column edge, `move` drags a
 // column to a new slot. `x` is where the guide line is drawn.
@@ -1079,7 +932,7 @@ function sizeCol(e, col) {
   const cell = e.currentTarget.parentElement;
   const left = cell.getBoundingClientRect().left;
   const w0 = cell.offsetWidth;
-  const prev = widths[col.key];
+  const prev = prefs.widths[col.key];
   let moved = false;
   const at = (w) =>
     colOp = {
@@ -1092,13 +945,13 @@ function sizeCol(e, col) {
   track(e, "colsizing", (m) => {
     moved = true;
     const w = Math.max(24, Math.round(w0 + m.clientX - e.clientX));
-    widths[col.key] = w + "px";
+    prefs.widths[col.key] = w + "px";
     at(w);
   }, (u) => {
     if (!moved) return;
     if (u) return saveLayout();
-    if (prev) widths[col.key] = prev;
-    else delete widths[col.key];
+    if (prev) prefs.widths[col.key] = prev;
+    else delete prefs.widths[col.key];
   });
 }
 
@@ -1109,20 +962,14 @@ function fitCol(key) {
   }
   const w = Math.max(24, ...cells.map((c) => c.offsetWidth));
   for (const c of cells) c.style.cssText = "";
-  widths[key] = Math.ceil(w) + "px";
-  saveLayout();
-}
-
-function resetWidths(key) {
-  if (key) delete widths[key];
-  else widths = {};
+  prefs.widths[key] = Math.ceil(w) + "px";
   saveLayout();
 }
 
 function grabCol(e, col) {
   if (e.button !== 0) return;
   const cells = [...colsEl.querySelectorAll(".h")];
-  const from = visibleCols.indexOf(col);
+  const from = prefs.visibleCols.indexOf(col);
   const rects = cells.map((c) => c.getBoundingClientRect());
   const r0 = rects[from];
   const others = rects.filter((_, i) => i !== from);
@@ -1147,30 +994,15 @@ function grabCol(e, col) {
   }, (u) => u && colOp && to !== from && moveCol(col.key, to));
 }
 
-function setCols(keys) {
-  settings.columns = keys.length ? keys : ["none"];
-  saveSettings();
-}
-
-function toggleCol(key) {
-  const keys = visibleCols.map((c) => c.key);
-  setCols(keys.includes(key) ? keys.filter((k) => k !== key) : [...keys, key]);
-}
-
-function moveCol(key, i) {
-  const keys = visibleCols.map((c) => c.key).filter((k) => k !== key);
-  keys.splice(i, 0, key);
-  setCols(keys);
-}
-
 const colItems = (key) => [
   key && { label: "Autofit width", fn: () => fitCol(key) },
-  key && widths[key] && { label: "Reset width", fn: () => resetWidths(key) },
-  Object.keys(widths).length &&
+  key && prefs.widths[key] &&
+  { label: "Reset width", fn: () => resetWidths(key) },
+  Object.keys(prefs.widths).length &&
   { label: "Reset all widths", fn: () => resetWidths() },
   "-",
   ...COLUMNS.map((c) => ({
-    label: (visibleCols.includes(c) ? "✓ " : "") + c.label,
+    label: (prefs.visibleCols.includes(c) ? "✓ " : "") + c.label,
     fn: () => toggleCol(c.key),
   })),
 ];
@@ -1180,27 +1012,19 @@ let toastT;
 function showToast(text) {
   toast = text;
   clearTimeout(toastT);
-  toastT = setTimeout(() => (toast = ""), settings?.toastMs ?? 7000);
+  toastT = setTimeout(() => (toast = ""), prefs.settings?.toastMs ?? 7000);
 }
 
 let inbox = $state([]);
 let inboxEl = $state();
-let notifySec = $state();
 let toasts = $state([]);
 const unread = $derived(inbox.filter((e) => !e.readAt).length);
-const GROUPS = {
-  act: "Act now",
-  move: "Your move",
-  life: "Lifecycle",
-  clean: "Cleanup",
-};
-const DELIVER = { off: "Off", app: "In app", os: "macOS", both: "Both" };
 
 function addToast(ev) {
   toasts = [ev, ...toasts];
   setTimeout(
     () => (toasts = toasts.filter((t) => t.id !== ev.id)),
-    settings?.toastMs ?? 7000,
+    prefs.settings?.toastMs ?? 7000,
   );
 }
 
@@ -1226,13 +1050,9 @@ function openEv(ev) {
 }
 
 function mute(path) {
-  if (!settings.notifyMuted.includes(path)) settings.notifyMuted.push(path);
-  saveSettings();
-}
-
-function setDeliver(kind, v) {
-  if (v === "off") delete settings.notify[kind];
-  else settings.notify[kind] = v;
+  if (!prefs.settings.notifyMuted.includes(path)) {
+    prefs.settings.notifyMuted.push(path);
+  }
   saveSettings();
 }
 
@@ -1250,8 +1070,7 @@ const evItems = (ev) => [
 
 function notifySettings() {
   inboxEl?.hidePopover();
-  openSettings();
-  notifySec?.scrollIntoView({ block: "start" });
+  settingsDlg.open("notify");
 }
 
 async function copy(e, text, key, label = text) {
@@ -1730,7 +1549,7 @@ function wtItems(w, solo = false) {
     ? checkedWts
     : [w];
   const many = t.length > 1;
-  const pin = t.every((x) => pinned[x.path]);
+  const pin = t.every((x) => prefs.pinned[x.path]);
   const branches = t.map((x) => x.branch).join("\n");
   const paths = t.map((x) => x.path).join("\n");
   return [
@@ -1813,8 +1632,8 @@ function wtItems(w, solo = false) {
       label: `${pin ? "Unpin" : "Pin"}${many ? ` ${t.length}` : ""}`,
       fn: () => {
         for (const x of t) {
-          if (pin) delete pinned[x.path];
-          else pinned[x.path] = true;
+          if (pin) delete prefs.pinned[x.path];
+          else prefs.pinned[x.path] = true;
         }
         saveLayout();
       },
@@ -1916,7 +1735,10 @@ async function resume(a, e) {
   ) {
     opened = a;
     clearTimeout(openedT);
-    openedT = setTimeout(() => (opened = null), settings?.toastMs ?? 7000);
+    openedT = setTimeout(
+      () => (opened = null),
+      prefs.settings?.toastMs ?? 7000,
+    );
   }
 }
 
@@ -2164,31 +1986,6 @@ async function createWt(r) {
   }
 }
 
-function addLauncher() {
-  const name = newRepo.trim();
-  if (!name || settings.launchers[name] !== undefined) return;
-  settings.launchers[name] = "";
-  newRepo = "";
-}
-
-function addTicket() {
-  const name = newTicketRepo.trim();
-  if (!name || settings.tickets[name] !== undefined) return;
-  settings.tickets[name] = "";
-  newTicketRepo = "";
-}
-
-let setT;
-function saveSettings() {
-  clearTimeout(setT);
-  setT = setTimeout(() =>
-    fetch("/api/settings", {
-      method: "PUT",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(settings),
-    }).then((r) => r.json()).then((s) => (settings = s)), 400);
-}
-
 async function applyTheme(name, save = true) {
   const st = document.documentElement.style;
   let resolved = { vars: {}, dark: null };
@@ -2216,7 +2013,7 @@ async function applyTheme(name, save = true) {
   try {
     localStorage.setItem("forest-theme", JSON.stringify(resolved));
   } catch {}
-  theme = name;
+  prefs.theme = name;
   if (save) saveLayout();
 }
 
@@ -2237,18 +2034,11 @@ async function importTheme(e) {
   }
 }
 
-async function importVsTheme(e) {
-  const path = e.target.value;
-  e.target.value = "";
-  const hit = vsThemes.find((t) => t.path === path);
-  if (hit && await act("theme-import", { path }, "theme")) {
+async function importVsTheme(hit) {
+  if (await act("theme-import", { path: hit.path }, "theme")) {
     themes = await (await fetch("/api/themes")).json();
     applyTheme(hit.name);
   }
-}
-
-function toggleMax(n) {
-  max = max === n ? null : n;
 }
 
 let paletteOpen = $state(false);
@@ -2267,7 +2057,7 @@ async function grep(v) {
 }
 let palTree = $state({ of: null, files: [], dirs: [] });
 
-const desktop = () => settings?.desktop;
+const desktop = () => prefs.settings?.desktop;
 const hasFile = () => sel && file;
 const termDir = () =>
   selDir || file?.split("/").slice(0, -1).join("/") || undefined;
@@ -2316,13 +2106,6 @@ function onSession(fn) {
   menuEl?.hidePopover();
   fn(a);
 }
-let vsLoad;
-function openSettings() {
-  vsLoad ??= fetch("/api/vscode-themes").then((r) => r.json())
-    .then((t) => (vsThemes = t));
-  dlg.showModal();
-}
-const toggleSettings = () => (dlg.open ? dlg.close() : openSettings());
 const COMMANDS = [
   {
     id: "palette",
@@ -2337,7 +2120,12 @@ const COMMANDS = [
     run: () => (shortcutsOpen = !shortcutsOpen),
   },
   { id: "open-path", label: "Open path…", keys: "cmd+o", run: editPath },
-  { id: "settings", label: "Settings", keys: "cmd+comma", run: toggleSettings },
+  {
+    id: "settings",
+    label: "Settings",
+    keys: "cmd+comma",
+    run: () => settingsDlg.toggle(),
+  },
   {
     id: "next-wt",
     label: "Next worktree",
@@ -2482,7 +2270,7 @@ const COMMANDS = [
   ...["Worktrees", "Files", "Source"].map((name, i) => ({
     id: `max-${name.toLowerCase()}`,
     get label() {
-      return `${max === i + 1 ? "Restore" : "Maximize"} ${name}`;
+      return `${prefs.max === i + 1 ? "Restore" : "Maximize"} ${name}`;
     },
     section: "View",
     keys: `alt+cmd+${i + 1}`,
@@ -2560,11 +2348,11 @@ const COMMANDS = [
     run: () => zoomBy(0),
   },
 ];
-const keymap = $derived(resolve(COMMANDS, settings?.keys));
+const keymap = $derived(resolve(COMMANDS, prefs.settings?.keys));
 const kbdOf = (id) => keymap.byId[id]?.[0] && keyLabel(keymap.byId[id][0]);
 
 async function focusFilter(n, el) {
-  if (max && max !== n) max = null;
+  if (prefs.max && prefs.max !== n) prefs.max = null;
   await tick();
   el?.select();
 }
@@ -2583,8 +2371,8 @@ function runKey(e) {
 
 let shortcutsOpen = $state(false);
 function bindKey(id, k) {
-  const { [id]: _, ...rest } = settings.keys;
-  settings.keys = k ? { ...rest, [id]: k } : rest;
+  const { [id]: _, ...rest } = prefs.settings.keys;
+  prefs.settings.keys = k ? { ...rest, [id]: k } : rest;
   saveSettings();
 }
 
@@ -2639,7 +2427,8 @@ const paletteItems = $derived.by(() => {
   });
   return [
     ...[...allWts].sort((a, b) =>
-      !!pinned[b.path] - !!pinned[a.path] || b.lastActivity - a.lastActivity
+      !!prefs.pinned[b.path] - !!prefs.pinned[a.path] ||
+      b.lastActivity - a.lastActivity
     ).map(wtItem),
     ...(selWt && !loose
       ? asPalette(wtItems(selWt, true), selWt.branch)
@@ -2652,7 +2441,7 @@ const paletteItems = $derived.by(() => {
       cmd("All files", () => setBase("all")),
     ]),
     cmd("Toggle wrap", () => {
-      wrap = !wrap;
+      prefs.wrap = !prefs.wrap;
       saveLayout();
     }),
     cmd(`${allClosed ? "Expand" : "Collapse"} all worktrees`, toggleAll),
@@ -2700,7 +2489,7 @@ const paletteItems = $derived.by(() => {
     ...COMMANDS.filter((c) => c.id !== "palette" && (!c.when || c.when()))
       .map((c) => cmd(c.label, c.run, kbdOf(c.id))),
     {
-      ...cmd("Theme…", openSettings),
+      ...cmd("Theme…", () => settingsDlg.open()),
       sub: () =>
         ["default", ...themes].map((name) => cmd(name, () => applyTheme(name))),
     },
@@ -2709,8 +2498,8 @@ const paletteItems = $derived.by(() => {
       label: r.name,
       detail: r.path,
       fn: async () => {
-        closed.__all = false;
-        closed[r.name] = false;
+        prefs.closed.__all = false;
+        prefs.closed[r.name] = false;
         saveLayout();
         await tick();
         document.querySelector(`[data-repo="${CSS.escape(r.name)}"]`)
@@ -2746,14 +2535,14 @@ async function confirmDiscard() {
   onkeydown={runKey}
 />
 
-<div class="app" class:desktop={settings?.desktop}>
+<div class="app" class:desktop={prefs.settings?.desktop}>
   <div class="tbar">
     <svg class="mark" width="18" height="18" viewBox="0 0 24 24" fill="none" role="img" aria-label="forest">
       <path d="M5.2 8.6 L7.3 13.8 L6.2 13.8 L8.9 19 L1.5 19 L4.2 13.8 L3.1 13.8 Z" fill="var(--mark2)"/>
       <path d="M18.9 10.6 L20.9 14.8 L19.8 14.8 L22.5 19 L15.3 19 L18 14.8 L16.9 14.8 Z" fill="var(--mark2)"/>
       <path d="M12 3.4 L14.6 8.6 L13.1 8.6 L16.1 13.8 L14.6 13.8 L17.1 19 L6.9 19 L9.4 13.8 L7.9 13.8 L10.9 8.6 L9.4 8.6 Z" fill="var(--acc)"/>
     </svg>
-    <span class="path">{settings?.root ?? ""}</span>
+    <span class="path">{prefs.settings?.root ?? ""}</span>
     <span class="sp"></span>
     <button class="omni" onclick={() => (paletteOpen = true)}>
       <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/></svg>
@@ -2761,8 +2550,8 @@ async function confirmDiscard() {
     <span class="sp"></span>
     <div class="seg layouts" role="group" aria-label="Layout">
       {#each LAYOUTS as [p, name, d] (p)}
-        <button class:on={preset === p} title="{name} layout" aria-label="{name} layout"
-                aria-pressed={preset === p} onclick={() => setPreset(p)}>
+        <button class:on={prefs.preset === p} title="{name} layout" aria-label="{name} layout"
+                aria-pressed={prefs.preset === p} onclick={() => setPreset(p)}>
           <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d={d}/></svg></button>
       {/each}
     </div>
@@ -2770,7 +2559,7 @@ async function confirmDiscard() {
             aria-label={unread ? `Notifications, ${unread} unread` : "Notifications"}>
       <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
       {#if unread}<span class="n">{unread > 99 ? "99+" : unread}</span>{/if}</button>
-    <button class="circ" title="Settings {kbdOf('settings') ?? ''}" aria-label="Settings" onclick={openSettings}>
+    <button class="circ" title="Settings {kbdOf('settings') ?? ''}" aria-label="Settings" onclick={() => settingsDlg.open()}>
       <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg></button>
   </div>
 
@@ -2791,15 +2580,15 @@ async function confirmDiscard() {
     </div>
   {/if}
 
-  {#if ready}
+  {#if prefs.ready}
   {#snippet loadingRow()}<div class="empty late"><span class="spin"></span> Loading…</div>{/snippet}
   {#snippet maxBtn(n)}
-    <button class="btn max" class:on={max === n} title={max === n ? "Restore panes" : "Full screen"}
-            aria-label={max === n ? "Restore panes" : "Full screen"}
-            onclick={() => toggleMax(n)}><Icon d={max === n ? ICON.min : ICON.max} /></button>
+    <button class="btn max" class:on={prefs.max === n} title={prefs.max === n ? "Restore panes" : "Full screen"}
+            aria-label={prefs.max === n ? "Restore panes" : "Full screen"}
+            onclick={() => toggleMax(n)}><Icon d={prefs.max === n ? ICON.min : ICON.max} /></button>
   {/snippet}
-  <div class="panes {preset}" class:max style:--b1={paneSize(1)} style:--b2={paneSize(2)}>
-  <div class="band wts" class:maxed={max === 1} class:selecting bind:this={b1El}>
+  <div class="panes {prefs.preset}" class:max={prefs.max} style:--b1={paneSize(1)} style:--b2={paneSize(2)}>
+  <div class="band wts" class:maxed={prefs.max === 1} class:selecting bind:this={b1El}>
     <div class="bhead">
       {#if selectable.length}
         <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
@@ -2900,7 +2689,7 @@ async function confirmDiscard() {
            onkeydown={(e) => menuKey(e, colItems())}
            oncontextmenu={(e) => openMenu(e, colItems(e.target.closest?.("[data-col]")?.dataset.col))}>
         <span></span>
-        {#each visibleCols as col (col.key)}
+        {#each prefs.visibleCols as col (col.key)}
           <!-- svelte-ignore a11y_no_static_element_interactions -->
           <span class="h" class:end={col.align === "right"} class:moving={movingCol === col.key} data-col={col.key}
                 onpointerdown={(e) => grabCol(e, col)}><span class="lbl">{col.label}</span><i
@@ -3005,8 +2794,8 @@ async function confirmDiscard() {
                 onclick={(e) => toggleCheck(w, e)}
                 onkeydown={(e) => e.key === "Enter" && toggleCheck(w, e)}></span>
         {/if}
-        {#each visibleCols as col (col.key)}
-          <span class="c" class:end={col.align === "right"} class:lead={col === lead} class:moving={movingCol === col.key} data-col={col.key}>{#if col.key === "branch"}<span class="br" title={[w.branch, renamed(w) && `pushed as ${renamed(w)}`, dirName(w) &&
+        {#each prefs.visibleCols as col (col.key)}
+          <span class="c" class:end={col.align === "right"} class:lead={col === prefs.lead} class:moving={movingCol === col.key} data-col={col.key}>{#if col.key === "branch"}<span class="br" title={[w.branch, renamed(w) && `pushed as ${renamed(w)}`, dirName(w) &&
               `in ${dirName(w)}/`, repoOf(w)?.cached && "last known state; refreshing"].filter(Boolean).join(" · ")}>{#if
               showRepo}<span class="rp">{w.repo}</span>{/if}{w.branch}{#if
               renamed(w)}<span class="rb">{renamed(w)}</span>{/if}{#if
@@ -3058,7 +2847,7 @@ async function confirmDiscard() {
        onmousedown={(e) => drag(e, 1, b1El)} ondblclick={() => collapse(1)}
        onkeydown={(e) => gutterKey(e, 1, b1El)}></div>
 
-  <div class="band files" class:maxed={max === 2} bind:this={b2El}>
+  <div class="band files" class:maxed={prefs.max === 2} bind:this={b2El}>
     <div class="bhead"><b>{explore ? "Files" : "Changed files"}</b>
       {#if editingPath}
         <input class="filter open" class:grown={completions.length} placeholder="Open path…"
@@ -3232,7 +3021,7 @@ async function confirmDiscard() {
        onmousedown={(e) => drag(e, 2, b2El)} ondblclick={() => collapse(2)}
        onkeydown={(e) => gutterKey(e, 2, b2El)}></div>
 
-  <div class="band sourceband" class:maxed={max === 3}>
+  <div class="band sourceband" class:maxed={prefs.max === 3}>
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div class="bhead" oncontextmenu={(e) => file && openMenu(e, fileItems({ path: file }))}>
       {#if headRename}
@@ -3269,8 +3058,8 @@ async function confirmDiscard() {
                      count="{found.i}/{found.n}"
                      onescape={() => diffRef?.setCursor(diffRef.cursor())} />
         <label class="meta wraplbl">
-          <input type="checkbox" class="cbxin" bind:checked={wrap} onchange={saveLayout}>
-          <span class="cbx" class:on={wrap}></span>Wrap
+          <input type="checkbox" class="cbxin" bind:checked={prefs.wrap} onchange={saveLayout}>
+          <span class="cbx" class:on={prefs.wrap}></span>Wrap
         </label>
       {/if}
       {#if explore && selFile}
@@ -3310,11 +3099,11 @@ async function confirmDiscard() {
                   sandbox="allow-scripts" srcdoc={previewSrc}
                   onload={() => (previewReady = true)}></iframe>
         {/key}
-      {:else if sel && file && settings}
+      {:else if sel && file && prefs.settings}
         <Source bind:this={diffRef} wt={sel} path={file} {base} tick={diffTick} line={pendingLine}
-              collapse={{ margin: settings.collapseMargin, minSize: settings.collapseMinSize }}
+              collapse={{ margin: prefs.settings.collapseMargin, minSize: prefs.settings.collapseMinSize }}
               single={explore && !(selFile && showDiff)}
-              {split} onsplit={(s) => { split = s; saveLayout(); }} {wrap} find={lq} onfind={(f) => (found = f)}
+              split={prefs.split} onsplit={(s) => { prefs.split = s; saveLayout(); }} wrap={prefs.wrap} find={lq} onfind={(f) => (found = f)}
               onstate={(d) => (diffDirty = d)}
               onconflict={conflictBanner}
               onupdated={() => (diskAt = Date.now())}
@@ -3634,147 +3423,9 @@ async function confirmDiscard() {
 <Shortcuts commands={COMMANDS} {keymap} onbind={bindKey}
   bind:open={shortcutsOpen} />
 
-<dialog class="settings" bind:this={dlg}>
-  <div class="shead"><b>Settings</b><span class="sp"></span>
-    <button class="circ x" title="Close (Esc)" aria-label="Close"
-            onclick={() => dlg.close()}><Icon d={ICON.x} /></button></div>
-
-  <h3 class="sec">Theme</h3>
-  <div class="row">
-    <label for="theme-sel">theme</label>
-    <select id="theme-sel" class="theme" value={theme} disabled={busy.theme}
-            onchange={(e) => applyTheme(e.target.value)}>
-      <option value="default">default</option>
-      {#each themes as t (t)}<option value={t}>{t}</option>{/each}
-    </select>
-    <button class="btn" class:wait={busy.theme?.json} disabled={busy.theme}
-            onclick={() => fileEl.click()}>Import…</button>
-    <input type="file" accept=".json,.jsonc" hidden bind:this={fileEl} onchange={importTheme}>
-  </div>
-  {#if vsThemes.length}
-    <div class="row">
-      <label for="vs-sel">installed</label>
-      <select id="vs-sel" class="theme" value="" disabled={busy.theme} onchange={importVsTheme}>
-        <option value="">Pick a VS Code theme…</option>
-        {#each vsThemes as t (t.path)}<option value={t.path}>{t.name}</option>{/each}
-      </select>
-    </div>
-  {/if}
-  <div class="hint">Import any VS Code color theme JSON, or one VS Code already has</div>
-
-  <h3 class="sec">Preferences</h3>
-  {#each Object.entries(settings ?? {}) as [k, v] (k)}
-    {#if typeof v === "number" || typeof v === "string"}
-      <div class="row">
-        <label for="set-{k}">{k}</label>
-        {#if typeof v === "number"}
-          <input id="set-{k}" type="number" min="0" bind:value={settings[k]} onchange={saveSettings}>
-        {:else}
-          <input id="set-{k}" type="text" bind:value={settings[k]} onchange={saveSettings}>
-        {/if}
-        {#if k === "port" || k === "root" || k === "host"}<span class="hint">restart</span>{/if}
-      </div>
-    {/if}
-  {/each}
-
-  <h3 class="sec">Columns</h3>
-  {#each [...visibleCols, ...COLUMNS.filter((c) => !visibleCols.includes(c))] as c, i (c.key)}
-    {@const on = visibleCols.includes(c)}
-    <div class="row">
-      <label class="colck">
-        <input type="checkbox" class="cbxin" checked={on} onchange={() => toggleCol(c.key)}>
-        <span class="cbx" class:on></span>{c.label}
-      </label>
-      {#if on}
-        <button class="btn ib" title="Move up" aria-label="Move up" disabled={i === 0} onclick={() => moveCol(c.key, i - 1)}><Icon d={ICON.up} /></button>
-        <button class="btn ib" title="Move down" aria-label="Move down" disabled={i === visibleCols.length - 1}
-                onclick={() => moveCol(c.key, i + 1)}><Icon d={ICON.down} /></button>
-      {/if}
-    </div>
-  {/each}
-  <div class="row">
-    <button class="btn" onclick={() => ((settings.columns = []), saveSettings(), resetWidths())}>Reset columns</button>
-  </div>
-
-  <h3 class="sec">Launchers</h3>
-  {#each Object.entries(settings?.launchers ?? {}) as [repo] (repo)}
-    <div class="row">
-      <label for="l-{repo}">{repo}</label>
-      <input id="l-{repo}" class="wide mono" type="text"
-             bind:value={settings.launchers[repo]} onchange={saveSettings}>
-    </div>
-  {/each}
-  <div class="row">
-    <input class="lname" list="repo-names" placeholder="Repo name, or *"
-           bind:value={newRepo} onkeydown={(e) => e.key === "Enter" && addLauncher()}>
-    <datalist id="repo-names">
-      {#each repos as r (r.name)}<option value={r.name}></option>{/each}
-    </datalist>
-    <button class="btn ib" title="Add" aria-label="Add" disabled={!newRepo.trim()} onclick={addLauncher}><Icon d={ICON.plus} /></button>
-  </div>
-  <div class="hint">
-    Shell command run in the repo to make a worktree, instead of plain
-    <span class="mono">git worktree add</span>. <span class="mono">*</span> covers
-    any repo without its own entry; empty removes it.
-  </div>
-  <div class="hint mono">{"{slug} {repo} {path} {root}"}</div>
-
-  <h3 class="sec">Tickets</h3>
-  {#each Object.entries(settings?.tickets ?? {}) as [repo] (repo)}
-    <div class="row">
-      <label for="t-{repo}">{repo}</label>
-      <input id="t-{repo}" class="wide mono" type="text" placeholder="https://tracker/browse/{'{key}'}"
-             bind:value={settings.tickets[repo]} onchange={saveSettings}>
-    </div>
-  {/each}
-  <div class="row">
-    <input class="lname" list="repo-names" placeholder="Repo name, or *"
-           bind:value={newTicketRepo} onkeydown={(e) => e.key === "Enter" && addTicket()}>
-    <button class="btn ib" title="Add" aria-label="Add" disabled={!newTicketRepo.trim()} onclick={addTicket}><Icon d={ICON.plus} /></button>
-  </div>
-  <div class="hint">
-    URL for the ticket key found in a branch name, PR title or last commit
-    (<span class="mono">ROM-123</span>). A <span class="mono">#123</span> always
-    links to the repo's own issues.
-  </div>
-  <div class="hint mono">{"{key}"}</div>
-
-  <h3 class="sec" bind:this={notifySec}>Notifications</h3>
-  {#each Object.entries(GROUPS) as [g, name] (g)}
-    <div class="sub">{name}</div>
-    {#each Object.entries(KINDS).filter(([, k]) => k.group === g) as [kind, k] (kind)}
-      <div class="row">
-        <label class="kind" for="n-{kind}">{k.label}{#if k.hint}<span class="hint">{k.hint}</span>{/if}</label>
-        <select id="n-{kind}" class="theme" value={settings?.notify[kind] ?? "off"}
-                onchange={(e) => setDeliver(kind, e.target.value)}>
-          {#each Object.entries(DELIVER) as [v, l] (v)}<option value={v}>{l}</option>{/each}
-        </select>
-      </div>
-    {/each}
-  {/each}
-  <div class="sub">Muted</div>
-  {#each settings?.notifyMuted ?? [] as p, i (p)}
-    <div class="row">
-      <span class="kind mono">{p}</span>
-      <button class="btn ib" title="Unmute" aria-label="Unmute"
-              onclick={() => (settings.notifyMuted.splice(i, 1), saveSettings())}><Icon d={ICON.x} /></button>
-    </div>
-  {:else}
-    <div class="hint">Nothing muted. Mute a worktree or repo from an inbox row.</div>
-  {/each}
-  <div class="hint">
-    Someone pushed to your branch and upstream branch gone only fire after a
-    fetch, and Forest fetches only for auto-rebase worktrees. macOS delivery
-    needs a one-time permission for Script Editor in System Settings,
-    Notifications.
-  </div>
-
-  <h3 class="sec">Keyboard shortcuts</h3>
-  <div class="row">
-    <button class="btn" onclick={() => (dlg.close(), (shortcutsOpen = true))}>
-      View and rebind…{#if kbdOf("shortcuts")}<kbd>{kbdOf("shortcuts")}</kbd>{/if}</button>
-  </div>
-</dialog>
+<Settings bind:this={settingsDlg} {busy} {themes} {repos} {applyTheme}
+  {importTheme} {importVsTheme} {kbdOf}
+  onshortcuts={() => (shortcutsOpen = true)} />
 
 <style>
 .omni {
@@ -3869,116 +3520,6 @@ async function confirmDiscard() {
 }
 .inbox .empty .btn {
   margin-top: 0.5rem;
-}
-.sub {
-  padding: 0.5rem 1rem 0.125rem;
-  color: var(--dim);
-  font-size: 0.8125rem;
-  font-weight: 600;
-}
-.row .kind {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  color: var(--fg);
-  font: 0.8125rem var(--sans);
-  overflow-wrap: anywhere;
-}
-.row .kind.mono {
-  font-family: var(--mono);
-}
-dialog.settings {
-  margin: auto;
-  border: 1px solid var(--line);
-  border-radius: 0.875rem;
-  background: var(--bg2);
-  color: var(--fg);
-  padding: 0 0 0.875rem;
-  width: min(32rem, 92vw);
-  max-height: min(40rem, 80vh);
-  overflow-y: auto;
-  font: 0.875rem var(--sans);
-}
-dialog.settings .btn {
-  font-size: 0.8125rem;
-}
-dialog.settings::backdrop {
-  background: color-mix(in srgb, var(--bg) 65%, transparent);
-}
-.shead {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  background: var(--bg2);
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  height: var(--head);
-  padding: 0 0.75rem 0 1rem;
-  border-bottom: 1px solid var(--line);
-  margin-bottom: 0.25rem;
-  font-size: 1rem;
-}
-.sec {
-  position: sticky;
-  top: var(--head);
-  scroll-margin-top: var(--head);
-  z-index: 1;
-  margin: 0;
-  padding: 0.875rem 1rem 0.25rem;
-  background: var(--bg2);
-  font: 600 0.875rem var(--sans);
-  color: var(--fg);
-}
-.row {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.1875rem 1rem;
-}
-.row label {
-  width: 9.5rem;
-  color: var(--dim);
-  font: 0.8125rem var(--mono);
-}
-.row .colck {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  cursor: pointer;
-}
-.row input {
-  background: var(--input);
-  border: 1px solid var(--line);
-  border-radius: 0.375rem;
-  color: var(--fg);
-  font: 0.8125rem var(--mono);
-  padding: 0.1875rem 0.5rem;
-  width: 6.5rem;
-  outline: none;
-}
-.row input:focus {
-  border-color: var(--acc);
-}
-.row input.wide {
-  width: 100%;
-}
-.row input.lname {
-  width: 9.5rem;
-}
-.row input.mono,
-.hint.mono,
-.hint .mono {
-  font: 0.8125rem var(--mono);
-}
-.hint {
-  padding: 0.125rem 1rem;
-  color: var(--dimmer);
-  font-size: 0.8125rem;
-}
-.row .hint {
-  padding: 0;
 }
 .toasts {
   position: fixed;
@@ -4274,17 +3815,6 @@ dialog.settings::backdrop {
 .bhead .pth:hover {
   border-color: var(--line);
 }
-select.theme {
-  background: var(--input);
-  border: 1px solid var(--line);
-  border-radius: 0.375rem;
-  color: var(--fg);
-  font: 0.8125rem var(--sans);
-  padding: 0.1875rem 0.375rem;
-  outline: none;
-  max-width: 12rem;
-}
-
 .repo {
   position: sticky;
   top: var(--colsh);
