@@ -12,9 +12,10 @@ import {
   toggleCol,
 } from "./prefs.svelte.js";
 import { applyTheme, importTheme, importVsTheme, ui } from "./ui.svelte.js";
+import { rows } from "./rows.svelte.js";
 
-// Until the rows and commands stores exist, App passes what they will own.
-let { repos, kbdOf, onshortcuts } = $props();
+// Until the commands store exists, App passes what it will own.
+let { kbdOf, onshortcuts } = $props();
 
 let dlg = $state();
 let fileEl = $state();
@@ -139,7 +140,7 @@ function addTicket() {
     <input class="lname" list="repo-names" placeholder="Repo name, or *"
            bind:value={newRepo} onkeydown={(e) => e.key === "Enter" && addLauncher()}>
     <datalist id="repo-names">
-      {#each repos as r (r.name)}<option value={r.name}></option>{/each}
+      {#each rows.repos as r (r.name)}<option value={r.name}></option>{/each}
     </datalist>
     <button class="btn ib" title="Add" aria-label="Add" disabled={!newRepo.trim()} onclick={addLauncher}><Icon d={ICON.plus} /></button>
   </div>
