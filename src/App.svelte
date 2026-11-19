@@ -3903,16 +3903,6 @@ async function confirmDiscard() {
 </dialog>
 
 <style>
-.ico {
-  width: 1rem;
-  height: 1rem;
-  flex: none;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.6;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
 .omni {
   display: flex;
   align-items: center;
@@ -3932,11 +3922,6 @@ async function confirmDiscard() {
 .omni:hover {
   border-color: var(--dimmer);
 }
-.btn kbd {
-  margin-left: 0.5rem;
-  color: var(--dim);
-  font: 0.6875rem var(--mono);
-}
 .omni kbd {
   margin-left: auto;
   padding: 0 0.3125rem;
@@ -3945,32 +3930,6 @@ async function confirmDiscard() {
   background: var(--bg3);
   color: var(--dim);
   font: 0.6875rem var(--mono);
-}
-.circ {
-  display: grid;
-  place-items: center;
-  flex: none;
-  width: 2rem;
-  height: 2rem;
-  border: 1px solid var(--line);
-  border-radius: 50%;
-  background: var(--bg2);
-  color: var(--dim);
-  cursor: pointer;
-}
-.circ:hover {
-  color: var(--acc);
-}
-.circ.x,
-.circ.plus {
-  width: 1.25rem;
-  height: 1.25rem;
-  margin-left: auto;
-}
-.circ.x .ico,
-.circ.plus .ico {
-  width: 0.75rem;
-  height: 0.75rem;
 }
 .acts .ico,
 .sechd .ico {
@@ -4000,13 +3959,6 @@ async function confirmDiscard() {
   background: var(--acc);
   color: var(--bg);
   font: 600 0.625rem/1rem var(--sans);
-}
-button.toast {
-  font-family: var(--sans);
-  text-align: left;
-}
-.toast .dim {
-  color: var(--dim);
 }
 .ctx.inbox {
   inset: 3rem 0.5rem auto auto;
@@ -4152,10 +4104,6 @@ dialog.settings::backdrop {
 .hint .mono {
   font: 0.8125rem var(--mono);
 }
-.btn:disabled {
-  opacity: .4;
-  cursor: default;
-}
 .hint {
   padding: 0.125rem 1rem;
   color: var(--dimmer);
@@ -4173,19 +4121,6 @@ dialog.settings::backdrop {
   flex-direction: column;
   align-items: end;
   gap: 0.375rem;
-}
-.toast {
-  max-width: 60vw;
-  padding: 0.4375rem 0.6875rem;
-  border: 1px solid var(--line);
-  border-radius: 0.75rem;
-  background: var(--bg2);
-  color: var(--fg);
-  font-size: 0.75rem;
-  cursor: pointer;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 .app {
   display: flex;
@@ -4211,9 +4146,6 @@ dialog.settings::backdrop {
 .tbar .path {
   color: var(--dimmer);
   font: 0.6875rem var(--mono);
-}
-.sp {
-  flex: 1;
 }
 
 .panes {
@@ -4273,103 +4205,12 @@ dialog.settings::backdrop {
 .g2 {
   grid-area: g2;
 }
-.band {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  min-height: 0;
-  overflow: hidden;
-  container-type: inline-size;
-  background: var(--bg2);
-  border: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
-  border-radius: 0.875rem;
-}
-.bhead {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  height: var(--head);
-  padding: 0 0.625rem 0 1rem;
-  flex: none;
-  font-size: 0.75rem;
-  color: var(--dim);
-  user-select: none;
-  white-space: nowrap;
-  overflow: hidden;
-}
-.bhead.selbar {
-  height: 2.25rem;
-  margin: 0 0.375rem 0.25rem;
-  padding-left: 0.75rem;
-  border-radius: 0.625rem;
-  background: color-mix(in srgb, var(--acc) var(--wash), var(--bg2));
-}
-.bhead.selbar.confirm {
-  background: color-mix(in srgb, var(--danger) var(--wash), var(--bg2));
-}
-.bhead .names {
-  font-family: var(--mono);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  min-width: 0;
-}
-.bhead b {
-  color: var(--fg);
-  font-size: 0.875rem;
-  font-weight: 600;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.bhead.selbar b {
-  font-size: 0.75rem;
-}
-.bhead .meta {
-  color: var(--dimmer);
-}
-.bhead .mono {
-  font: 0.6875rem var(--mono);
-}
 .bhead .wraplbl {
   display: flex;
   align-items: center;
   gap: 0.5rem;
   margin-right: 1rem;
   cursor: pointer;
-}
-.cbxin {
-  position: absolute;
-  opacity: 0;
-  width: 0;
-  height: 0;
-}
-.cbxin:focus-visible + .cbx {
-  outline: 1px solid var(--acc);
-  outline-offset: 1px;
-}
-.cbxin:disabled + .cbx {
-  border-radius: 50%;
-  border-color: var(--dimmer);
-  border-top-color: var(--acc);
-  background: none;
-  cursor: default;
-  animation: spin 0.7s linear infinite;
-}
-.cbxin:disabled + .cbx::after {
-  content: none;
-}
-@media (prefers-reduced-motion: reduce) {
-  .cbxin:disabled + .cbx {
-    animation: none;
-  }
-}
-.body {
-  --colsh: 1.375rem;
-  --repoh: 1.75rem;
-  --indent: 0.875rem;
-  flex: 1;
-  overflow: auto;
-  min-height: 0;
-  padding: 0 0.375rem 0.375rem;
 }
 .preview {
   width: 100%;
@@ -4432,50 +4273,6 @@ dialog.settings::backdrop {
 .gutter:focus-visible::after {
   background: var(--acc);
 }
-
-.seg {
-  display: flex;
-  gap: 0.125rem;
-  padding: 0.1875rem;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  background: var(--bg);
-}
-.seg button {
-  background: none;
-  color: var(--dim);
-  border: 0;
-  border-radius: 999px;
-  font: 0.75rem var(--sans);
-  padding: 0.0625rem 0.625rem;
-  cursor: pointer;
-  white-space: nowrap;
-}
-.seg button:hover:not(:disabled) {
-  color: var(--fg);
-}
-.seg button:disabled {
-  color: var(--dimmer);
-  cursor: default;
-}
-.seg button.on {
-  background: var(--hl);
-  color: var(--hlfg);
-}
-.btn {
-  background: var(--bg3);
-  border: 1px solid var(--line);
-  color: var(--dim);
-  border-radius: 999px;
-  font: 0.75rem var(--sans);
-  padding: 0.1875rem 0.6875rem;
-  cursor: pointer;
-  white-space: nowrap;
-}
-.btn:hover {
-  color: var(--fg);
-  border-color: var(--dimmer);
-}
 .seg.layouts {
   flex: none;
 }
@@ -4483,74 +4280,6 @@ dialog.settings::backdrop {
   display: grid;
   place-items: center;
   padding: 0.25rem 0.5rem;
-}
-.btn.max,
-.btn.ib {
-  display: grid;
-  place-items: center;
-  flex: none;
-  width: 1.75rem;
-  height: 1.75rem;
-  padding: 0;
-}
-.btn.on {
-  color: var(--acc);
-  background: color-mix(in srgb, var(--acc) var(--wash), var(--bg3));
-  border-color: color-mix(in srgb, var(--acc) var(--edge), var(--line));
-}
-.btn.dg {
-  color: var(--danger);
-  border-color: color-mix(in srgb, var(--danger) var(--edge), var(--line));
-}
-.btn.wait {
-  position: relative;
-  color: transparent !important;
-}
-.btn.wait:disabled {
-  opacity: 1;
-}
-.btn.wait::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  margin: auto;
-  width: 0.7rem;
-  height: 0.7rem;
-  box-sizing: border-box;
-  border: 2px solid var(--dimmer);
-  border-top-color: var(--acc);
-  border-radius: 50%;
-  animation: spin 0.7s linear infinite;
-}
-@media (prefers-reduced-motion: reduce) {
-  .btn.wait::after {
-    animation: none;
-  }
-}
-.btn.dg:hover {
-  color: var(--danger);
-  border-color: var(--danger);
-}
-:global(input.filter) {
-  background: var(--input);
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  color: var(--fg);
-  font: 0.75rem var(--sans);
-  padding: 0.25rem 0.75rem;
-  width: 10.5rem;
-  outline: none;
-}
-:global(input.filter::placeholder) {
-  color: var(--dimmer);
-}
-input.ren {
-  color: var(--fg);
-  background: var(--input);
-  border: 1px solid var(--acc);
-  border-radius: 0.25rem;
-  padding: 0 0.25rem;
-  outline: none;
 }
 .f .p input.ren {
   font: inherit;
@@ -4570,9 +4299,6 @@ input.ren {
   color: var(--danger);
   font: 0.6875rem var(--sans);
   white-space: nowrap;
-}
-.selbar b.pre {
-  white-space: pre;
 }
 .bhead .finfo {
   flex: none;
@@ -4599,17 +4325,6 @@ input.ren {
 }
 .bhead .nm:hover {
   border-color: var(--line);
-}
-:global(input.filter.open) {
-  flex: 1;
-  font-family: var(--mono);
-  anchor-name: --open-box;
-  border-radius: 0.75rem;
-  transition: border-radius 0.12s;
-}
-:global(input.filter.open.grown) {
-  border-radius: 0.75rem 0.75rem 0 0;
-  border-bottom-color: var(--line);
 }
 .grow {
   position-anchor: --open-box;
@@ -4690,9 +4405,6 @@ input.ren {
 }
 .bhead .pth:hover {
   border-color: var(--line);
-}
-:global(input.filter:focus) {
-  border-color: var(--acc);
 }
 select.theme {
   background: var(--input);
@@ -4861,16 +4573,6 @@ select.theme {
   background: color-mix(in srgb, var(--acc) var(--wash), transparent);
   color: var(--dimmer);
 }
-:global(html.colsizing),
-:global(html.colsizing *) {
-  cursor: col-resize !important;
-  user-select: none !important;
-}
-:global(html.colmoving),
-:global(html.colmoving *) {
-  cursor: grabbing !important;
-  user-select: none !important;
-}
 .cols .end,
 .wt .end {
   text-align: right;
@@ -5004,69 +4706,10 @@ select.theme {
 .wt .br .dir::after {
   content: ")";
 }
-.ag {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.1875rem;
-  height: 1.125rem;
-  min-width: 1.125rem;
-  justify-content: center;
-  padding: 0 0.25rem;
-  border-radius: 999px;
-  font: 0.6875rem var(--mono);
-  color: var(--ag);
-  background: color-mix(in srgb, var(--ag) var(--wash), transparent);
-  border: 1px solid color-mix(in srgb, var(--ag) var(--edge), transparent);
-  cursor: pointer;
-}
-.ag:hover {
-  border-color: var(--ag);
-}
-.ag i {
-  font-style: normal;
-  font-size: 0.625rem;
-}
-.port {
-  font: 0.625rem var(--mono);
-  color: var(--acc);
-  background: color-mix(in srgb, var(--acc) var(--wash), transparent);
-  border: 1px solid color-mix(in srgb, var(--acc) var(--edge), transparent);
-  border-radius: 999px;
-  padding: 0 0.375rem;
-  text-decoration: none;
-}
-.port:hover {
-  border-color: var(--acc);
-  text-decoration: underline;
-}
-.pr {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25em;
-  font: 0.625rem var(--mono);
-  border-radius: 999px;
-  padding: 0 0.375rem;
-  text-decoration: none;
-}
 .tkl {
   display: inline-flex;
   align-items: center;
   gap: 0.3em;
-}
-.tkd {
-  flex-shrink: 0;
-  width: 0.4375rem;
-  height: 0.4375rem;
-  border-radius: 50%;
-  border: 1px solid var(--tone);
-  background: var(--tone);
-}
-.tkd[data-tone="off"] {
-  background: none;
-}
-.pr:hover {
-  filter: brightness(1.15);
-  text-decoration: underline;
 }
 .port.ar {
   display: inline-flex;
@@ -5080,14 +4723,6 @@ select.theme {
 .g.ar.err,
 .port.ar.err {
   color: var(--danger);
-}
-@keyframes flash {
-  0% {
-    background: color-mix(in srgb, var(--acc) var(--tint), var(--bg));
-  }
-  100% {
-    background: transparent;
-  }
 }
 .wt.touch,
 .f.touch {
@@ -5166,13 +4801,6 @@ select.theme {
   margin-left: 0.375rem;
 }
 
-.empty {
-  color: var(--dimmer);
-  padding: 1.5rem;
-  text-align: center;
-  font: 0.75rem var(--sans);
-}
-
 .boot {
   display: flex;
   align-items: center;
@@ -5208,15 +4836,6 @@ select.theme {
 .sechd button:hover {
   color: var(--fg);
 }
-.cbx {
-  width: 0.875rem;
-  height: 0.875rem;
-  border: 1.5px solid var(--dimmer);
-  border-radius: 0.25rem;
-  cursor: pointer;
-  position: relative;
-  justify-self: center;
-}
 .wt .cbx {
   visibility: hidden;
   justify-self: start;
@@ -5226,33 +4845,6 @@ select.theme {
 .wt .cbx.on,
 .selecting .wt .cbx {
   visibility: visible;
-}
-.cbx.on {
-  background: var(--acc);
-  border-color: var(--acc);
-}
-.cbx.some {
-  border-color: var(--acc);
-}
-.cbx.some::after {
-  content: "";
-  position: absolute;
-  inset: 0.25rem 0.125rem;
-  border-top: 0.125rem solid var(--acc);
-}
-.bhead .cbx {
-  flex: none;
-}
-.cbx.on::after {
-  content: "";
-  position: absolute;
-  left: 0.25rem;
-  top: 0.0625rem;
-  width: 0.1875rem;
-  height: 0.4375rem;
-  border: solid var(--bg);
-  border-width: 0 0.1rem 0.1rem 0;
-  transform: rotate(42deg);
 }
 .acts {
   display: flex;
@@ -5292,10 +4884,6 @@ select.theme {
 .banner .sp {
   flex: 1;
 }
-.btn.p {
-  color: var(--acc);
-  border-color: var(--acc);
-}
 .unsaved {
   font: 0.6875rem var(--mono);
 }
@@ -5305,116 +4893,6 @@ select.theme {
 .repo:hover .plus,
 .repo:focus-within .plus {
   visibility: visible;
-}
-.ctx {
-  position: fixed;
-  margin: 0;
-  inset: auto;
-  padding: 0.25rem;
-  min-width: 11rem;
-  max-height: min(30rem, calc(100vh - 1rem));
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  background: var(--bg2);
-  border: 1px solid var(--line);
-  border-radius: 0.625rem;
-  box-shadow: 0 0.5rem 1.5rem color-mix(in srgb, var(--bg) 70%, transparent);
-}
-.ctx button:not(.btn, .circ) {
-  display: block;
-  width: 100%;
-  text-align: left;
-  background: none;
-  border: none;
-  color: var(--fg);
-  font: 0.75rem var(--sans);
-  padding: 0.3125rem 0.625rem;
-  border-radius: 0.375rem;
-  cursor: pointer;
-  white-space: nowrap;
-}
-.ctx kbd {
-  float: right;
-  margin-left: 1.5rem;
-  color: var(--dimmer);
-  font: 0.6875rem var(--mono);
-}
-.ctx button:not(.btn, .circ):hover {
-  background: var(--hl);
-  color: var(--hlfg);
-}
-.ctx .split {
-  display: flex;
-  align-items: stretch;
-  gap: 0.125rem;
-}
-.ctx .split > button:first-child {
-  flex: 1;
-  min-width: 0;
-}
-.ctx .split .more {
-  flex: none;
-  width: 1.5rem;
-  padding: 0;
-  text-align: center;
-  color: var(--dim);
-  font-size: 0.875rem;
-  visibility: hidden;
-}
-.ctx .split:hover .more,
-.ctx .split:focus-within .more {
-  visibility: visible;
-}
-@media (hover: none) {
-  .ctx .split .more {
-    visibility: visible;
-  }
-}
-.ctx .grp {
-  padding: 0.3125rem 0.625rem 0.125rem;
-  color: var(--dimmer);
-  font-size: 0.6875rem;
-}
-.ctx button:disabled,
-.ctx button:disabled:hover {
-  background: none;
-  color: var(--dimmer);
-  cursor: default;
-}
-.ctx button .ag {
-  margin-right: 0.375rem;
-  cursor: inherit;
-}
-.mtag {
-  margin-left: 0.375rem;
-  padding: 0 0.375rem;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  color: var(--dim);
-  font: 0.625rem var(--mono);
-}
-.mtag.lead {
-  color: var(--acc);
-  border-color: color-mix(in srgb, var(--acc) var(--edge), transparent);
-  background: color-mix(in srgb, var(--acc) var(--wash), transparent);
-}
-.ctx button small {
-  display: block;
-  max-width: 22rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  color: var(--dim);
-  font: 0.6875rem var(--mono);
-}
-.ctx button:hover small {
-  color: var(--hlfg);
-}
-.ctx button.dg {
-  color: var(--danger);
-}
-.ctx button.dg:hover {
-  background: color-mix(in srgb, var(--danger) var(--tint), var(--bg2));
-  color: var(--danger);
 }
 .card {
   width: 27rem;
@@ -5660,35 +5138,14 @@ select.theme {
 .card .foot .btn {
   text-decoration: none;
 }
-.ctx hr {
-  border: none;
-  border-top: 1px solid var(--line);
-  margin: 0.1875rem 0.3125rem;
-}
 .newwt {
   display: flex;
   gap: 0.375rem;
   padding: 0.1875rem 0.625rem 0.1875rem 1.75rem;
 }
 @container (width < 40rem) {
-  .bhead {
-    flex-wrap: wrap;
-    height: auto;
-    min-height: var(--head);
-    padding-block: 0.5rem;
-    row-gap: 0.375rem;
-  }
   .wts .bhead:not(.selbar) > span:not(.sp, .cbx) {
     display: none;
-  }
-  :global(.fbox) {
-    flex: 1 1 6rem;
-    min-width: 0;
-  }
-  :global(input.filter) {
-    flex: 1 1 6rem;
-    width: auto;
-    min-width: 0;
   }
 }
 </style>
