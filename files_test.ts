@@ -329,13 +329,23 @@ Deno.test("rename moves a file into a new folder and refuses an existing target"
   });
 });
 
-Deno.test("remove deletes a folder recursively", async () => {
+Deno.test("remove moves the path to the Trash and reports a failure", async () => {
+  const { sh, files } = make({ "/usr/bin/trash /r/ a/b.ts": "" }, []);
+  await files.remove("/r", " a/b.ts");
+  assertEquals(sh.calls, ["/r $ /usr/bin/trash /r/ a/b.ts"]);
+  await assertRejects(
+    () => files.remove("/r", "gone.ts"),
+    Error,
+    "couldn't move gone.ts to the Trash",
+  );
+});
+
+Deno.test("newEntry and rename keep a leading space in a name", async () => {
   await withTmp(async (dir) => {
     const { files } = make({}, []);
-    await Deno.mkdir(join(dir, "a/b"), { recursive: true });
-    await Deno.writeTextFile(join(dir, "a/b/c.ts"), "x");
-    await files.remove(dir, "a");
-    assertEquals(await Deno.stat(join(dir, "a")).catch(() => null), null);
+    await files.newEntry(dir, " a.txt");
+    await files.rename(dir, " a.txt", "sub/ b.txt ");
+    assert((await Deno.stat(join(dir, "sub/ b.txt "))).isFile);
   });
 });
 

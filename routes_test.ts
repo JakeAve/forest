@@ -321,7 +321,9 @@ Deno.test("GET /api/t/files with an ambiguous wt is 400 with candidates", async 
 
 Deno.test("POST /api/new, /api/rename and /api/delete on a loose root from a local request succeed and call afterMutation", async () => {
   await withTmp(async (dir) => {
-    const { routes, mutations } = make();
+    const { routes, mutations } = make({
+      table: { [`/usr/bin/trash ${join(dir, "b.ts")}`]: "" },
+    });
     // the UI registers a loose root by opening it first
     const opened = await routes(
       get(`/api/open?path=${encodeURIComponent(dir)}`),
@@ -347,7 +349,6 @@ Deno.test("POST /api/new, /api/rename and /api/delete on a loose root from a loc
         .status,
       200,
     );
-    assert(!await Deno.lstat(join(dir, "b.ts")).catch(() => null));
     assertEquals(mutations.length, 3);
   });
 });

@@ -151,10 +151,10 @@ let editingPath = $state(false);
 let completions = $state([]);
 let completeHi = $state(-1);
 let growEl = $state();
-let newing = $state(false);
+/** The inline new-entry row: the folder it sits in, its text, a refusal. */
+let drafting = $state(null);
 let renaming = $state(null);
 let headRename = $state(false);
-let newEl = $state();
 let selDir = $state(null);
 let openDirs = $state({});
 let showDiff = $state(false);
@@ -363,6 +363,17 @@ const treeShown = $derived(
     ? treeMatches.slice(0, 500).map((p) => ({ path: p, depth: 0, dir: false }))
     : treeRows(tree, openDirs, treeDirs),
 );
+// the draft row goes first among its folder's children
+const treeView = $derived.by(() => {
+  if (!drafting) return treeShown;
+  const at = drafting.dir
+    ? treeShown.findIndex((r) => r.path === drafting.dir)
+    : -1;
+  const depth = at < 0 ? 0 : treeShown[at].depth + 1;
+  const rows = [...treeShown];
+  rows.splice(at + 1, 0, { path: "\0draft", draft: true, depth });
+  return rows;
+});
 const totalWts = $derived(repos.reduce((n, r) => n + r.worktrees.length, 0));
 const filtering = $derived(q !== "" || dirtyOnly || runningOnly);
 
@@ -624,20 +635,51 @@ async function editPath() {
   completeOpen();
 }
 
-async function startNew() {
-  newing = true;
-  await tick();
-  newEl.value = file ? file.replace(/[^/]*$/, "") : "";
-  newEl.focus();
+function startNew() {
+  const dir = selDir ??
+    (file?.includes("/") ? file.replace(/\/[^/]*$/, "") : "");
+  fq = "";
+  setBase("all");
+  if (dir) {
+    reveal(dir + "/");
+    if (treeOf === sel) loadOpenDirs();
+  }
+  drafting = { dir, name: "", err: null };
 }
 
-async function newBoxKey(e) {
-  if (e.key === "Escape") return newEl.blur();
+// the confirm button takes focus, so Enter confirms and Esc cancels
+const focusOn = (el) => el.focus();
+
+function draftField(el) {
+  el.focus();
+  el.setSelectionRange(el.value.length, el.value.length);
+}
+
+// The row lands before the server answers; a refusal puts the draft back with
+// the typed name and the error, so it reads as one step, not a banner later.
+async function draftKey(e) {
+  e.stopPropagation();
+  if (e.key === "Escape") return (drafting = null);
   if (e.key !== "Enter") return;
-  const path = newEl.value.trim().replace(/^\/+/, "");
-  if (!path || !await act("new", { wt: sel, path }, "new")) return;
-  newing = false;
-  land(path.replace(/\/$/, ""), path.endsWith("/"));
+  const { dir } = drafting;
+  const name = e.target.value.replace(/^\/+/, "");
+  if (!name.replace(/\//g, "").trim()) {
+    drafting = { dir, name, err: "Name can't be blank" };
+    return;
+  }
+  const path = (dir ? dir + "/" : "") + name;
+  const isDir = path.endsWith("/");
+  const clean = path.replace(/\/+$/, "");
+  drafting = null;
+  if (isDir) treeDirs = [...new Set([...treeDirs, clean])];
+  else tree = [...new Set([...tree, clean])];
+  const err = await post("new", { wt: sel, path });
+  if (err) {
+    dropPath(clean);
+    drafting = { dir, name, err };
+    return;
+  }
+  land(clean, isDir);
 }
 
 function startRename(f, e, head = false) {
@@ -660,10 +702,10 @@ async function renameKey(e, from, base = from.replace(/[^/]*$/, "")) {
   e.stopPropagation();
   if (e.key === "Escape") return (renaming = headRename = null);
   if (e.key !== "Enter") return;
-  const name = e.target.value.trim().replace(/^\/+/, "");
+  const name = e.target.value.replace(/^\/+/, "");
   const to = base + name;
   renaming = headRename = null;
-  if (!name || to === from) return;
+  if (!name.trim() || to === from) return;
   const dir = treeDirs.includes(from) ||
     tree.some((q) => q.startsWith(from + "/"));
   if (!await act("rename", { wt: sel, from, to }, "rename")) return;
@@ -806,6 +848,7 @@ function selectWt(path) {
   sel = path;
   file = null;
   selDir = null;
+  drafting = null;
   tree = [];
   treeDirs = [];
   treeIgnored = [];
@@ -1320,16 +1363,22 @@ function conflictBanner() {
   };
 }
 
-async function act(ep, body, key, e) {
-  e?.stopPropagation();
-  busy[key] = body;
+/** POST an action; the server's error text, or null when it worked. */
+async function post(ep, body) {
   const res = await fetch(`/api/${ep}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
-  }).finally(() => delete busy[key]);
-  if (!res.ok) {
-    errBanner(await res.text());
+  }).catch((e) => ({ ok: false, text: () => e.message }));
+  return res.ok ? null : await res.text();
+}
+
+async function act(ep, body, key, e) {
+  e?.stopPropagation();
+  busy[key] = body;
+  const err = await post(ep, body).finally(() => delete busy[key]);
+  if (err !== null) {
+    errBanner(err);
     return false;
   }
   return true;
@@ -2220,7 +2269,8 @@ function fileItems(f, mode) {
     "-",
     { label: "Rename", fn: (e) => startRename(f, e) },
     {
-      label: "Delete",
+      label: "Move to Trash",
+      kbd: cur && kbdOf("trash"),
       danger: true,
       fn: (e) => discardArm({ path: f.path, del: true }, e),
     },
@@ -2475,6 +2525,19 @@ const COMMANDS = [
     when: () => sel && (selDir || file),
     run: (e) =>
       act("reveal", { wt: sel, path: selDir || file }, "reveal:" + sel, e),
+  },
+  {
+    id: "trash",
+    label: "Move to Trash",
+    section: "Files",
+    keys: "cmd+backspace",
+    // ⌘⌫ deletes a line while typing, so never steal it from a field or the editor
+    when: () =>
+      sel && (selDir || file) &&
+      !document.activeElement?.closest(
+        "input, textarea, select, [contenteditable]",
+      ),
+    run: () => discardArm({ path: selDir || file, del: true }),
   },
   {
     id: "copy-ticket",
@@ -2783,7 +2846,7 @@ const paletteItems = $derived.by(() => {
 });
 
 function discardArm(f, e) {
-  e.stopPropagation();
+  e?.stopPropagation();
   discarding = f;
 }
 
@@ -2793,8 +2856,9 @@ async function confirmDiscard() {
   if (!f.del) {
     return op("discard", { path: f.path, untracked: f.status === "U" });
   }
-  if (await act("delete", { wt: sel, path: f.path }, "delete")) {
-    dropPath(f.path);
+  dropPath(f.path);
+  if (!await act("delete", { wt: sel, path: f.path }, "delete") && explore) {
+    loadTree();
   }
   loadFiles();
 }
@@ -3152,14 +3216,8 @@ async function confirmDiscard() {
                 ])}>{where ?? `Open path… ${kbdOf("open-path") ?? ""}`}</button>
       {/if}
       {#if sel}
-        {#if newing}
-          <input class="filter open"
-                 placeholder="New file, or end with / for a folder"
-                 bind:this={newEl} onkeydown={newBoxKey} onblur={() => (newing = false)}>
-        {:else}
-          <button class="btn max" title="New file or folder" aria-label="New file or folder"
-                  onclick={startNew}>{@render ico(ICON.plus)}</button>
-        {/if}
+        <button class="btn max" title="New file or folder" aria-label="New file or folder"
+                onmousedown={(e) => e.preventDefault()} onclick={startNew}>{@render ico(ICON.plus)}</button>
       {/if}
       <FilterInput bind:this={fileFilterEl} bind:value={fq} label="Filter files"
                    kbd={kbdOf("filter-files")} />
@@ -3172,12 +3230,13 @@ async function confirmDiscard() {
     </div>
     {#if discarding}
       <div class="bhead selbar confirm">
-        <b>{discarding.del
-            ? `Delete ${discarding.path}? this cannot be undone`
+        <b class="pre">{discarding.del
+            ? `Move ${discarding.path} to Trash?`
             : discardPrompt(discarding.path, discarding.status === "U")}</b>
         <span class="sp"></span>
-        <button class="btn dg" onclick={confirmDiscard}>
-          {discarding.del || discarding.status === "U" ? "Delete" : "Discard"}</button>
+        <button class="btn dg" onclick={confirmDiscard} use:focusOn
+                onkeydown={(e) => e.key === "Escape" && (discarding = null)}>
+          {discarding.del ? "Move to Trash" : discarding.status === "U" ? "Delete" : "Discard"}</button>
         <button class="btn" onclick={() => (discarding = null)}>Cancel</button>
       </div>
     {/if}
@@ -3220,6 +3279,18 @@ async function confirmDiscard() {
         </div>
         {/key}
       {/snippet}
+      {#snippet draftRow(r)}
+        <div class="f tr draft" class:bad={drafting.err} title={drafting.err}
+             style:padding-left="{0.625 + r.depth * 0.875}rem">
+          <span class="car"></span>
+          <span class="p"><input class="ren" value={drafting.name} use:draftField
+                 placeholder="Name, end with / for a folder" aria-label="New file or folder name"
+                 aria-invalid={!!drafting.err}
+                 oninput={() => drafting.err && (drafting.err = null)}
+                 onkeydown={draftKey} onblur={() => (drafting = null)}></span>
+          <span class="err">{drafting.err ?? ""}</span>
+        </div>
+      {/snippet}
       {#snippet treeRow(r)}
         {@const [dir, name] = fq ? splitPath(r.path) : ["", r.path.split("/").pop()]}
         {@const f = byPath.get(r.path)}
@@ -3246,12 +3317,12 @@ async function confirmDiscard() {
       {:else if explore}
         {#if treeOf !== sel}
           {@render loadingRow()}
-        {:else if loose && !tree.length}
+        {:else if loose && !tree.length && !drafting}
           <div class="empty">Empty folder</div>
         {:else if fq && !treeMatches.length}
           <div class="empty">No matches</div>
         {:else}
-          {#each treeShown as r (r.path)}{@render treeRow(r)}{/each}
+          {#each treeView as r (r.path)}{#if r.draft}{@render draftRow(r)}{:else}{@render treeRow(r)}{/if}{/each}
           {#if treeMatches.length > treeShown.length}
             <div class="empty">{treeMatches.length - treeShown.length} more, narrow the filter</div>
           {/if}
@@ -4485,6 +4556,24 @@ input.ren {
   font: inherit;
   width: 60%;
 }
+.f.tr.draft {
+  grid-template-columns: 0.875rem 1fr auto;
+  cursor: default;
+}
+.f.draft .p input.ren {
+  width: 100%;
+}
+.f.draft.bad input.ren {
+  border-color: var(--danger);
+}
+.f.draft .err {
+  color: var(--danger);
+  font: 0.6875rem var(--sans);
+  white-space: nowrap;
+}
+.selbar b.pre {
+  white-space: pre;
+}
 .bhead .finfo {
   flex: none;
   white-space: nowrap;
@@ -4495,6 +4584,7 @@ input.ren {
   min-width: 0;
 }
 .bhead .nm {
+  white-space: pre;
   background: none;
   border: 1px solid transparent;
   border-radius: 0.25rem;
@@ -5046,7 +5136,7 @@ select.theme {
   color: var(--untr);
 }
 .f .p {
-  white-space: nowrap;
+  white-space: pre;
   overflow: hidden;
   text-overflow: ellipsis;
   font-size: 0.71875rem;
