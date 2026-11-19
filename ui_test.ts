@@ -2,7 +2,7 @@ import { assertEquals } from "@std/assert";
 
 const MAX_LINES = 700;
 // Lower each entry as code moves out; delete it once the file is under the cap.
-const RATCHET: Record<string, number> = { "App.svelte": 2200 };
+const RATCHET: Record<string, number> = { "App.svelte": 1637 };
 
 // A layered module may import only modules in lower layers. Unknown modules are
 // unlayered and unchecked.
