@@ -8,14 +8,7 @@ import Hex from "./Hex.svelte";
 import Icon from "./Icon.svelte";
 import Settings from "./Settings.svelte";
 import Menu from "./Menu.svelte";
-import {
-  matchPath,
-  matchWt,
-  pathText,
-  rank,
-  rankBy,
-  wtScore,
-} from "./filter.js";
+import { matchPath, pathText, rank, rankBy, wtScore } from "./filter.js";
 import {
   ancestorDirs,
   branchUrl,
@@ -32,16 +25,11 @@ import {
   fmtSize,
   isIgnoredPath,
   KINDS,
-  orderWts,
   prAb,
-  prOffSummary,
   prStatus,
   rawUrl,
   relWt,
-  removeSummary,
   renamed,
-  sessionTag,
-  shortId,
   snoozeKey,
   splitPath,
   TREE_CAP,
@@ -97,7 +85,6 @@ import {
 import {
   askInCard,
   card,
-  drill,
   hideCard,
   hideMenu,
   menu,
@@ -109,6 +96,47 @@ import {
   placeCard,
   runAction,
 } from "./menu.svelte.js";
+import {
+  applyRows,
+  checkRange,
+  createWt,
+  isOpen,
+  match,
+  removeWts,
+  repoOf,
+  rows,
+  toggleAll,
+  toggleAllShown,
+  toggleCheck,
+  toggleRepo,
+} from "./rows.svelte.js";
+import {
+  agentItems,
+  agents,
+  badgeTip,
+  full,
+  loadAgents,
+  loadDetails,
+  resume,
+  sessionItems,
+  terminal,
+} from "./agents.svelte.js";
+import {
+  allItems,
+  killItem,
+  prActions,
+  procItems,
+  procPreview,
+  procTip,
+  push,
+  rebase,
+  repoItems,
+  rowBusy,
+  toggleAutoClose,
+  toggleAutoMerge,
+  toggleAutoRebase,
+  updateBranch,
+} from "./wtActions.js";
 
 loadSettings();
 loadLayout().then((t) => t && applyTheme(t, false));
@@ -120,12 +148,7 @@ $effect(() => {
 });
 
 const MODE_LABEL = { text: "Text", preview: "Preview", hex: "Hex" };
-let checked = $state({});
-// boot progress from the server's `status` SSE event; the repo list streams in
-// during the first sweep, so this says what is still coming.
-let boot = $state({ phase: "repos", done: 0, total: 0 });
 
-let repos = $state([]);
 let sel = $state(null);
 let files = $state([]);
 let filesOf = $state(null);
@@ -155,35 +178,25 @@ let previewSrc = $state("");
 let previewReady = $state(false);
 let srcBodyEl = $state();
 let rawView = null;
-let q = $state("");
 let fq = $state("");
 let lq = $state("");
 let findEl = $state();
 let wtFilterEl = $state();
 let fileFilterEl = $state();
 let found = $state({ i: 0, n: 0 });
-let dirtyOnly = $state(false);
-let runningOnly = $state(false);
 let diffRef = $state();
 let diffDirty = $state(false);
 let diffTick = $state(0);
-let prOffHidden = $state("");
 // Dismissing hides this text; a different failure shows again.
-const prOff = $derived(prOffSummary(repos));
+let prOffHidden = $state("");
 let discarding = $state(null);
-let touched = $state({});
 let fresh = $state({}); // rel path -> when it last changed on disk, for the row flash
 let srcInfo = $state(null);
 let diskAt = $state(0); // when the open file last changed on disk
 let b1El = $state(), b2El = $state();
-let creating = $state(null);
-let slug = $state("");
 let pendingLine = $state(0);
-let removing = $state(false);
-let confirming = $state(null);
-let confirmSel = $state(false);
 const cardWt = $derived(
-  card.shown && allWts.find((w) => w.path === card.shown.path),
+  card.shown && rows.allWts.find((w) => w.path === card.shown.path),
 );
 let restored = false;
 const initialParams = new URLSearchParams(location.search);
@@ -191,9 +204,10 @@ let restoring = $state(initialParams.has("path") || initialParams.has("wt"));
 let markBooted;
 const booted = new Promise((r) => (markBooted = r));
 loadThemes();
+loadAgents();
 
 const selWt = $derived(
-  repos.flatMap((r) => r.worktrees).find((w) => w.path === sel),
+  rows.repos.flatMap((r) => r.worktrees).find((w) => w.path === sel),
 );
 const selFile = $derived(files.find((f) => f.path === file));
 const isHtml = $derived(/\.html?$/i.test(file ?? ""));
@@ -332,49 +346,9 @@ const treeView = $derived.by(() => {
     ? treeShown.findIndex((r) => r.path === drafting.dir)
     : -1;
   const depth = at < 0 ? 0 : treeShown[at].depth + 1;
-  const rows = [...treeShown];
-  rows.splice(at + 1, 0, { path: "\0draft", draft: true, depth });
-  return rows;
-});
-const totalWts = $derived(repos.reduce((n, r) => n + r.worktrees.length, 0));
-const filtering = $derived(q !== "" || dirtyOnly || runningOnly);
-
-const sig = (w) => `${w.head}:${w.dirty}:${w.lastActivity}`;
-const match = (r, w) => matchWt({ q, dirtyOnly, runningOnly }, r?.name, w);
-
-const allWts = $derived(repos.flatMap((r) => r.worktrees));
-const repoOf = (w) => repos.find((r) => r.name === w.repo);
-const shownWts = $derived(allWts.filter((w) => match(repoOf(w), w)));
-const pinnedWts = $derived(shownWts.filter((w) => prefs.pinned[w.path]));
-const checkedWts = $derived(allWts.filter((w) => checked[w.path]));
-const selecting = $derived(checkedWts.length > 0);
-const hiddenChecked = $derived(
-  checkedWts.filter((w) => !match(repoOf(w), w)).length,
-);
-const selectable = $derived(shownWts.filter((w) => !w.isPrimary));
-const allShownChecked = $derived(
-  selectable.length > 0 && selectable.every((w) => checked[w.path]),
-);
-const someShownChecked = $derived(selectable.some((w) => checked[w.path]));
-const recentWts = $derived(
-  shownWts.filter((w) => !prefs.pinned[w.path])
-    .sort((a, b) => b.lastActivity - a.lastActivity)
-    .slice(0, prefs.settings?.recentCount ?? 10),
-);
-const isClosed = (k) => prefs.closed[k] ?? k === "__all";
-const isOpen = (k) => filtering || !isClosed(k);
-const allClosed = $derived(isClosed("__all"));
-const repoWts = $derived.by(() => {
-  const top = new Set(
-    [
-      ...(isOpen("__pinned") ? pinnedWts : []),
-      ...(isOpen("__recent") ? recentWts : []),
-    ].map((w) => w.path),
-  );
-  return Object.fromEntries(repos.map((r) => [
-    r.name,
-    orderWts(r.worktrees.filter((w) => match(r, w) && !top.has(w.path))),
-  ]));
+  const list = [...treeShown];
+  list.splice(at + 1, 0, { path: "\0draft", draft: true, depth });
+  return list;
 });
 
 // Browsers cap HTTP/1.1 at 6 connections per host and each SSE stream holds
@@ -405,27 +379,14 @@ $effect(() => {
     if (file && paths.includes(file)) diffTick++;
   });
   es.addEventListener("status", (e) => {
-    boot = JSON.parse(e.data);
-    if (boot.phase !== "ready") return;
+    rows.boot = JSON.parse(e.data);
+    if (rows.boot.phase !== "ready") return;
     markBooted();
     if (loose && sel) fetch(`/api/open?path=${encodeURIComponent(sel)}`);
   });
   es.onmessage = (e) => {
     const next = JSON.parse(e.data);
-    const prev = new Map(
-      repos.flatMap((r) => r.worktrees).map((w) => [w.path, sig(w)]),
-    );
-    for (const w of next.flatMap((r) => r.worktrees)) {
-      if (prev.size && prev.get(w.path) !== sig(w)) {
-        touched[w.path] = Date.now();
-      }
-    }
-    repos = next;
-    for (const p of Object.keys(checked)) {
-      if (!next.some((r) => r.worktrees.some((w) => w.path === p))) {
-        delete checked[p];
-      }
-    }
+    const prev = applyRows(next);
     if (!restored) {
       restored = true;
       restoreUrl();
@@ -437,7 +398,7 @@ $effect(() => {
       sel = null;
       file = null;
       files = [];
-    } else if (sel && touched[sel] && prev.get(sel) !== undefined) {
+    } else if (sel && rows.touched[sel] && prev.get(sel) !== undefined) {
       loadFiles();
       if (explore) loadTree();
       diffTick++;
@@ -476,7 +437,9 @@ async function restoreUrl() {
   }
   restoring = false;
   const wt = initialParams.get("wt");
-  if (!wt || !repos.flatMap((r) => r.worktrees).some((w) => w.path === wt)) {
+  if (
+    !wt || !rows.repos.flatMap((r) => r.worktrees).some((w) => w.path === wt)
+  ) {
     return;
   }
   base = initialParams.get("base") === "head" ? "head" : "branch";
@@ -829,42 +792,6 @@ function setBase(b) {
   if (sel) loadFiles();
 }
 
-function toggleAllShown() {
-  const on = !allShownChecked;
-  for (const w of selectable) {
-    if (on) checked[w.path] = true;
-    else delete checked[w.path];
-  }
-}
-
-let lastToggled = null;
-function toggleCheck(w, e) {
-  e.stopPropagation();
-  lastToggled = w.path;
-  if (checked[w.path]) delete checked[w.path];
-  else checked[w.path] = true;
-}
-
-function checkRange(w) {
-  const j = navWts.findIndex((x) => x.path === w.path);
-  let i = navWts.findIndex((x) => x.path === lastToggled);
-  if (i < 0) i = j;
-  for (const x of navWts.slice(Math.min(i, j), Math.max(i, j) + 1)) {
-    if (!x.isPrimary) checked[x.path] = true;
-  }
-  lastToggled = w.path;
-}
-
-function toggleAll() {
-  toggleRepo("__all");
-}
-
-function toggleRepo(name) {
-  if (filtering) return;
-  prefs.closed[name] = !isClosed(name);
-  saveLayout();
-}
-
 function drag(e, n, el) {
   e.preventDefault();
   prefs.max = null;
@@ -1043,7 +970,7 @@ function onInbox(e) {
 function openEv(ev) {
   toasts = toasts.filter((t) => t.id !== ev.id);
   inboxEl?.hidePopover();
-  if (ev.wt && allWts.some((w) => w.path === ev.wt)) selectWt(ev.wt);
+  if (ev.wt && rows.allWts.some((w) => w.path === ev.wt)) selectWt(ev.wt);
   else if (ev.url) open(ev.url, "_blank", "noreferrer");
 }
 
@@ -1093,195 +1020,6 @@ async function op(ep, body, e) {
   diffTick++;
 }
 
-const rowBusy = (w) =>
-  Object.keys(ui.busy).some((k) => k.endsWith(":" + w.path)) ||
-  w.procs?.some((p) => ui.killing[p.pid]) ||
-  w.agents?.some((a) => ui.busy["ag:" + a.id] || ui.busy["at:" + a.id]);
-async function killPid(p, e) {
-  ui.killing[p.pid] = true;
-  setTimeout(() => delete ui.killing[p.pid], 10_000);
-  if (!await act("kill-pid", { pid: p.pid }, "kill:" + p.pid, e)) {
-    delete ui.killing[p.pid];
-  }
-}
-const killItem = (p) => ({
-  label: `Kill ${clip(p.command, 32)} (pid ${p.pid})`,
-  danger: true,
-  fn: (e) => killPid(p, e),
-});
-const portsOf = (p) => p.ports.map((n) => `:${n}`).join(" ");
-const procPreview = (p) =>
-  [p.command.split(" ")[0].split("/").pop(), p.ports[0] && `:${p.ports[0]}`]
-    .filter(Boolean)
-    .join(" ");
-const procTip = (w) =>
-  w.procs.slice(0, 8).map((p) => [clip(p.command, 40), portsOf(p)].join(" "))
-    .concat(w.procs.length > 8 ? [`+${w.procs.length - 8} more`] : [])
-    .join("\n") + "\nclick to view";
-const procSub = (p) =>
-  [
-    portsOf(p),
-    `pid ${p.pid}`,
-    p.since && `up ${ago(p.since)}`,
-    `${p.mb} MB`,
-    `${p.cpu}%`,
-  ]
-    .filter(Boolean).join(" · ");
-function procItems(w) {
-  const n = w.procs.length;
-  return [
-    { head: n > 1 ? `Running · ${n} processes` : "Running" },
-    ...w.procs.map((p) => ({
-      label: clip(p.command, 56),
-      sub: procSub(p),
-      tip: p.args,
-      keep: true,
-      fn: (e) => drill(procActions(w, p), e),
-    })),
-  ];
-}
-const procActions = (w, p) => [
-  { head: "Process actions" },
-  {
-    label: `‹ ${clip(p.command, 40)}`,
-    sub: procSub(p),
-    tip: "Back to all processes",
-    kbd: "←",
-    back: true,
-    keep: true,
-    fn: (e) => drill(procItems(w), e),
-  },
-  "-",
-  ...p.ports.map((port) => ({
-    label: `Open :${port}`,
-    fn: () => open(`http://localhost:${port}`, "_blank", "noreferrer"),
-  })),
-  {
-    label: "Copy command",
-    sub: clip(p.args, 56),
-    tip: p.args,
-    fn: (e) => copy(e, p.args, "ctx", "command"),
-  },
-  {
-    label: "Copy pid",
-    sub: String(p.pid),
-    fn: (e) => copy(e, String(p.pid), "ctx"),
-  },
-  "-",
-  killItem(p),
-];
-const rebase = (w, e) => act("rebase", { wt: w.path }, "rb:" + w.path, e);
-const updateBranch = (w, e) =>
-  act("update-branch", { wt: w.path, number: w.pr.number }, "ub:" + w.path, e);
-const toggleAutoRebase = (w, e) =>
-  act("auto-rebase", { wt: w.path, enable: !w.autoRebase }, "ar:" + w.path, e);
-const toggleAutoClose = (w, e) =>
-  act("auto-close", { wt: w.path, enable: !w.autoClose }, "ac:" + w.path, e);
-const toggleAutoMerge = (w, e) =>
-  act(
-    "auto-merge",
-    { wt: w.path, number: w.pr.number, enable: !w.pr.autoMerge },
-    "am:" + w.path,
-    e,
-  );
-const push = (w, e) =>
-  act(
-    "push",
-    { wt: w.path, remote: w.remote, branch: w.branch },
-    "push:" + w.path,
-    e,
-  );
-const prState = (w, action, e) =>
-  act(
-    "pr-state",
-    { wt: w.path, number: w.pr.number, action },
-    "ps:" + w.path,
-    e,
-  );
-
-// The PR actions available on w. One list so the card's buttons and the
-// context menu can't drift: `label` is the card's, `menu` the wordier one, and
-// `confirm` is the question the card asks before an irreversible action.
-function prActions(w) {
-  const p = w.pr;
-  if (p?.state !== "OPEN") return [];
-  const behind = prAb(w).behind;
-  const ahead = prAb(w).ahead;
-  const ps = ui.busy["ps:" + w.path]?.action;
-  return [
-    prStatus(p).tone === "ok" && !p.queue && {
-      key: "merge",
-      label: "Merge squash",
-      menu: `Merge pull request #${p.number} (squash)`,
-      cls: "ok",
-      confirm: `Squash ${ahead} commit${
-        ahead === 1 ? "" : "s"
-      } into ${p.baseRefName}?`,
-      wait: ps === "merge",
-      go: (e) => prState(w, "merge", e),
-    },
-    behind > 0 && !p.queue && {
-      key: "update",
-      label: `Update branch ↓${behind}`,
-      menu: `Update branch (↓${behind} from ${p.baseRefName})`,
-      cls: "warn",
-      wait: !!ui.busy["ub:" + w.path],
-      go: (e) => updateBranch(w, e),
-    },
-    {
-      key: "draft",
-      label: p.isDraft ? "Ready for review" : "Convert to draft",
-      menu: p.isDraft ? "Publish pull request" : "Convert to draft",
-      cls: "",
-      wait: ps === "ready" || ps === "draft",
-      go: (e) => prState(w, p.isDraft ? "ready" : "draft", e),
-    },
-    {
-      key: "close",
-      label: "Close",
-      menu: `Close pull request #${p.number}`,
-      cls: "dg",
-      confirm: `Close #${p.number} without merging?`,
-      wait: ps === "close",
-      go: (e) => prState(w, "close", e),
-    },
-  ].filter(Boolean);
-}
-
-async function removeWts(wts, force) {
-  const live = wts.filter((w) => allWts.some((a) => a.path === w.path));
-  if (!live.length) return (confirming = null);
-  ui.banner = null;
-  removing = true;
-  const res = await fetch("/api/wt-remove", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ wts: live.map((w) => w.path), force }),
-  });
-  removing = false;
-  confirming = null;
-  if (!res.ok) return errBanner(await res.text());
-  const { failed } = await res.json();
-  const stuck = live.filter((w) => failed.some((f) => f.path === w.path));
-  for (const w of live) if (!stuck.includes(w)) delete checked[w.path];
-  if (!stuck.length) return;
-  ui.banner = {
-    kind: "warn",
-    text: removeSummary(live.length, stuck.map((w) => w.branch)),
-    actions: [
-      {
-        label: "Force remove",
-        primary: true,
-        fn: () => removeWts(stuck, true),
-      },
-      { label: "Dismiss", fn: () => (ui.banner = null) },
-    ],
-  };
-}
-
-let opened = $state(null); // the agent session just resumed, for its toast
-let openedT;
-
 $effect(() => {
   if (!card.shown) return;
   const outside = (ev) => {
@@ -1308,8 +1046,8 @@ const runFor = (c) =>
     : dur((c.completedAt ?? c.startedAt) - c.startedAt);
 
 function wtItems(w, solo = false) {
-  const t = !solo && checked[w.path] && checkedWts.length > 1
-    ? checkedWts
+  const t = !solo && rows.checked[w.path] && rows.checkedWts.length > 1
+    ? rows.checkedWts
     : [w];
   const many = t.length > 1;
   const pin = t.every((x) => prefs.pinned[x.path]);
@@ -1323,7 +1061,7 @@ function wtItems(w, solo = false) {
       fn: (e) => act("terminal", { wt: w.path }, "term:" + w.path, e),
     },
     !many && "-",
-    ...(many ? [] : agentItems(w)),
+    ...(many ? [] : agentItems(w, w === selWt)),
     {
       label: many ? `Copy ${t.length} branch names` : "Copy branch name",
       fn: (e) =>
@@ -1432,242 +1170,11 @@ function wtItems(w, solo = false) {
       label: many ? `Remove ${t.length} worktrees…` : "Remove worktree…",
       danger: true,
       fn: () => {
-        confirmSel = false;
-        confirming = t.filter((x) =>
+        rows.confirmSel = false;
+        rows.confirming = t.filter((x) =>
           !x.isPrimary && (x === w || match(repoOf(x), x))
         );
       },
-    },
-  ];
-}
-
-// Per-agent label, glyph and tone come from the server, so the UI names no
-// agent itself.
-let agentMeta = $state({});
-fetch("/api/agents").then((r) => r.json()).then((m) => {
-  agentMeta = Object.fromEntries(m.map((x) => [x.agent, x]));
-});
-
-// The snapshot carries slim sessions; the rest (cwd, link, command) is
-// fetched per worktree as its menu opens, so a later copy needs no await.
-let details = $state({});
-const detailsFor = {};
-const sKey = (a) => `${a.agent}:${a.id}`;
-const full = (a) => ({
-  label: a.agent,
-  glyph: "•",
-  tone: "dim",
-  ...agentMeta[a.agent],
-  ...details[sKey(a)],
-  ...a,
-});
-
-function loadDetails(w) {
-  if ((w.agents ?? []).every((a) => details[sKey(a)])) return Promise.resolve();
-  return (detailsFor[w.path] ??= fetch(
-    `/api/t/sessions?wt=${encodeURIComponent(w.path)}`,
-  ).then((r) => r.json()).then((list) => {
-    for (const x of list) details[sKey(x)] = x;
-  }).catch(() => {}).finally(() => delete detailsFor[w.path]));
-}
-
-const agentTip = (a) =>
-  [
-    `${a.label} · ${a.title || "untitled"}`,
-    a.id,
-    a.cwd && `started in ${a.cwd}`,
-    `first mentioned this worktree ${ago(a.seenAt)} ago`,
-  ].filter(Boolean).join("\n");
-
-const badgeTip = (w) =>
-  `${full(w.agents[0]).label} · ${w.agents[0].title || "untitled"}\n${
-    w.agents.length === 1 ? "1 session" : `${w.agents.length} sessions`
-  }, click to view`;
-
-const fmtAt = (ms) =>
-  new Date(ms).toLocaleString([], {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
-
-async function resume(a, e) {
-  if (
-    await act("agent-resume", { agent: a.agent, id: a.id }, "ag:" + a.id, e)
-  ) {
-    opened = a;
-    clearTimeout(openedT);
-    openedT = setTimeout(
-      () => (opened = null),
-      prefs.settings?.toastMs ?? 7000,
-    );
-  }
-}
-
-const terminal = (a, e) =>
-  act("agent-terminal", { agent: a.agent, id: a.id }, "at:" + a.id, e);
-
-const tagOf = (w, a) =>
-  sessionTag(
-    w.agents.findIndex((x) => sKey(x) === sKey(a)),
-    w.agents.length,
-    a.deep,
-  );
-
-async function showActions(w, a, e) {
-  await loadDetails(w);
-  drill(sessionActions(w, a), e, a);
-}
-
-// Earliest mention first: the first is most likely the session that created it.
-function sessionItems(w) {
-  loadDetails(w);
-  const all = w.agents ?? [];
-  const many = all.length > 1;
-  return [
-    { head: many ? "Agent sessions · most likely first" : "Agent session" },
-    ...all.map((s) => {
-      const a = full(s);
-      return {
-        agent: a,
-        label: clip(a.title || `Untitled ${a.label} session`),
-        tag: tagOf(w, a),
-        sub: `${shortId(a.id)} · ${fmtAt(a.seenAt)}`,
-        tip: agentTip(a),
-        fn: (e) => resume(a, e),
-        more: (e) => showActions(w, s, e),
-      };
-    }),
-    "-",
-    {
-      label: many ? `Copy ${all.length} session IDs` : "Copy session ID",
-      fn: (e) =>
-        copy(
-          e,
-          all.map((a) => a.id).join("\n"),
-          "ctx",
-          many ? `${all.length} session IDs` : all[0].id,
-        ),
-    },
-  ];
-}
-
-function sessionActions(w, s) {
-  const a = full(s);
-  const tag = tagOf(w, a);
-  return [
-    { head: "Session actions" },
-    {
-      agent: a,
-      label: `‹ ${clip(a.title || `Untitled ${a.label} session`, 40)}`,
-      sub: [shortId(a.id), fmtAt(a.seenAt), tag].filter(Boolean).join(" · "),
-      tip: "Back to all sessions",
-      kbd: "←",
-      back: true,
-      keep: true,
-      fn: (e) => drill(sessionItems(w), e),
-    },
-    "-",
-    { label: `Open in ${a.label}`, kbd: "↩", fn: (e) => resume(a, e) },
-    {
-      label: "Resume in terminal",
-      cmd: "session-terminal",
-      sub: clip(a.command, 56),
-      tip: a.command,
-      fn: (e) => terminal(a, e),
-    },
-    "-",
-    {
-      label: "Copy session ID",
-      cmd: "session-copy-id",
-      sub: a.id,
-      fn: (e) => copy(e, a.id, "ctx"),
-    },
-    {
-      label: "Copy resume link",
-      cmd: "session-copy-link",
-      sub: clip(a.url, 56),
-      fn: (e) => copy(e, full(a).url, "ctx", "resume link"),
-    },
-  ];
-}
-
-function agentItems(w) {
-  if (w.isPrimary && !w.agents?.length) return [];
-  const [first, ...rest] = w.agents ?? [];
-  if (!first) return [{ label: "No agent session found", disabled: true }, "-"];
-  loadDetails(w);
-  const a = full(first);
-  return [
-    {
-      agent: a,
-      label: `Resume ${a.label} session`,
-      cmd: w === selWt && "agent-resume",
-      sub: clip(a.title || shortId(a.id)),
-      tip: agentTip(a),
-      fn: (e) => resume(a, e),
-    },
-    {
-      label: rest.length ? "Agent sessions…" : "Session actions…",
-      cmd: w === selWt && "agent-sessions",
-      keep: true,
-      fn: (e) =>
-        !menu.shown
-          ? clickCell(w, "agent")
-          : rest.length
-          ? drill(sessionItems(w), e)
-          : showActions(w, first, e),
-    },
-    { label: "Copy session ID", fn: (e) => copy(e, a.id, "ctx") },
-    {
-      label: "Copy resume link",
-      fn: (e) => copy(e, full(a).url, "ctx", "resume link"),
-    },
-    "-",
-  ];
-}
-
-function repoItems(r, shown) {
-  const wts = shown.filter((w) => !w.isPrimary);
-  return [
-    r.path && {
-      label: "New worktree…",
-      fn: () => {
-        creating = r.name;
-        slug = "";
-      },
-    },
-    "-",
-    {
-      label: `Copy ${shown.length} branch names`,
-      fn: (e) =>
-        copy(
-          e,
-          shown.map((w) => w.branch).join("\n"),
-          "ctx",
-          `${shown.length} branch names`,
-        ),
-    },
-    r.path && { label: "Copy repo path", fn: (e) => copy(e, r.path, "ctx") },
-    "-",
-    {
-      label: isOpen(r.name) ? "Collapse" : "Expand",
-      fn: () => toggleRepo(r.name),
-    },
-    wts.length > 0 && {
-      label: r.path
-        ? `Select ${wts.length} worktree${wts.length === 1 ? "" : "s"}`
-        : `Select all in ${r.label}`,
-      fn: () => {
-        for (const w of wts) checked[w.path] = true;
-      },
-    },
-    wts.length > 0 && "-",
-    wts.length > 0 && {
-      label: `Remove ${wts.length} worktree${wts.length === 1 ? "" : "s"}…`,
-      danger: true,
-      fn: () => ((confirmSel = false), (confirming = wts)),
     },
   ];
 }
@@ -1728,15 +1235,6 @@ function fileItems(f, mode) {
   ];
 }
 
-async function createWt(r) {
-  const s = slug.trim();
-  if (!s) return;
-  if (await act("wt-create", { repo: r.name, slug: s }, "new:" + r.name)) {
-    creating = null;
-    slug = "";
-  }
-}
-
 let paletteOpen = $state(false);
 let grepQ = $state("");
 let grepHits = $state([]);
@@ -1757,35 +1255,22 @@ const desktop = () => prefs.settings?.desktop;
 const hasFile = () => sel && file;
 const termDir = () =>
   selDir || file?.split("/").slice(0, -1).join("/") || undefined;
-const navWts = $derived([
-  ...(isOpen("__pinned") ? pinnedWts : []),
-  ...(isOpen("__recent") ? recentWts : []),
-  ...(isOpen("__all")
-    ? repos.flatMap((r) => isOpen(r.name) ? repoWts[r.name] : [])
-    : []),
-]);
-const allItems = () => [
-  { label: allClosed ? "Expand all" : "Collapse all", fn: toggleAll },
-  {
-    label: "Select all shown",
-    fn: () => {
-      for (const w of selectable) checked[w.path] = true;
-    },
-  },
-];
 function goWt(w) {
   selectWt(w.path);
   scrollRow(w.path);
 }
 function stepWt(d) {
-  const i = navWts.findIndex((w) => w.path === sel);
-  goWt(navWts[Math.max(0, Math.min(navWts.length - 1, i < 0 ? 0 : i + d))]);
+  const i = rows.navWts.findIndex((w) => w.path === sel);
+  goWt(
+    rows
+      .navWts[Math.max(0, Math.min(rows.navWts.length - 1, i < 0 ? 0 : i + d))],
+  );
 }
 const liveWt = () => !loose && selWt;
 const focusedWt = () => {
   const el = document.activeElement;
   const path = el?.matches(".wt, .wt .cbx") && el.closest(".wt").dataset.path;
-  return path && allWts.find((w) => w.path === path && !w.isPrimary);
+  return path && rows.allWts.find((w) => w.path === path && !w.isPrimary);
 };
 
 // Runs a t / c / l action on the popover's session, then closes the popover.
@@ -1819,7 +1304,7 @@ const COMMANDS = [
     label: "Next worktree",
     section: "Worktrees",
     keys: "j",
-    when: () => navWts.length,
+    when: () => rows.navWts.length,
     run: () => stepWt(1),
   },
   {
@@ -1827,7 +1312,7 @@ const COMMANDS = [
     label: "Previous worktree",
     section: "Worktrees",
     keys: "k",
-    when: () => navWts.length,
+    when: () => rows.navWts.length,
     run: () => stepWt(-1),
   },
   ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => ({
@@ -1835,8 +1320,8 @@ const COMMANDS = [
     label: `Pinned worktree ${n}`,
     section: "Worktrees",
     keys: `ctrl+${n}`,
-    when: () => pinnedWts[n - 1],
-    run: () => goWt(pinnedWts[n - 1]),
+    when: () => rows.pinnedWts[n - 1],
+    run: () => goWt(rows.pinnedWts[n - 1]),
   })),
   {
     id: "auto-rebase",
@@ -2133,12 +1618,13 @@ const paletteItems = $derived.by(() => {
       prefs.wrap = !prefs.wrap;
       saveLayout();
     }),
-    cmd(`${allClosed ? "Expand" : "Collapse"} all worktrees`, toggleAll),
+    cmd(`${rows.allClosed ? "Expand" : "Collapse"} all worktrees`, toggleAll),
     {
       ...cmd("Filter branches…"),
-      query: () => q,
-      onquery: (v) => (q = v),
-      sub: () => rankBy(shownWts, 50, (w) => wtScore(q, w)).map(wtItem),
+      query: () => rows.q,
+      onquery: (v) => (rows.q = v),
+      sub: () =>
+        rankBy(rows.shownWts, 50, (w) => wtScore(rows.q, w)).map(wtItem),
     },
     ...(sel
       ? [{
@@ -2173,8 +1659,8 @@ const paletteItems = $derived.by(() => {
           })),
       }]
       : []),
-    cmd("Dirty only", () => (dirtyOnly = !dirtyOnly)),
-    cmd("Running only", () => (runningOnly = !runningOnly)),
+    cmd("Dirty only", () => (rows.dirtyOnly = !rows.dirtyOnly)),
+    cmd("Running only", () => (rows.runningOnly = !rows.runningOnly)),
     ...COMMANDS.filter((c) => c.id !== "palette" && (!c.when || c.when()))
       .map((c) => cmd(c.label, c.run, kbdOf(c.id))),
     {
@@ -2261,11 +1747,11 @@ async function confirmDiscard() {
     </div>
   {/if}
 
-  {#if prOff && prOff.text !== prOffHidden}
-    <div class="banner t-band" data-tone="warn" role="status" title={prOff.detail}>
-      <span>{prOff.text}</span><span class="sp"></span>
+  {#if rows.prOff && rows.prOff.text !== prOffHidden}
+    <div class="banner t-band" data-tone="warn" role="status" title={rows.prOff.detail}>
+      <span>{rows.prOff.text}</span><span class="sp"></span>
       <button class="btn ib" title="Dismiss" aria-label="Dismiss"
-              onclick={() => (prOffHidden = prOff.text)}><Icon d={ICON.x} /></button>
+              onclick={() => (prOffHidden = rows.prOff.text)}><Icon d={ICON.x} /></button>
     </div>
   {/if}
 
@@ -2277,73 +1763,73 @@ async function confirmDiscard() {
             onclick={() => toggleMax(n)}><Icon d={prefs.max === n ? ICON.min : ICON.max} /></button>
   {/snippet}
   <div class="panes {prefs.preset}" class:max={prefs.max} style:--b1={paneSize(1)} style:--b2={paneSize(2)}>
-  <div class="band wts" class:maxed={prefs.max === 1} class:selecting bind:this={b1El}>
+  <div class="band wts" class:maxed={prefs.max === 1} class:selecting={rows.selecting} bind:this={b1El}>
     <div class="bhead">
-      {#if selectable.length}
+      {#if rows.selectable.length}
         <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
         <span
           class="cbx"
-          class:on={allShownChecked}
-          class:some={!allShownChecked && someShownChecked}
+          class:on={rows.allShownChecked}
+          class:some={!rows.allShownChecked && rows.someShownChecked}
           role="checkbox"
-          aria-checked={allShownChecked}
-          aria-label="select all {selectable.length} shown"
-          title="select all {selectable.length} shown"
+          aria-checked={rows.allShownChecked}
+          aria-label="select all {rows.selectable.length} shown"
+          title="select all {rows.selectable.length} shown"
           tabindex="0"
           onclick={toggleAllShown}
           onkeydown={(e) => e.key === "Enter" && toggleAllShown()}
         ></span>
       {/if}
-      <b>Worktrees</b><span>{filtering
-          ? `${shownWts.length} of ${totalWts} matching`
-          : `${totalWts} across ${repos.length} repos`}</span><span
+      <b>Worktrees</b><span>{rows.filtering
+          ? `${rows.shownWts.length} of ${rows.totalWts} matching`
+          : `${rows.totalWts} across ${rows.repos.length} repos`}</span><span
         class="sp"
       ></span>
-      <FilterInput bind:this={wtFilterEl} bind:value={q} label="Filter branches"
+      <FilterInput bind:this={wtFilterEl} bind:value={rows.q} label="Filter branches"
                    kbd={kbdOf("filter-branches")} />
       <button
         class="btn"
-        class:on={dirtyOnly}
-        onclick={() => (dirtyOnly = !dirtyOnly)}>Dirty only</button
+        class:on={rows.dirtyOnly}
+        onclick={() => (rows.dirtyOnly = !rows.dirtyOnly)}>Dirty only</button
       >
       <button
         class="btn"
-        class:on={runningOnly}
-        onclick={() => (runningOnly = !runningOnly)}>Running only</button
+        class:on={rows.runningOnly}
+        onclick={() => (rows.runningOnly = !rows.runningOnly)}>Running only</button
       >
       {@render maxBtn(1)}
     </div>
-    {#if checkedWts.length || confirming}
-      <div class="bhead selbar" class:confirm={confirming}>
-        {#if confirming}
-          <b>Remove {confirming.length} worktree{confirming.length === 1
+    {#if rows.checkedWts.length || rows.confirming}
+      <div class="bhead selbar" class:confirm={rows.confirming}>
+        {#if rows.confirming}
+          <b>Remove {rows.confirming.length} worktree{rows.confirming.length === 1
               ? ""
               : "s"}?</b>
-          <span class="meta names">{confirming.map((w) => w.branch).join(", ")}
+          <span class="meta names">{rows.confirming.map((w) => w.branch).join(", ")}
           </span>
-          {#if confirmSel && hiddenChecked}
-            <span class="meta">{hiddenChecked} hidden by the filter are kept</span>
+          {#if rows.confirmSel && rows.hiddenChecked}
+            <span class="meta">{rows.hiddenChecked} hidden by the filter are kept</span>
           {/if}
           <span class="sp"></span>
           <button
             class="btn dg"
-            class:wait={removing}
-            disabled={removing}
-            onclick={() => removeWts(confirming, false)}>Remove</button
+            class:wait={rows.removing}
+            disabled={rows.removing}
+            onclick={() => removeWts(rows.confirming, false)}>Remove</button
           >
-          <button class="btn" onclick={() => (confirming = null)}>Cancel</button
+          <button class="btn" onclick={() => (rows.confirming = null)}>Cancel</button
           >
         {:else}
-          <b>{checkedWts.length} selected</b>
+          <b>{rows.checkedWts.length} selected</b>
           <span class="sp"></span>
           <button
             class="btn"
             onclick={(e) =>
               copy(
                 e,
-                checkedWts.map((w) => w.branch).join("\n"),
+                rows.checkedWts.map((w) => w.branch).join("\n"),
                 "sel:br",
-                `${checkedWts.length} branch names`,
+                `${rows.checkedWts.length} branch names`,
               )}>Copy branches</button
           >
           <button
@@ -2351,13 +1837,13 @@ async function confirmDiscard() {
             onclick={(e) =>
               copy(
                 e,
-                checkedWts.map((w) => w.path).join("\n"),
+                rows.checkedWts.map((w) => w.path).join("\n"),
                 "sel:pa",
-                `${checkedWts.length} paths`,
+                `${rows.checkedWts.length} paths`,
               )}>Copy paths</button
           >
-          <button class="btn dg" disabled={hiddenChecked === checkedWts.length}
-                  onclick={() => ((confirmSel = true), (confirming = checkedWts.filter((w) => match(repoOf(w), w))))}
+          <button class="btn dg" disabled={rows.hiddenChecked === rows.checkedWts.length}
+                  onclick={() => ((rows.confirmSel = true), (rows.confirming = rows.checkedWts.filter((w) => match(repoOf(w), w))))}
             >Remove</button
           >
           <button
@@ -2365,8 +1851,8 @@ async function confirmDiscard() {
             title="Clear selection"
             aria-label="Clear selection"
             onclick={() => {
-              checked = {};
-              confirming = null;
+              rows.checked = {};
+              rows.confirming = null;
             }}><Icon d={ICON.x} /></button
           >
         {/if}
@@ -2394,35 +1880,35 @@ async function confirmDiscard() {
         <div class="colghost" style:left="{colOp.ghost}px" style:top="{colOp.top}px"
              style:width="{colOp.w}px" style:height="{colOp.h}px"><span>{colOp.label}</span></div>
       {/if}
-      {#if pinnedWts.length}
-        {@render container("__pinned", "Pinned", pinnedWts.length, bucketSummary(pinnedWts),
-          () => repoItems({ name: "__pinned", label: "Pinned" }, pinnedWts), pinnedWts)}
+      {#if rows.pinnedWts.length}
+        {@render container("__pinned", "Pinned", rows.pinnedWts.length, bucketSummary(rows.pinnedWts),
+          () => repoItems({ name: "__pinned", label: "Pinned" }, rows.pinnedWts), rows.pinnedWts)}
       {/if}
-      {#if recentWts.length}
-        {@render container("__recent", "Recent", recentWts.length, bucketSummary(recentWts),
-          () => repoItems({ name: "__recent", label: "Recent" }, recentWts), recentWts)}
+      {#if rows.recentWts.length}
+        {@render container("__recent", "Recent", rows.recentWts.length, bucketSummary(rows.recentWts),
+          () => repoItems({ name: "__recent", label: "Recent" }, rows.recentWts), rows.recentWts)}
       {/if}
-      {#if boot.phase !== "ready"}
+      {#if rows.boot.phase !== "ready"}
         <div class="boot">
           <span class="spin"></span>
-          {#if boot.phase === "repos"}
-            reading branches{boot.total ? ` ${boot.done}/${boot.total}` : ""}…
+          {#if rows.boot.phase === "repos"}
+            reading branches{rows.boot.total ? ` ${rows.boot.done}/${rows.boot.total}` : ""}…
           {:else}
             loading pull requests…
           {/if}
         </div>
       {/if}
-      {#if !filtering || repos.some((r) => repoWts[r.name].length)}
-        {@render container("__all", "All worktrees", shownWts.length, bucketSummary(shownWts), allItems, [], allRepos)}
+      {#if !rows.filtering || rows.repos.some((r) => rows.repoWts[r.name].length)}
+        {@render container("__all", "All worktrees", rows.shownWts.length, bucketSummary(rows.shownWts), allItems, [], allRepos)}
       {/if}
     </div></div>
   </div>
   {#snippet allRepos()}
-    {#each repos as r (r.name)}
-      {#if repoWts[r.name].length || !filtering}
+    {#each rows.repos as r (r.name)}
+      {#if rows.repoWts[r.name].length || !rows.filtering}
         {@const shown = r.worktrees.filter((w) => match(r, w))}
         {@render container(r.name, r.name, r.worktrees.length, bucketSummary(shown),
-          () => repoItems(r, shown), repoWts[r.name], null, r)}
+          () => repoItems(r, shown), rows.repoWts[r.name], null, r)}
       {/if}
     {/each}
   {/snippet}
@@ -2439,14 +1925,14 @@ async function confirmDiscard() {
           {#if r.cached}<span class="ct late" title="Last known state; refreshing"><span class="spin"></span> cached</span>{/if}
           <span class="sp"></span>
           <button class="circ plus" title="New worktree" aria-label="New worktree"
-                  onclick={(e) => { e.stopPropagation(); creating = creating === r.name ? null : r.name; slug = ""; }}><Icon d={ICON.plus} /></button>
+                  onclick={(e) => { e.stopPropagation(); rows.creating = rows.creating === r.name ? null : r.name; rows.slug = ""; }}><Icon d={ICON.plus} /></button>
         {/if}
       </div>
-      {#if r && creating === r.name}
+      {#if r && rows.creating === r.name}
         <div class="newwt">
           <!-- svelte-ignore a11y_autofocus -->
-          <input class="filter" autofocus placeholder="Branch or slug" bind:value={slug}
-                 onkeydown={(e) => { if (e.key === "Enter") createWt(r); if (e.key === "Escape") creating = null; }}>
+          <input class="filter" autofocus placeholder="Branch or slug" bind:value={rows.slug}
+                 onkeydown={(e) => { if (e.key === "Enter") createWt(r); if (e.key === "Escape") rows.creating = null; }}>
           <button class="btn" class:wait={ui.busy["new:" + r.name]} disabled={ui.busy["new:" + r.name]}
                   onclick={() => createWt(r)}>Create</button>
         </div>
@@ -2462,8 +1948,8 @@ async function confirmDiscard() {
     </div>
   {/snippet}
   {#snippet wtRow(w, showRepo)}
-    {#key touched[w.path]}
-      <div class="wt" class:sel={sel === w.path} class:touch={touched[w.path]} class:cached={repoOf(w)?.cached}
+    {#key rows.touched[w.path]}
+      <div class="wt" class:sel={sel === w.path} class:touch={rows.touched[w.path]} class:cached={repoOf(w)?.cached}
            class:done={bucket(w) === "done"} style:grid-template-columns={colGrid}
            role="button" tabindex="0" data-path={w.path}
            onclick={(e) => w.isPrimary || !(e.metaKey || e.shiftKey) ? selectWt(w.path)
@@ -2478,8 +1964,8 @@ async function confirmDiscard() {
           <span></span>
         {:else}
           <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-          <span class="cbx" class:on={checked[w.path]} role="checkbox"
-                aria-checked={!!checked[w.path]} aria-label="select {w.branch}" tabindex="0"
+          <span class="cbx" class:on={rows.checked[w.path]} role="checkbox"
+                aria-checked={!!rows.checked[w.path]} aria-label="select {w.branch}" tabindex="0"
                 onclick={(e) => toggleCheck(w, e)}
                 onkeydown={(e) => e.key === "Enter" && toggleCheck(w, e)}></span>
         {/if}
@@ -3048,11 +2534,11 @@ async function confirmDiscard() {
     {#if toasts.length > 3}
       <button class="toast" onclick={() => inboxEl.showPopover()}>+{toasts.length - 3} more</button>
     {/if}
-    {#if opened}
+    {#if agents.opened}
       <button class="toast" onclick={(e) => {
-        copy(e, full(opened).command, "ctx", "resume command");
-        opened = null;
-      }}>Opened {clip(opened.title || "session", 40)} in {full(opened).label}
+        copy(e, full(agents.opened).command, "ctx", "resume command");
+        agents.opened = null;
+      }}>Opened {clip(agents.opened.title || "session", 40)} in {full(agents.opened).label}
         <span class="dim">· click to copy resume command</span></button>
     {/if}
     {#if ui.toast}
@@ -3082,7 +2568,7 @@ async function confirmDiscard() {
 <Shortcuts commands={COMMANDS} {keymap} onbind={bindKey}
   bind:open={shortcutsOpen} />
 
-<Settings bind:this={ui.refs.settings} {repos} {kbdOf}
+<Settings bind:this={ui.refs.settings} {kbdOf}
   onshortcuts={() => (shortcutsOpen = true)} />
 
 <style>
