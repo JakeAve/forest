@@ -1811,3 +1811,139 @@ export function edges(prev: Facts, next: Facts): Draft[] {
     !((d.kind === "ci-passed" || d.kind === "approved") && ready.has(d.wt))
   );
 }
+
+export function agoText(now: number, ms: number | null | undefined): string {
+  if (!ms) return "—";
+  const s = Math.max(0, (now - ms) / 1000);
+  if (s < 60) return "now";
+  if (s < 3600) return `${Math.floor(s / 60)}m`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h`;
+  return `${Math.floor(s / 86400)}d`;
+}
+
+export function dur(ms: number | null | undefined): string {
+  if (ms == null || ms < 0) return "–";
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ${String(s % 60).padStart(2, "0")}s`;
+  return `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, "0")}m`;
+}
+
+export const clip = (t = "", n = 48) =>
+  t.length > n ? t.slice(0, n - 1) + "…" : t;
+
+// uuid v7 ids (Codex) start with a timestamp, so their tail tells them apart.
+export const shortId = (id: string) =>
+  id[14] === "7" ? id.slice(-8) : id.slice(0, 8);
+
+export function splitPath(p: string): [string, string] {
+  const i = p.lastIndexOf("/");
+  return i < 0 ? ["", p] : [p.slice(0, i + 1), p.slice(i + 1)];
+}
+
+export const relWt = (r: { path: string }, w: { path: string }) =>
+  w.path === r.path
+    ? "."
+    : w.path.startsWith(r.path + "/")
+    ? w.path.slice(r.path.length + 1)
+    : w.path;
+
+type AbRow =
+  & Pick<
+    Worktree,
+    "ahead" | "behind" | "aheadMain" | "behindMain"
+  >
+  & {
+    pr?: {
+      state: string;
+      card?: { ahead?: number | null; behind?: number | null } | null;
+    } | null;
+  };
+
+// while a PR is open, "behind" should mean behind its base branch, not behind
+// this worktree's own pushed remote (which is usually 0 once it's pushed).
+// GitHub's own count wins: the local base ref is only as fresh as the last
+// fetch, so a stale one reads "up to date" while the PR is already behind.
+export function prAb(w: AbRow) {
+  if (w.pr?.state !== "OPEN") return { ahead: w.ahead, behind: w.behind };
+  const c = w.pr.card;
+  return {
+    ahead: c?.ahead ?? w.aheadMain,
+    behind: c?.behind ?? w.behindMain,
+  };
+}
+
+export const renamed = (w: Pick<Worktree, "remote" | "branch">) =>
+  w.remote && w.remote !== w.branch ? w.remote : null;
+
+export const branchUrl = (
+  r: { webUrl: string | null } | undefined,
+  w: Pick<Worktree, "remote">,
+) =>
+  r?.webUrl && w.remote
+    ? `${r.webUrl}/tree/${
+      w.remote.split("/").map(encodeURIComponent).join("/")
+    }`
+    : null;
+
+export function dirName(w: Pick<Worktree, "path" | "branch" | "isPrimary">) {
+  const d = w.path.split("/").pop();
+  return !w.isPrimary && d !== w.branch.split("/").pop() ? d : null;
+}
+
+// gh failures (missing, signed out, no access) would otherwise just look like a
+// repo with no PRs.
+export function prOffSummary(
+  repos: Pick<Repo, "name" | "webUrl" | "prError">[],
+) {
+  const bad = repos.filter((r) => r.prError);
+  if (!bad.length) return null;
+  const all = bad.length === repos.filter((r) => r.webUrl).length;
+  const where = all
+    ? ""
+    : bad.length > 3
+    ? ` in ${bad.length} repos`
+    : ` in ${bad.map((r) => r.name).join(", ")}`;
+  const why = [...new Set(bad.map((r) => r.prError))].join("; ");
+  return {
+    text: `PR badges off${where}: ${why}`,
+    detail: bad.map((r) => `${r.name}: ${r.prError}`).join("\n"),
+  };
+}
+
+export function commonPrefix(xs: string[]): string {
+  let common = xs[0] ?? "";
+  for (const x of xs) {
+    while (!x.startsWith(common)) common = common.slice(0, -1);
+  }
+  return common;
+}
+
+type Col = { key: string; width: string };
+
+export const colTemplate = (
+  cols: Col[],
+  lead: Col | undefined,
+  widths: Record<string, string>,
+) =>
+  [
+    "calc(0.75rem + (2 - var(--depth, 0)) * var(--indent))",
+    ...cols.map((c) =>
+      widths[c.key] ?? (c === lead ? "minmax(0, 1fr)" : c.width)
+    ),
+    ...(lead && !widths[lead.key] ? [] : ["minmax(0, 1fr)"]),
+  ].join(" ");
+
+export const colsMin = (
+  cols: Col[],
+  lead: Col | undefined,
+  widths: Record<string, string>,
+) =>
+  `calc(${
+    [
+      "3.75rem",
+      `${(cols.length + 1) * 0.5}rem`,
+      ...cols.map((c) => widths[c.key] ?? (c === lead ? "12rem" : c.width)),
+    ].join(" + ")
+  })`;

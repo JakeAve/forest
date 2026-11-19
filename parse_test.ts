@@ -1,9 +1,11 @@
 import { assert, assertEquals, assertThrows } from "@std/assert";
 import type { DiffWorktree, PrCard } from "./parse.ts";
 import {
+  agoText,
   ancestorDirs,
   approvals,
   backoffOver,
+  branchUrl,
   bucket,
   bucketSummary,
   byteChar,
@@ -12,9 +14,15 @@ import {
   ciSummary,
   clampMenu,
   classifyPath,
+  clip,
+  colsMin,
+  colTemplate,
+  commonPrefix,
   decodeChunk,
   diffSnapshots,
+  dirName,
   discardPrompt,
+  dur,
   fmtCount,
   fmtSize,
   hotBackoff,
@@ -35,19 +43,25 @@ import {
   parseUpstreamTrack,
   parseWorktreeList,
   pool,
+  prAb,
   prCard,
   procsByCwd,
+  prOffSummary,
   prStatus,
   qbool,
   qnum,
   rateWindow,
   rawUrl,
+  relWt,
   remoteWebUrl,
   removeSummary,
+  renamed,
   reviewSince,
   selectWt,
+  shortId,
   sniff,
   snippet,
+  splitPath,
   statusCounts,
   TREE_CAP,
   treeRows,
@@ -1908,4 +1922,144 @@ Deno.test("fmtSize steps decimal units and fmtCount groups digits", () => {
     ["0 bytes", "1 byte", "999 bytes", "43.1 kB", "14.2 MB", "3,000 GB"],
   );
   assertEquals(fmtCount(1340), "1,340");
+});
+
+Deno.test("agoText buckets elapsed time and clamps the future", () => {
+  const now = 10 * 86400_000;
+  assertEquals(agoText(now, 0), "—");
+  assertEquals(agoText(now, null), "—");
+  assertEquals(agoText(now, now + 5000), "now");
+  assertEquals(agoText(now, now - 59_999), "now");
+  assertEquals(agoText(now, now - 60_000), "1m");
+  assertEquals(agoText(now, now - 3_599_000), "59m");
+  assertEquals(agoText(now, now - 3_600_000), "1h");
+  assertEquals(agoText(now, now - 86_400_000), "1d");
+});
+
+Deno.test("dur pads minutes and seconds", () => {
+  assertEquals(dur(null), "–");
+  assertEquals(dur(-1), "–");
+  assertEquals(dur(0), "0s");
+  assertEquals(dur(59_400), "59s");
+  assertEquals(dur(59_600), "1m 00s");
+  assertEquals(dur(65_000), "1m 05s");
+  assertEquals(dur(3_605_000), "1h 00m");
+});
+
+Deno.test("clip keeps short text and ellipsizes to n", () => {
+  assertEquals(clip(), "");
+  assertEquals(clip("abc", 3), "abc");
+  assertEquals(clip("abcd", 3), "ab…");
+  assertEquals(clip("x".repeat(60)).length, 48);
+});
+
+Deno.test("shortId takes a uuid v7 tail and anything else's head", () => {
+  assertEquals(shortId("0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b"), "2e3f4a5b");
+  assertEquals(shortId("3f2a1b0c-9d8e-4f7a-b6c5-d4e3f2a1b0c9"), "3f2a1b0c");
+});
+
+Deno.test("splitPath keeps the trailing slash on the dir", () => {
+  assertEquals(splitPath("a.ts"), ["", "a.ts"]);
+  assertEquals(splitPath("src/a.ts"), ["src/", "a.ts"]);
+  assertEquals(splitPath("src/lib/"), ["src/lib/", ""]);
+});
+
+Deno.test("relWt is relative only under the repo root", () => {
+  const r = { path: "/c/forest" };
+  assertEquals(relWt(r, { path: "/c/forest" }), ".");
+  assertEquals(relWt(r, { path: "/c/forest/.worktrees/x" }), ".worktrees/x");
+  assertEquals(relWt(r, { path: "/c/forest-old" }), "/c/forest-old");
+});
+
+Deno.test("prAb counts against the PR base while it is open", () => {
+  const w = { ahead: 1, behind: 0, aheadMain: 3, behindMain: 4 };
+  assertEquals(prAb(w), { ahead: 1, behind: 0 });
+  assertEquals(prAb({ ...w, pr: { state: "MERGED" } }), {
+    ahead: 1,
+    behind: 0,
+  });
+  assertEquals(prAb({ ...w, pr: { state: "OPEN" } }), { ahead: 3, behind: 4 });
+  assertEquals(
+    prAb({ ...w, pr: { state: "OPEN", card: { ahead: 2, behind: 0 } } }),
+    { ahead: 2, behind: 0 },
+  );
+});
+
+Deno.test("renamed is the remote only when it differs", () => {
+  assertEquals(renamed({ remote: null, branch: "a" }), null);
+  assertEquals(renamed({ remote: "a", branch: "a" }), null);
+  assertEquals(renamed({ remote: "b", branch: "a" }), "b");
+});
+
+Deno.test("branchUrl encodes each segment and needs both urls", () => {
+  const r = { webUrl: "https://github.com/o/r" };
+  assertEquals(
+    branchUrl(r, { remote: "feat/a#1" }),
+    "https://github.com/o/r/tree/feat/a%231",
+  );
+  assertEquals(branchUrl(r, { remote: null }), null);
+  assertEquals(branchUrl({ webUrl: null }, { remote: "a" }), null);
+  assertEquals(branchUrl(undefined, { remote: "a" }), null);
+});
+
+Deno.test("dirName shows a folder only when it differs from the branch", () => {
+  const w = { path: "/r/.worktrees/x", branch: "feat/x", isPrimary: false };
+  assertEquals(dirName(w), null);
+  assertEquals(dirName({ ...w, branch: "feat/y" }), "x");
+  assertEquals(dirName({ ...w, branch: "y", isPrimary: true }), null);
+});
+
+Deno.test("prOffSummary names where gh failed", () => {
+  const ok = { name: "ok", webUrl: "u", prError: null };
+  const bad = (name: string, prError = "signed out") => ({
+    name,
+    webUrl: "u",
+    prError,
+  });
+  assertEquals(prOffSummary([ok]), null);
+  assertEquals(prOffSummary([bad("a"), bad("b", "no access")]), {
+    text: "PR badges off: signed out; no access",
+    detail: "a: signed out\nb: no access",
+  });
+  assertEquals(
+    prOffSummary([ok, bad("a"), bad("b")])?.text,
+    "PR badges off in a, b: signed out",
+  );
+  assertEquals(
+    prOffSummary([ok, bad("a"), bad("b"), bad("c"), bad("d")])?.text,
+    "PR badges off in 4 repos: signed out",
+  );
+});
+
+Deno.test("commonPrefix", () => {
+  assertEquals(commonPrefix([]), "");
+  assertEquals(commonPrefix(["src/a"]), "src/a");
+  assertEquals(commonPrefix(["src/app", "src/api", "src/a"]), "src/a");
+  assertEquals(commonPrefix(["a", "b"]), "");
+});
+
+Deno.test("colTemplate and colsMin stretch the lead or a trailing track", () => {
+  const branch = { key: "branch", width: "8rem" };
+  const age = { key: "age", width: "2rem" };
+  const gutter = "calc(0.75rem + (2 - var(--depth, 0)) * var(--indent))";
+  assertEquals(
+    colTemplate([branch, age], branch, {}),
+    `${gutter} minmax(0, 1fr) 2rem`,
+  );
+  assertEquals(
+    colTemplate([branch, age], branch, { branch: "10rem" }),
+    `${gutter} 10rem 2rem minmax(0, 1fr)`,
+  );
+  assertEquals(
+    colTemplate([age], undefined, {}),
+    `${gutter} 2rem minmax(0, 1fr)`,
+  );
+  assertEquals(
+    colsMin([branch, age], branch, {}),
+    "calc(3.75rem + 1.5rem + 12rem + 2rem)",
+  );
+  assertEquals(
+    colsMin([branch, age], branch, { branch: "10rem" }),
+    "calc(3.75rem + 1.5rem + 10rem + 2rem)",
+  );
 });
